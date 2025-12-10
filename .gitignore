@@ -1,0 +1,19 @@
+# Python
+*.egg-info
+*.pyc
+__pycache__
+.venv
+
+# Generic, system, text editors
+*~
+\#*\#
+_autosave-*
+*.bak
+.DS_Store
+.idea/
+.~lock.*
+*.old
+*_old
+.*.swp
+*.tmp
+.vscode/

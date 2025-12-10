@@ -1,0 +1,13 @@
+[tools]
+python = "3.10"
+uv = "latest"
+
+[settings]
+experimental = true
+python.uv_venv_auto = true
+
+[hooks]
+postinstall = "uv sync"
+
+[tasks]
+check = ["uv sync", "black --check .", "ruff check", "mypy", "pytest"]

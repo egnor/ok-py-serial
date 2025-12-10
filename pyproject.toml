@@ -1,0 +1,35 @@
+[project]
+authors = [{ name = "Dan Egnor", email = "egnor@ofb.net" }]
+description = "Serial port library (PySerial wrapper) with more features"
+name = "ok-serial"
+readme = "README.md"
+requires-python = ">=3.10"
+urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
+urls.Repository = "https://github.com/egnor/ok-py-serial.git"
+version = "0.1"
+dependencies = [
+    "msgspec>=0.20.0",
+    "ok-logging-setup>=0.11",
+    "pyserial>=3.5",
+    "types-pyserial>=3.5.0.20251001",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.13,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["black", "mypy", "pytest", "ruff"]
+
+[tool.black]
+line-length = 80
+
+[tool.mypy]
+exclude_gitignore = true
+files = "."
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.uv.build-backend]
+module-root = ""
