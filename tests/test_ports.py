@@ -1,6 +1,6 @@
 """Unit tests for ok_serial._ports."""
 
-from ok_serial._ports import PortMatcher
+from ok_serial._ports import PortMatcher, PortIdentity
 
 
 PARSE_CHECKS = [
@@ -24,3 +24,24 @@ def test_PortMatcher_init():
         actual = PortMatcher(spec)._patterns
         actual_unwrapped = {k: rx.pattern for k, rx in actual.items()}
         assert actual_unwrapped == expected
+
+
+def test_PortMatcher_matches():
+    matcher = PortMatcher("*mid* A:a* b:*b")
+    assert matcher.matches(
+        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"})
+    )
+    assert matcher.matches(
+        PortIdentity(id="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"})
+    )
+    assert matcher.matches(PortIdentity(id="z", attr={"a": "Amid", "b": "xxB"}))
+
+    assert not matcher.matches(
+        PortIdentity(id="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"})
+    )
+    assert not matcher.matches(
+        PortIdentity(id="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"})
+    )
+    assert not matcher.matches(
+        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"})
+    )

@@ -14,7 +14,7 @@ class PortIdentity(msgspec.Struct, frozen=True):
 class PortMatcher:
     """A parsed expression for filtering desired PortIdentity objects"""
 
-    _TERM_RE = re.compile(r'(\s*)(?:([a-z_]+)\s*:\s*)?("(?:\\.|[^"\\])*"|\S*)')
+    _TERM_RE = re.compile(r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|\S*)')
 
     def __init__(self, spec: str):
         """Parses string 'spec' as a fielded glob matcher on port attributes"""
@@ -28,7 +28,7 @@ class PortMatcher:
             if value.startswith('"') and value.endswith('"'):
                 value = value[1:-1].encode().decode("unicode-escape", "ignore")
             if field:
-                current_field = field.rstrip().rstrip(":").strip()
+                current_field = field.rstrip().rstrip(":").strip().lower()
                 globs[current_field] = value
             elif current_field:
                 globs[current_field] += wspace + value
@@ -57,8 +57,8 @@ def scan_ports() -> list[PortIdentity]:
     """Returns a list of PortIdentity objects found on the current system"""
 
     def convert(p: serial.tools.list_ports_common.ListPortInfo) -> PortIdentity:
-        _NA_VALUES = (None, "", "n/a")
-        attr = {k: str(v) for k, v in vars(p).items() if v not in _NA_VALUES}
+        _NA = (None, "", "n/a")
+        attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
         return PortIdentity(p.device, attr)
 
     scan = [convert(p) for p in serial.tools.list_ports.comports()]
