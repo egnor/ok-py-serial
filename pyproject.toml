@@ -9,6 +9,7 @@ urls.Repository = "https://github.com/egnor/ok-py-serial.git"
 version = "0.1"
 dependencies = [
   "msgspec>=0.20.0",
+  "natsort>=8.4.0",
   "ok-logging-setup>=0.11",
   "pyserial>=3.5",
   "types-pyserial>=3.5.0.20251001",

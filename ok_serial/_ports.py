@@ -1,14 +1,15 @@
 import fnmatch
 import msgspec
+import natsort
 import re
 import serial.tools.list_ports
 
 
-class PortIdentity(msgspec.Struct, frozen=True):
+class PortIdentity(msgspec.Struct, frozen=True, order=True):
     """What we know about a potentially available serial port on the system"""
 
     id: str
-    attr: dict[str, str]
+    attr: dict[str, str | int]
 
 
 class PortMatcher:
@@ -54,13 +55,21 @@ class PortMatcher:
 
 
 def scan_ports() -> list[PortIdentity]:
-    """Returns a list of PortIdentity objects found on the current system"""
+    """Returns a list of PortIdentity for ports found on the current system"""
 
     def convert(p: serial.tools.list_ports_common.ListPortInfo) -> PortIdentity:
         _NA = (None, "", "n/a")
-        attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
+        attr = {
+            k.lower(): v if isinstance(v, int) else str(v)
+            for k, v in vars(p).items()
+            if v not in _NA
+        }
         return PortIdentity(p.device, attr)
 
-    scan = [convert(p) for p in serial.tools.list_ports.comports()]
-    scan.sort(key=lambda p: p.id)
-    return scan
+    return list(
+        natsort.natsorted(
+            (convert(p) for p in serial.tools.list_ports.comports()),
+            key=lambda p: p.id,
+            alg=natsort.ns.PATH,
+        )
+    )
