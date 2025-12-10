@@ -8,10 +8,10 @@ urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
 version = "0.1"
 dependencies = [
-    "msgspec>=0.20.0",
-    "ok-logging-setup>=0.11",
-    "pyserial>=3.5",
-    "types-pyserial>=3.5.0.20251001",
+  "msgspec>=0.20.0",
+  "ok-logging-setup>=0.11",
+  "pyserial>=3.5",
+  "types-pyserial>=3.5.0.20251001",
 ]
 
 [build-system]
@@ -19,7 +19,7 @@ requires = ["uv_build>=0.9.13,<0.10.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = ["black", "mypy", "pytest", "ruff"]
+dev = ["black", "mypy", "pytest", "pytest-mock", "ruff"]
 
 [tool.black]
 line-length = 80

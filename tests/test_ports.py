@@ -1,8 +1,6 @@
 """Unit tests for ok_serial._ports."""
 
-import re
-
-from ok_serial._ports import PortIdentity, PortMatcher, scan_ports
+from ok_serial._ports import PortMatcher
 
 
 PARSE_CHECKS = [
