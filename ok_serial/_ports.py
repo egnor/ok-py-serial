@@ -9,23 +9,33 @@ class PortIdentity(msgspec.Struct, frozen=True, order=True):
     """What we know about a potentially available serial port on the system"""
 
     id: str
-    attr: dict[str, str | int]
+    attr: dict[str, str]
 
 
 class PortMatcher:
     """A parsed expression for filtering desired PortIdentity objects"""
 
-    _TERM_RE = re.compile(r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|\S*)')
+    _TERM_RE = re.compile(
+        r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
+    )
 
     def __init__(self, spec: str):
         """Parses string 'spec' as a fielded glob matcher on port attributes"""
 
         current_field = ""
         globs: dict[str, str] = {}
-        while spec:
-            match = PortMatcher._TERM_RE.match(spec)
-            assert match
-            wspace, field, value = match.groups()
+        pos = 0
+        while pos < len(spec):
+            match = PortMatcher._TERM_RE.match(spec, pos=pos)
+            if not (match and match.group(0)):
+                esc_spec = spec.encode("unicode-escape").decode()
+                esc_pos = len(spec[:pos].encode("unicode-escape").decode())
+                raise ValueError(
+                    f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
+                )
+
+            pos = match.end()
+            wspace, field, value = match.groups(default="")
             if value.startswith('"') and value.endswith('"'):
                 value = value[1:-1].encode().decode("unicode-escape", "ignore")
             if field:
@@ -36,8 +46,6 @@ class PortMatcher:
             else:
                 current_field = "*"
                 globs[current_field] = wspace + value
-
-            spec = spec[match.end() :]
 
         self._patterns = {
             k: re.compile(fnmatch.translate(g), re.I) for k, g in globs.items()
@@ -59,11 +67,7 @@ def scan_ports() -> list[PortIdentity]:
 
     def convert(p: serial.tools.list_ports_common.ListPortInfo) -> PortIdentity:
         _NA = (None, "", "n/a")
-        attr = {
-            k.lower(): v if isinstance(v, int) else str(v)
-            for k, v in vars(p).items()
-            if v not in _NA
-        }
+        attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
         return PortIdentity(p.device, attr)
 
     return list(
