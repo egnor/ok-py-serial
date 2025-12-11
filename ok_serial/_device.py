@@ -1,18 +1,12 @@
 import msgspec
-import re
 import serial
 
 import ok_serial._ports
 
 
-_FIELD_MATCH_RE = re.compile(r'(?:\s*(?:([a-z_]+)\s*:)?\s*("[^"]*"|\S*))')
-
-
 class SerialActivity(msgspec.Struct, frozen=True):
     connected_port: ok_serial._ports.PortIdentity | None
     received: bytes
-    just_connected: bool = False
-    just_disconnected: str | None = None
 
 
 class SerialDevice:

@@ -1,6 +1,9 @@
 """Unit tests for ok_serial._ports."""
 
-from ok_serial._ports import PortMatcher, PortIdentity
+import serial.tools.list_ports
+import serial.tools.list_ports_common
+
+from ok_serial._ports import PortMatcher, PortIdentity, scan_ports
 
 
 PARSE_CHECKS = [
@@ -28,20 +31,57 @@ def test_PortMatcher_init():
 
 def test_PortMatcher_matches():
     matcher = PortMatcher("*mid* A:a* b:*b")
-    assert matcher.matches(
-        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"})
-    )
-    assert matcher.matches(
-        PortIdentity(id="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"})
-    )
-    assert matcher.matches(PortIdentity(id="z", attr={"a": "Amid", "b": "xxB"}))
+    for id in [
+        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
+        PortIdentity(id="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
+        PortIdentity(id="z", attr={"a": "Amid", "b": "xxB"}),
+    ]:
+        assert matcher.matches(id)
 
-    assert not matcher.matches(
-        PortIdentity(id="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"})
-    )
-    assert not matcher.matches(
-        PortIdentity(id="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"})
-    )
-    assert not matcher.matches(
-        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"})
-    )
+    for id in [
+        PortIdentity(id="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
+        PortIdentity(id="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
+        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
+    ]:
+        assert not matcher.matches(id)
+
+
+def test_scan_ports(mocker):
+    mocker.patch("serial.tools.list_ports.comports")
+
+    full_port = serial.tools.list_ports_common.ListPortInfo("/dev/full")
+    full_port.description = "Description"
+    full_port.hwid = "HwId"
+    full_port.vid = 111
+    full_port.pid = 222
+    full_port.serial_number = "Serial"
+    full_port.location = "Location"
+    full_port.manufacturer = "Manufacturer"
+    full_port.product = "Product"
+    full_port.interface = "Interface"
+
+    bare_port = serial.tools.list_ports_common.ListPortInfo("/dev/bare")
+
+    serial.tools.list_ports.comports.return_value = [full_port, bare_port]
+
+    assert scan_ports() == [
+        PortIdentity(
+            id="/dev/bare", attr={"device": "/dev/bare", "name": "bare"}
+        ),
+        PortIdentity(
+            id="/dev/full",
+            attr={
+                "device": "/dev/full",
+                "name": "full",
+                "description": "Description",
+                "hwid": "HwId",
+                "vid": "111",
+                "pid": "222",
+                "serial_number": "Serial",
+                "manufacturer": "Manufacturer",
+                "product": "Product",
+                "interface": "Interface",
+                "location": "Location",
+            },
+        ),
+    ]

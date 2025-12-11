@@ -15,6 +15,8 @@ class PortIdentity(msgspec.Struct, frozen=True, order=True):
 class PortMatcher:
     """A parsed expression for filtering desired PortIdentity objects"""
 
+    _POSINT_RE = re.compile(r"[1-9][0-9]*|0x[0-9a-f]+", re.I)
+
     _TERM_RE = re.compile(
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
     )
@@ -47,9 +49,14 @@ class PortMatcher:
                 current_field = "*"
                 globs[current_field] = wspace + value
 
-        self._patterns = {
-            k: re.compile(fnmatch.translate(g), re.I) for k, g in globs.items()
-        }
+        self._patterns = {}
+        for k, glob in globs.items():
+            if PortMatcher._POSINT_RE.fullmatch(glob):
+                num = int(glob, 0)
+                regex = f"{glob}|{num}|(0x)?{num:x}h?"
+            else:
+                regex = fnmatch.translate(glob)
+            self._patterns[k] = re.compile(regex, re.I)
 
     def matches(self, port: PortIdentity) -> bool:
         """Tests this matcher against port attributes"""
