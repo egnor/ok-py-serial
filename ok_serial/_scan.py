@@ -5,15 +5,15 @@ import re
 import serial.tools.list_ports
 
 
-class PortIdentity(msgspec.Struct, frozen=True, order=True):
+class PortAttributes(msgspec.Struct, frozen=True, order=True):
     """What we know about a potentially available serial port on the system"""
 
-    id: str
+    port: str
     attr: dict[str, str]
 
 
 class PortMatcher:
-    """A parsed expression for filtering desired PortIdentity objects"""
+    """A parsed expression for matching against PortAttributes results"""
 
     _POSINT_RE = re.compile(r"[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
@@ -58,7 +58,7 @@ class PortMatcher:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)
 
-    def matches(self, port: PortIdentity) -> bool:
+    def matches(self, port: PortAttributes) -> bool:
         """Tests this matcher against port attributes"""
 
         for k, rx in self._patterns.items():
@@ -69,18 +69,18 @@ class PortMatcher:
         return True
 
 
-def scan_ports() -> list[PortIdentity]:
-    """Returns a list of PortIdentity for ports found on the current system"""
+def scan_ports() -> list[PortAttributes]:
+    """Returns a list of serial ports found on the current system"""
 
-    def convert(p: serial.tools.list_ports_common.ListPortInfo) -> PortIdentity:
+    def conv(p: serial.tools.list_ports_common.ListPortInfo) -> PortAttributes:
         _NA = (None, "", "n/a")
         attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
-        return PortIdentity(p.device, attr)
+        return PortAttributes(p.device, attr)
 
     return list(
         natsort.natsorted(
-            (convert(p) for p in serial.tools.list_ports.comports()),
-            key=lambda p: p.id,
+            (conv(p) for p in serial.tools.list_ports.comports()),
+            key=lambda p: p.port,
             alg=natsort.ns.PATH,
         )
     )

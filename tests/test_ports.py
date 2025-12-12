@@ -3,7 +3,7 @@
 import serial.tools.list_ports
 import serial.tools.list_ports_common
 
-from ok_serial._ports import PortMatcher, PortIdentity, scan_ports
+from ok_serial._scan import PortMatcher, PortAttributes, scan_ports
 
 
 PARSE_CHECKS = [
@@ -32,16 +32,16 @@ def test_PortMatcher_init():
 def test_PortMatcher_matches():
     matcher = PortMatcher("*mid* A:a* b:*b")
     for id in [
-        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
-        PortIdentity(id="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
-        PortIdentity(id="z", attr={"a": "Amid", "b": "xxB"}),
+        PortAttributes(port="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
+        PortAttributes(port="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
+        PortAttributes(port="z", attr={"a": "Amid", "b": "xxB"}),
     ]:
         assert matcher.matches(id)
 
     for id in [
-        PortIdentity(id="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
-        PortIdentity(id="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
-        PortIdentity(id="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
+        PortAttributes(port="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
+        PortAttributes(port="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
+        PortAttributes(port="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
     ]:
         assert not matcher.matches(id)
 
@@ -65,11 +65,11 @@ def test_scan_ports(mocker):
     serial.tools.list_ports.comports.return_value = [full_port, bare_port]
 
     assert scan_ports() == [
-        PortIdentity(
-            id="/dev/bare", attr={"device": "/dev/bare", "name": "bare"}
+        PortAttributes(
+            port="/dev/bare", attr={"device": "/dev/bare", "name": "bare"}
         ),
-        PortIdentity(
-            id="/dev/full",
+        PortAttributes(
+            port="/dev/full",
             attr={
                 "device": "/dev/full",
                 "name": "full",
