@@ -3,7 +3,7 @@
 import serial.tools.list_ports
 import serial.tools.list_ports_common
 
-from ok_serial._scan import PortMatcher, PortAttributes, scan_ports
+from ok_serial._scanning import PortMatcher, PortAttributes, scan_ports
 
 
 PARSE_CHECKS = [
