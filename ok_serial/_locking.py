@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 
-SharingType = Literal["oblivious", "polite", "exclusive", "takeover"]
+SharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def using_fd_lock(port: str, fd: int, sharing: SharingType):
         logger.warn("Can't lock (flock) %s", port, exc_info=True)
 
     try:
-        if sharing in ("exclusive", "takeover"):
+        if sharing in ("exclusive", "stomp"):
             fcntl.ioctl(fd, termios.TIOCEXCL)
             logger.debug("Acquired TIOCEXCL on %s", port)
     except OSError:
@@ -84,7 +84,7 @@ def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
             logger.debug("We already own %s", lock_path)
             return True
 
-        if sharing == "takeover":
+        if sharing == "stomp":
             try:
                 os.kill(owner_pid, signal.SIGTERM)
                 logger.debug("Killed owner %d of %s", owner_pid, lock_path)
@@ -102,7 +102,7 @@ def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
             )
 
     try:
-        write_mode = "wt" if sharing == "takeover" else "xt"
+        write_mode = "wt" if sharing == "stomp" else "xt"
         with lock_path.open(write_mode) as lock_file:
             lock_file.write(f"{os.getpid():>10d}\n")
     except FileExistsError:
