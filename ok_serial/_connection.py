@@ -5,11 +5,15 @@ import logging
 import serial
 import threading
 import time
-from typing import Any, Callable
 
 from ok_serial import _locking
 
 log = logging.getLogger(__name__)
+
+
+class ConnectionClosedException(OSError):
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
 class SerialConnection(contextlib.AbstractContextManager):
@@ -23,26 +27,12 @@ class SerialConnection(contextlib.AbstractContextManager):
         with contextlib.ExitStack() as cleanup:
             self._port = port
             self._sharing = sharing
-            self._io_threads: list[threading.Thread] = []
-            self._io_condition = threading.Condition()
-            self._io_incoming = bytearray()
-            self._io_outgoing = bytearray()
-            self._io_exception: None | OSError = None
-            self._io_shutdown: bool = False
-
-            try:
-                self._async_event = aev = asyncio.Event()
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._async_notify: Callable[[], Any] = lambda: None
-            else:
-                self._async_notify = lambda: loop.call_soon_threadsafe(aev.set)
 
             cleanup.enter_context(_locking.using_lock_file(port, sharing))
 
             log.debug("Opening %s (%dbps, %s)", port, baud, sharing)
             try:
-                self._pyserial = cleanup.enter_context(
+                pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
                         baudrate=baud,
@@ -55,16 +45,12 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _locking.PortBusyException(message) from exc
                 raise
 
-            if hasattr(self._pyserial, "fileno"):
-                fd = self._pyserial.fileno()
+            if hasattr(pyserial, "fileno"):
+                fd = pyserial.fileno()
                 cleanup.enter_context(_locking.using_fd_lock(port, fd, sharing))
 
-            cleanup.callback(self._stop_io_threads)
-            for t, n in ((self._reader, "reader"), (self._writer, "writer")):
-                thread = threading.Thread(target=t, name=f"{self._port} {n}")
-                thread.start()
-                self._io_threads.append(thread)
-
+            self._io = cleanup.enter_context(_IoThreads(pyserial))
+            self._io.start()
             self._cleanup = cleanup.pop_all()
 
     def __del__(self) -> None:
@@ -73,102 +59,141 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self._cleanup.__exit__(exc_type, exc_value, traceback)
 
+    def close(self) -> None:
+        self._cleanup.close()
+
     def read_sync(
         self,
         *,
-        min_read: int = 0,
-        max_read: int = 65536,
+        min: int = 1,
+        max: int = 65536,
         timeout: float | None = None,
     ) -> bytes:
         deadline = _deadline_from_timeout(timeout)
         while True:
-            with self._io_condition:
-                if len(self._io_incoming) >= min_read:
-                    incoming = self._io_incoming[:max_read]
-                    del self._io_incoming[:max_read]
+            with self._io.monitor:
+                if len(self._io.incoming) >= min:
+                    incoming = self._io.incoming[:max]
+                    del self._io.incoming[:max]
                     return incoming
-                elif self._io_exception:
-                    raise self._io_exception
+                elif self._io.exception:
+                    raise self._io.exception
                 else:
                     wait_timeout = _timeout_from_deadline(deadline)
                     if wait_timeout <= 0:
                         return b""
-                    self._io_condition.wait(timeout=wait_timeout)
+                    self._io.monitor.wait(timeout=wait_timeout)
 
-    async def read_async(
-        self,
-        *,
-        min_read: int = 0,
-        max_read: int = 65536,
-    ) -> bytes:
+    async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
         while True:
-            if incoming := self.read_sync(
-                min_read=min_read, max_read=max_read, timeout=0
-            ):
-                return incoming
-            await self._async_event.wait()
-            ### XXX TODO - how does _async_event get reset??
+            future = self._io.create_future()  # create BEFORE read_sync
+            out = self.read_sync(min=min, max=max, timeout=0)
+            if out or min <= 0:
+                return out
+            await future
 
     def write(self, data: bytes) -> None:
-        with self._io_condition:
-            if self._io_exception:
-                raise self._io_exception
+        with self._io.monitor:
+            if self._io.exception:
+                raise self._io.exception
             else:
-                self._io_outgoing.extend(data)
-                self._io_condition.notify_all()
+                self._io.outgoing.extend(data)
+                self._io.monitor.notify_all()
 
-    def drain_sync(
-        self, *, max_level: int = 0, timeout: float | None = None
-    ) -> None:
+    def drain_sync(self, *, max: int = 0, timeout: float | None = None) -> bool:
         deadline = _deadline_from_timeout(timeout)
         while True:
-            with self._io_condition:
-                if self._io_exception:
-                    raise self._io_exception
-                elif self._io_shutdown or len(self._io_outgoing) <= max_level:
-                    return
+            with self._io.monitor:
+                if self._io.exception:
+                    raise self._io.exception
+                elif len(self._io.outgoing) <= max:
+                    return True
                 else:
                     wait_timeout = _timeout_from_deadline(deadline)
-                    self._io_condition.wait(timeout=wait_timeout)
+                    if wait_timeout <= 0:
+                        return False
+                    self._io.monitor.wait(timeout=wait_timeout)
 
-    async def drain_async(self, *, max_level: int = 0) -> None:
+    async def drain_async(self, max: int = 0) -> bool:
         while True:
-            with self._io_condition:
-                if self._io_exception:
-                    raise self._io_exception
+            future = self._io.create_future()  # create BEFORE drain_sync
+            if self.drain_sync(max=max, timeout=0):
+                return True
+            await future
 
     def incoming_size(self) -> int:
-        with self._io_condition:
-            return len(self._io_incoming)
+        with self._io.monitor:
+            return len(self._io.incoming)
 
     def outgoing_size(self) -> int:
-        with self._io_condition:
-            return len(self._io_outgoing)
+        with self._io.monitor:
+            return len(self._io.outgoing)
 
-    def close(self) -> None:
-        self._cleanup.close()
 
-    def _reader(self) -> None:
-        log.debug("Reader starting")
+class _IoThreads(contextlib.AbstractContextManager):
+    def __init__(self, pyserial: serial.Serial) -> None:
+        self.threads: list[threading.Thread] = []
+        self.pyserial = pyserial
+        self.monitor = threading.Condition()
+        self.incoming = bytearray()
+        self.outgoing = bytearray()
+        self.exception: None | OSError = None
+
+        self.async_futures: list[asyncio.Future[None]] = []
+        self.async_loop: asyncio.AbstractEventLoop | None
+        try:
+            self.async_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.async_loop = None
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.stop()
+
+    def start(self):
+        for t, n in ((self.read_loop, "reader"), (self.write_loop, "writer")):
+            port = self.pyserial.port
+            thread = threading.Thread(target=t, name=f"{port} {n}", daemon=True)
+            thread.start()
+            self.threads.append(thread)
+
+    def stop(self):
+        with self.monitor:
+            if not self.exception:
+                port = self.pyserial.port
+                self.exception = ConnectionClosedException(f"{port} closed")
+            self.monitor.notify_all()
+        try:
+            self.pyserial.cancel_read()
+            self.pyserial.cancel_write()
+            log.debug("Cancelled %s I/O", self.pyserial.port)
+        except OSError:
+            log.warn("Can't cancel %s I/O", self.pyserial.port, exc_info=True)
+
+        log.debug("Joining %s I/O threads", self.pyserial.port)
+        for thr in self.threads:
+            thr.join()
+
+    def read_loop(self) -> None:
+        log.debug("Starting thread")
         while True:
             try:
-                incoming = self._pyserial.read(size=1)
+                incoming = self.pyserial.read(size=1)
                 error = None
             except OSError as exc:
                 incoming = b""
                 error = exc
 
-            with self._io_condition:
+            with self.monitor:
                 if incoming or error:
-                    self._io_incoming.extend(incoming)
-                    self._io_exception = self._io_exception or error
-                    self._io_condition.notify_all()
-                    self._async_notify()
-                if self._io_shutdown or self._io_exception:
+                    self.incoming.extend(incoming)
+                    self.exception = self.exception or error
+                    self.monitor.notify_all()
+                    self.resolve_futures()
+                if self.exception:
                     break
 
-    def _writer(self) -> None:
-        log.debug("Writer starting")
+    def write_loop(self) -> None:
+        log.debug("Starting thread")
         outgoing = b""
         while True:
             # Avoid blocking on writes if at all possible:
@@ -176,43 +201,44 @@ class SerialConnection(contextlib.AbstractContextManager):
             # https://github.com/pyserial/pyserial/issues/281
             try:
                 if outgoing:
-                    self._pyserial.write(outgoing)
+                    self.pyserial.write(outgoing)
                 last_write_size = len(outgoing)
-                next_write_max = max(0, 256 - self._pyserial.out_waiting)
+                next_write_max = max(0, 256 - self.pyserial.out_waiting)
                 error = None
             except OSError as exc:
                 last_write_size = 0
                 next_write_max = 0
                 error = exc
 
-            with self._io_condition:
+            with self.monitor:
                 if last_write_size or error:
-                    del self._io_outgoing[:last_write_size]
-                    self._io_exception = self._io_exception or error
-                    self._io_condition.notify_all()
-                    self._async_notify()
-                if self._io_shutdown or self._io_exception:
+                    del self.outgoing[:last_write_size]
+                    self.exception = self.exception or error
+                    self.monitor.notify_all()
+                    self.resolve_futures()
+                if self.exception:
                     break
                 if next_write_max > 0:
-                    outgoing = self._io_outgoing[:next_write_max]
+                    outgoing = self.outgoing[:next_write_max]
                 else:
-                    self._io_condition.wait(timeout=0.01)
+                    self.monitor.wait(timeout=0.01)
 
-    def _stop_io_threads(self) -> None:
-        with self._io_condition:
-            self._io_shutdown = True
-            self._io_condition.notify_all()
+    def create_future(self) -> asyncio.Future[None]:
+        assert self.async_loop
+        with self.monitor:
+            future = self.async_loop.create_future()
+            self.async_futures.append(future)
+            return future
 
-        try:
-            self._pyserial.cancel_read()
-            self._pyserial.cancel_write()
-            log.debug("Cancelled I/O on %s", self._port)
-        except OSError:
-            log.warn("Can't cancel I/O on %s", self._port, exc_info=True)
+    def resolve_futures(self) -> None:
+        def run_in_loop():
+            with self.monitor:
+                while self.async_futures:
+                    self.async_futures.pop().set_result(None)
 
-        log.debug("Joining I/O threads for %s", self._port)
-        for thr in self._io_threads:
-            thr.join()
+        if self.async_futures:
+            assert self.async_loop
+            self.async_loop.call_soon_threadsafe(run_in_loop)
 
 
 def _deadline_from_timeout(timeout: float | None) -> float:
