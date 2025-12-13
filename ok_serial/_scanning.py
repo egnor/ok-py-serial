@@ -1,8 +1,11 @@
 import fnmatch
+import logging
 import msgspec
 import natsort
 import re
 import serial.tools.list_ports
+
+log = logging.getLogger(__name__)
 
 
 class PortAttributes(msgspec.Struct, frozen=True, order=True):
@@ -58,6 +61,8 @@ class PortMatcher:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)
 
+        log.debug("Parsed %s (%s)", repr(spec), ", ".join(globs.keys()))
+
     def matches(self, port: PortAttributes) -> bool:
         """Tests this matcher against port attributes"""
 
@@ -77,10 +82,7 @@ def scan_ports() -> list[PortAttributes]:
         attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
         return PortAttributes(p.device, attr)
 
-    return list(
-        natsort.natsorted(
-            (conv(p) for p in serial.tools.list_ports.comports()),
-            key=lambda p: p.port,
-            alg=natsort.ns.PATH,
-        )
-    )
+    out = [conv(p) for p in serial.tools.list_ports.comports()]
+    out.sort(key=natsort.natsort_keygen(key=lambda p: p.port, alg=natsort.ns.P))
+    log.debug("Scanned %d ports", len(out))
+    return out
