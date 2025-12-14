@@ -159,8 +159,8 @@ class _IoThreads(contextlib.AbstractContextManager):
     def stop(self):
         with self.monitor:
             if not self.exception:
-                port = self.pyserial.port
-                self.exception = ConnectionClosedException(f"{port} closed")
+                message = f"{self.pyserial.port} closed"
+                self.exception = ConnectionClosedException(message)
             self.monitor.notify_all()
         try:
             self.pyserial.cancel_read()
@@ -176,21 +176,21 @@ class _IoThreads(contextlib.AbstractContextManager):
     def read_loop(self) -> None:
         log.debug("Starting thread")
         while True:
+            incoming, error = b"", None
             try:
+                # TODO: find a more efficient variable-length blocking read?
                 incoming = self.pyserial.read(size=1)
-                error = None
             except OSError as exc:
-                incoming = b""
                 error = exc
 
-            with self.monitor:
-                if incoming or error:
+            if incoming or error:
+                with self.monitor:
                     self.incoming.extend(incoming)
                     self.exception = self.exception or error
                     self.monitor.notify_all()
                     self.resolve_futures()
-                if self.exception:
-                    break
+            if self.exception:
+                break
 
     def write_loop(self) -> None:
         log.debug("Starting thread")
@@ -199,27 +199,27 @@ class _IoThreads(contextlib.AbstractContextManager):
             # Avoid blocking on writes if at all possible:
             # https://github.com/pyserial/pyserial/issues/280
             # https://github.com/pyserial/pyserial/issues/281
+            error = None
             try:
                 if outgoing:
                     self.pyserial.write(outgoing)
-                last_write_size = len(outgoing)
-                next_write_max = max(0, 256 - self.pyserial.out_waiting)
-                error = None
+                bytes_written = len(outgoing)
+                bytes_available = max(0, 256 - self.pyserial.out_waiting)
             except OSError as exc:
-                last_write_size = 0
-                next_write_max = 0
+                bytes_written = 0
+                bytes_available = 0
                 error = exc
 
             with self.monitor:
-                if last_write_size or error:
-                    del self.outgoing[:last_write_size]
+                if bytes_written or error:
+                    del self.outgoing[:bytes_written]
                     self.exception = self.exception or error
                     self.monitor.notify_all()
                     self.resolve_futures()
                 if self.exception:
                     break
-                if next_write_max > 0:
-                    outgoing = self.outgoing[:next_write_max]
+                if bytes_available > 0:
+                    outgoing = self.outgoing[:bytes_available]
                 else:
                     self.monitor.wait(timeout=0.01)
 
@@ -247,7 +247,7 @@ def _deadline_from_timeout(timeout: float | None) -> float:
     elif timeout <= 0:
         return 0
     else:
-        return time.monotonic() + timeout
+        return min(threading.TIMEOUT_MAX, time.monotonic() + timeout)
 
 
 def _timeout_from_deadline(deadline: float) -> float:

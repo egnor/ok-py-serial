@@ -1,9 +1,9 @@
-"""Unit tests for ok_serial._ports."""
+"""Unit tests for ok_serial._scanning."""
 
 import serial.tools.list_ports
 import serial.tools.list_ports_common
 
-from ok_serial._scanning import PortMatcher, PortAttributes, scan_ports
+from ok_serial import _scanning
 
 
 PARSE_CHECKS = [
@@ -24,30 +24,33 @@ PARSE_CHECKS = [
 
 def test_PortMatcher_init():
     for spec, expected in PARSE_CHECKS:
-        actual = PortMatcher(spec)._patterns
+        actual = _scanning.PortMatcher(spec)._patterns
         actual_unwrapped = {k: rx.pattern for k, rx in actual.items()}
         assert actual_unwrapped == expected
 
 
 def test_PortMatcher_matches():
-    matcher = PortMatcher("*mid* A:a* b:*b")
+    PortAttr = _scanning.PortAttributes
+    matcher = _scanning.PortMatcher("*mid* A:a* b:*b")
     for id in [
-        PortAttributes(port="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
-        PortAttributes(port="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
-        PortAttributes(port="z", attr={"a": "Amid", "b": "xxB"}),
+        PortAttr(port="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
+        PortAttr(port="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
+        PortAttr(port="z", attr={"a": "Amid", "b": "xxB"}),
     ]:
         assert matcher.matches(id)
 
     for id in [
-        PortAttributes(port="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
-        PortAttributes(port="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
-        PortAttributes(port="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
+        PortAttr(port="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
+        PortAttr(port="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
+        PortAttr(port="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
     ]:
         assert not matcher.matches(id)
 
 
 def test_scan_ports(mocker):
     mocker.patch("serial.tools.list_ports.comports")
+
+    bare_port = serial.tools.list_ports_common.ListPortInfo("/dev/zz")
 
     full_port = serial.tools.list_ports_common.ListPortInfo("/dev/full")
     full_port.description = "Description"
@@ -60,15 +63,11 @@ def test_scan_ports(mocker):
     full_port.product = "Product"
     full_port.interface = "Interface"
 
-    bare_port = serial.tools.list_ports_common.ListPortInfo("/dev/bare")
+    serial.tools.list_ports.comports.return_value = [bare_port, full_port]
 
-    serial.tools.list_ports.comports.return_value = [full_port, bare_port]
-
-    assert scan_ports() == [
-        PortAttributes(
-            port="/dev/bare", attr={"device": "/dev/bare", "name": "bare"}
-        ),
-        PortAttributes(
+    PortAttr = _scanning.PortAttributes
+    assert _scanning.scan_ports() == [
+        PortAttr(
             port="/dev/full",
             attr={
                 "device": "/dev/full",
@@ -84,4 +83,5 @@ def test_scan_ports(mocker):
                 "location": "Location",
             },
         ),
+        PortAttr(port="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
     ]

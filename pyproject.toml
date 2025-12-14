@@ -29,6 +29,10 @@ line-length = 80
 exclude_gitignore = true
 files = "."
 
+[tool.pytest]
+log_level = "CRITICAL"
+strict = true
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 

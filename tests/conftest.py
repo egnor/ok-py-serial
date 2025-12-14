@@ -1,4 +1,10 @@
+import contextlib
+import msgspec
 import ok_logging_setup
+import os
+import pty
+import pytest
+import typing
 
 ok_logging_setup.install(
     {
@@ -6,3 +12,19 @@ ok_logging_setup.install(
         "OK_LOGGING_OUTPUT": "stdout",
     }
 )
+
+
+class PseudoTtySerial(msgspec.Struct, frozen=True):
+    path: str
+    control: typing.IO[bytes]
+    simulated: typing.IO[bytes]
+
+
+@pytest.fixture
+def pty_serial():
+    with contextlib.ExitStack() as cleanup:
+        ctrl_fd, sim_fd = pty.openpty()
+        path = os.ttyname(sim_fd)
+        ctrl = cleanup.enter_context(os.fdopen(ctrl_fd, "r+b", buffering=0))
+        sim = cleanup.enter_context(os.fdopen(sim_fd, "r+b", buffering=0))
+        yield PseudoTtySerial(path=path, control=ctrl, simulated=sim)
