@@ -7,15 +7,12 @@ import termios
 from pathlib import Path
 from typing import Literal
 
+from ok_serial import _exceptions
+
 
 SharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
 log = logging.getLogger(__name__)
-
-
-class PortBusyException(OSError):
-    def __init__(self, message: str):
-        super().__init__(message)
 
 
 @contextlib.contextmanager
@@ -25,7 +22,8 @@ def using_lock_file(port: str, sharing: SharingType):
         if _try_lock_file(port=port, lock_path=lock_path, sharing=sharing):
             break
     else:
-        raise PortBusyException(f"{port} is busy (contention retries exceeded)")
+        message = "Serial port busy (retries exceeded)"
+        raise _exceptions.SerialPortBusy(message, port)
 
     yield
 
@@ -43,8 +41,9 @@ def using_fd_lock(port: str, fd: int, sharing: SharingType):
         elif sharing != "oblivious":
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             log.debug("Acquired flock(LOCK_EX) on %s", port)
-    except BlockingIOError as e:
-        raise PortBusyException(f"{port} is busy (flock)") from e
+    except BlockingIOError as exc:
+        message = "Serial port busy (flock claimed)"
+        raise _exceptions.SerialPortBusy(message, port) from exc
     except OSError:
         log.warn("Can't lock (flock) %s", port, exc_info=True)
 
@@ -97,9 +96,8 @@ def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
                 )
         else:
             log.debug("PID %d owns %s", owner_pid, lock_path)
-            raise PortBusyException(
-                f"{port} is busy ({lock_path}: pid={owner_pid})"
-            )
+            message = f"Serial port busy ({lock_path}: pid={owner_pid})"
+            raise _exceptions.SerialPortBusy(message, port)
 
     try:
         write_mode = "wt" if sharing == "stomp" else "xt"

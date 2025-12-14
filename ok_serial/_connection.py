@@ -6,6 +6,7 @@ import serial
 import threading
 import time
 
+from ok_serial import _exceptions
 from ok_serial import _locking
 
 log = logging.getLogger(__name__)
@@ -41,9 +42,11 @@ class SerialConnection(contextlib.AbstractContextManager):
                 )
             except OSError as exc:
                 if exc.errno == errno.EBUSY:
-                    message = f"{port} is busy (EBUSY)"
-                    raise _locking.PortBusyException(message) from exc
-                raise
+                    message = "Serial port busy (EBUSY)"
+                    raise _exceptions.SerialPortBusy(message, port) from exc
+                else:
+                    message = "Serial port open error"
+                    raise _exceptions.SerialOpenFailed(message, port) from exc
 
             if hasattr(pyserial, "fileno"):
                 fd = pyserial.fileno()
@@ -137,7 +140,7 @@ class _IoThreads(contextlib.AbstractContextManager):
         self.monitor = threading.Condition()
         self.incoming = bytearray()
         self.outgoing = bytearray()
-        self.exception: None | OSError = None
+        self.exception: None | _exceptions.SerialIoFailed = None
 
         self.async_futures: list[asyncio.Future[None]] = []
         self.async_loop: asyncio.AbstractEventLoop | None
@@ -159,8 +162,8 @@ class _IoThreads(contextlib.AbstractContextManager):
     def stop(self):
         with self.monitor:
             if not self.exception:
-                message = f"{self.pyserial.port} closed"
-                self.exception = ConnectionClosedException(message)
+                message, port = "Serial port was closed", self.pyserial.port
+                self.exception = _exceptions.SerialIoClosed(message, port)
             self.monitor.notify_all()
         try:
             self.pyserial.cancel_read()
@@ -181,7 +184,8 @@ class _IoThreads(contextlib.AbstractContextManager):
                 # TODO: find a more efficient variable-length blocking read?
                 incoming = self.pyserial.read(size=1)
             except OSError as exc:
-                error = exc
+                message, port = "Serial read error", self.pyserial.port
+                error = _exceptions.SerialIoFailed(message, port, exc)
 
             if incoming or error:
                 with self.monitor:
@@ -208,7 +212,8 @@ class _IoThreads(contextlib.AbstractContextManager):
             except OSError as exc:
                 bytes_written = 0
                 bytes_available = 0
-                error = exc
+                message, port = "Serial write error", self.pyserial.port
+                error = _exceptions.SerialIoFailed(message, port, exc)
 
             with self.monitor:
                 if bytes_written or error:
