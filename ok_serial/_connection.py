@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import errno
 import logging
+import msgspec
 import serial
 import threading
 import time
@@ -14,27 +15,29 @@ log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
+class SerialOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    baud: int = 115200
+    sharing: _locking.SerialSharingType = "exclusive"
+
+
 @typeguard.typechecked
 class SerialConnection(contextlib.AbstractContextManager):
-    def __init__(
-        self,
-        port: str,
-        *,
-        baud: int = 115200,
-        sharing: _locking.SerialSharingType = "exclusive",
-    ):
+    def __init__(self, port: str, opts: SerialOptions | int = SerialOptions()):
+        opts = SerialOptions(opts) if isinstance(opts, int) else opts
+        opts = msgspec.convert(msgspec.to_builtins(opts), SerialOptions)
+
         with contextlib.ExitStack() as cleanup:
             self._port = port
-            self._sharing = sharing
+            self._sharing = opts.sharing
 
-            cleanup.enter_context(_locking.using_lock_file(port, sharing))
+            cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
 
-            log.debug("Opening %s (%dbps, %s)", port, baud, sharing)
+            log.debug("Opening %s (%s)", port, opts)
             try:
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
-                        baudrate=baud,
+                        baudrate=opts.baud,
                         write_timeout=0.1,
                     )
                 )
@@ -47,7 +50,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenFailed(message, port) from exc
 
             if hasattr(pyserial, "fileno"):
-                fd = pyserial.fileno()
+                fd, sharing = pyserial.fileno(), opts.sharing
                 cleanup.enter_context(_locking.using_fd_lock(port, fd, sharing))
 
             self._io = cleanup.enter_context(_IoThreads(pyserial))
@@ -55,7 +58,8 @@ class SerialConnection(contextlib.AbstractContextManager):
             self._cleanup = cleanup.pop_all()
 
     def __del__(self) -> None:
-        self._cleanup.close()
+        if hasattr(self, "_cleanup"):
+            self._cleanup.close()
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self._cleanup.__exit__(exc_type, exc_value, traceback)
