@@ -13,7 +13,7 @@ from ok_serial import _exceptions
 
 SharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("ok_serial.locking")
 
 
 @contextlib.contextmanager

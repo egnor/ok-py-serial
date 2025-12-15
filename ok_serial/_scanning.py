@@ -6,7 +6,7 @@ import re
 import serial.tools.list_ports
 import typeguard
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("ok_serial.scanning")
 
 
 class PortAttributes(msgspec.Struct, frozen=True, order=True):
@@ -20,7 +20,7 @@ class PortAttributes(msgspec.Struct, frozen=True, order=True):
 class PortMatcher:
     """A parsed expression for matching against PortAttributes results"""
 
-    _POSINT_RE = re.compile(r"[1-9][0-9]*|0x[0-9a-f]+", re.I)
+    _POSINT_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
     _TERM_RE = re.compile(
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
@@ -37,7 +37,7 @@ class PortMatcher:
             if not (match and match.group(0)):
                 esc_spec = spec.encode("unicode-escape").decode()
                 esc_pos = len(spec[:pos].encode("unicode-escape").decode())
-                raise ValueError(
+                raise SerialMatcherParseFailed(
                     f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
                 )
 
@@ -58,7 +58,7 @@ class PortMatcher:
         for k, glob in globs.items():
             if PortMatcher._POSINT_RE.fullmatch(glob):
                 num = int(glob, 0)
-                regex = f"{glob}|{num}|(0x)?{num:x}h?"
+                regex = f"({glob}|{num}|(0x)?0*{num:x}h?)\\Z"
             else:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)

@@ -204,45 +204,33 @@ class _IoThreads(contextlib.AbstractContextManager):
 
     def _writeloop(self) -> None:
         log.debug("Starting thread")
-        outgoing = b""
+        chunk, error = b"", None
         while not self.exception:
             # Avoid blocking on writes if at all possible:
             # https://github.com/pyserial/pyserial/issues/280
             # https://github.com/pyserial/pyserial/issues/281
-            bytes_written = bytes_waiting = bytes_allowed = 0
-            error = None
-            try:
-                if outgoing:
-                    self.pyserial.write(outgoing)
-                bytes_written = len(outgoing)
-                bytes_waiting = self.pyserial.out_waiting
-                bytes_allowed = max(0, 256 - bytes_waiting)
-            except OSError as exc:
-                message, port = "Serial write error", self.pyserial.port
-                error = _exceptions.SerialIoFailed(message, port, exc)
-                data_log.warn("%s", message, exc_info=True)
+            if chunk:
+                try:
+                    self.pyserial.write(chunk)
+                    self.pyserial.flush()
+                except OSError as exc:
+                    chunk = b""
+                    message, port = "Serial write error", self.pyserial.port
+                    error = _exceptions.SerialIoFailed(message, port, exc)
+                    data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
-                if bytes_written > 0 or (self.outgoing and bytes_allowed > 0):
-                    data_log.debug(
-                        "Wrote %d/%db dev=%d|%db",
-                        bytes_written,
-                        len(self.outgoing),
-                        bytes_allowed,
-                        bytes_waiting,
-                    )
-
-                if bytes_written or error:
-                    del self.outgoing[:bytes_written]
+                if chunk or error:
+                    assert self.outgoing.startswith(chunk)
+                    del self.outgoing[: len(chunk)]
                     self.exception = self.exception or error
                     self._notify_all_locked()
 
                 while not self.exception and not self.outgoing:
                     self.monitor.wait()
 
-                outgoing = self.outgoing[:bytes_allowed]
-                if not self.exception and not outgoing:
-                    self.monitor.wait(timeout=0.01)  # poll for space
+                chunk = self.outgoing[:256]
+                data_log.debug("Writing %d/%db", len(chunk), len(self.outgoing))
 
     def _notify_all_locked(self) -> None:
         """Must be run with self.monitor lock held."""

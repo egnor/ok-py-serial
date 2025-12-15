@@ -13,6 +13,14 @@ class OkSerialException(OSError):
         self.__cause__ = cause
 
 
+class SerialIoFailed(OkSerialException):
+    pass
+
+
+class SerialIoClosed(SerialIoFailed):
+    pass
+
+
 class SerialOpenFailed(OkSerialException):
     pass
 
@@ -21,9 +29,5 @@ class SerialPortBusy(SerialOpenFailed):
     pass
 
 
-class SerialIoFailed(OkSerialException):
-    pass
-
-
-class SerialIoClosed(SerialIoFailed):
+class SerialMatcherParseFailed(ValueError):
     pass

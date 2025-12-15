@@ -16,6 +16,7 @@ def test_basic_connection(pty_serial):
         assert conn.read_sync(min=9, timeout=10) == b"TO SERIAL"
 
         conn.write(b"FROM SERIAL")
+        conn.drain_sync()
         assert pty_serial.control.read(256) == b"FROM SERIAL"
 
 
