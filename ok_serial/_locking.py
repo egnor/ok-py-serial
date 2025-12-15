@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import termios
+import typeguard
 from pathlib import Path
 from typing import Literal
 
@@ -16,8 +17,13 @@ log = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
+@typeguard.typechecked
 def using_lock_file(port: str, sharing: SharingType):
-    lock_path = Path("/var/lock") / f"LCK..{Path(port).name}"
+    parts = Path(port).parts[-2:]
+    if parts[-1].isdigit() and parts[-2:][0].startswith("pt"):
+        lock_path = Path(f"/var/lock/LCK..{'.'.join(parts[-2:])}")
+    else:
+        lock_path = Path(f"/var/lock/LCK..{parts[-1]}")
     for _try in range(10):
         if _try_lock_file(port=port, lock_path=lock_path, sharing=sharing):
             break
@@ -31,6 +37,7 @@ def using_lock_file(port: str, sharing: SharingType):
 
 
 @contextlib.contextmanager
+@typeguard.typechecked
 def using_fd_lock(port: str, fd: int, sharing: SharingType):
     try:
         if sharing == "polite":

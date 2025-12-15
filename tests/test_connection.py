@@ -7,10 +7,16 @@ from ok_serial import _connection
 
 
 def test_basic_connection(pty_serial):
-    with _connection.SerialConnection(pty_serial.path, baud=57600) as _conn:
+    with _connection.SerialConnection(pty_serial.path, baud=57600) as conn:
         tcattr = termios.tcgetattr(pty_serial.simulated.fileno())
         iflag, oflag, cflag, lflag, ispeed, ospeed, cc = tcattr
         assert ispeed == termios.B57600
+
+        pty_serial.control.write(b"TO SERIAL")
+        assert conn.read_sync(min=9, timeout=10) == b"TO SERIAL"
+
+        conn.write(b"FROM SERIAL")
+        assert pty_serial.control.read(256) == b"FROM SERIAL"
 
 
 def test_deadline_from_timeout(mocker):

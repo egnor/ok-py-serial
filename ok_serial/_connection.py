@@ -5,18 +5,22 @@ import logging
 import serial
 import threading
 import time
+import typeguard
 
 from ok_serial import _exceptions
 from ok_serial import _locking
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("ok_serial.connection")
+data_log = logging.getLogger(log.name + ".data")
 
 
+@typeguard.typechecked
 class ConnectionClosedException(OSError):
     def __init__(self, message: str):
         super().__init__(message)
 
 
+@typeguard.typechecked
 class SerialConnection(contextlib.AbstractContextManager):
     def __init__(
         self,
@@ -89,7 +93,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
         while True:
-            future = self._io.create_future()  # create BEFORE read_sync
+            future = self._io.create_future_in_loop()  # BEFORE read_sync
             out = self.read_sync(min=min, max=max, timeout=0)
             if out or min <= 0:
                 return out
@@ -99,7 +103,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
-            else:
+            elif data:
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
@@ -119,7 +123,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def drain_async(self, max: int = 0) -> bool:
         while True:
-            future = self._io.create_future()  # create BEFORE drain_sync
+            future = self._io.create_future_in_loop()  # BEFORE drain_sync
             if self.drain_sync(max=max, timeout=0):
                 return True
             await future
@@ -141,7 +145,6 @@ class _IoThreads(contextlib.AbstractContextManager):
         self.incoming = bytearray()
         self.outgoing = bytearray()
         self.exception: None | _exceptions.SerialIoFailed = None
-
         self.async_futures: list[asyncio.Future[None]] = []
         self.async_loop: asyncio.AbstractEventLoop | None
         try:
@@ -153,7 +156,7 @@ class _IoThreads(contextlib.AbstractContextManager):
         self.stop()
 
     def start(self):
-        for t, n in ((self.read_loop, "reader"), (self.write_loop, "writer")):
+        for t, n in ((self._readloop, "reader"), (self._writeloop, "writer")):
             port = self.pyserial.port
             thread = threading.Thread(target=t, name=f"{port} {n}", daemon=True)
             thread.start()
@@ -165,6 +168,7 @@ class _IoThreads(contextlib.AbstractContextManager):
                 message, port = "Serial port was closed", self.pyserial.port
                 self.exception = _exceptions.SerialIoClosed(message, port)
             self.monitor.notify_all()
+
         try:
             self.pyserial.cancel_read()
             self.pyserial.cancel_write()
@@ -176,9 +180,9 @@ class _IoThreads(contextlib.AbstractContextManager):
         for thr in self.threads:
             thr.join()
 
-    def read_loop(self) -> None:
+    def _readloop(self) -> None:
         log.debug("Starting thread")
-        while True:
+        while not self.exception:
             incoming, error = b"", None
             try:
                 # TODO: find a more efficient variable-length blocking read?
@@ -186,64 +190,94 @@ class _IoThreads(contextlib.AbstractContextManager):
             except OSError as exc:
                 message, port = "Serial read error", self.pyserial.port
                 error = _exceptions.SerialIoFailed(message, port, exc)
+                data_log.warn("%s", message, exc_info=True)
 
-            if incoming or error:
-                with self.monitor:
+            with self.monitor:
+                if incoming:
+                    data_log.debug(
+                        "Read %db buf=%db", len(incoming), len(self.incoming)
+                    )
+                if incoming or error:
                     self.incoming.extend(incoming)
                     self.exception = self.exception or error
-                    self.monitor.notify_all()
-                    self.resolve_futures()
-            if self.exception:
-                break
+                    self._notify_all_locked()
 
-    def write_loop(self) -> None:
+    def _writeloop(self) -> None:
         log.debug("Starting thread")
         outgoing = b""
-        while True:
+        while not self.exception:
             # Avoid blocking on writes if at all possible:
             # https://github.com/pyserial/pyserial/issues/280
             # https://github.com/pyserial/pyserial/issues/281
+            bytes_written = bytes_waiting = bytes_allowed = 0
             error = None
             try:
                 if outgoing:
                     self.pyserial.write(outgoing)
                 bytes_written = len(outgoing)
-                bytes_available = max(0, 256 - self.pyserial.out_waiting)
+                bytes_waiting = self.pyserial.out_waiting
+                bytes_allowed = max(0, 256 - bytes_waiting)
             except OSError as exc:
-                bytes_written = 0
-                bytes_available = 0
                 message, port = "Serial write error", self.pyserial.port
                 error = _exceptions.SerialIoFailed(message, port, exc)
+                data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
+                if bytes_written > 0 or (self.outgoing and bytes_allowed > 0):
+                    data_log.debug(
+                        "Wrote %d/%db dev=%d|%db",
+                        bytes_written,
+                        len(self.outgoing),
+                        bytes_allowed,
+                        bytes_waiting,
+                    )
+
                 if bytes_written or error:
                     del self.outgoing[:bytes_written]
                     self.exception = self.exception or error
-                    self.monitor.notify_all()
-                    self.resolve_futures()
-                if self.exception:
-                    break
-                if bytes_available > 0:
-                    outgoing = self.outgoing[:bytes_available]
-                else:
-                    self.monitor.wait(timeout=0.01)
+                    self._notify_all_locked()
 
-    def create_future(self) -> asyncio.Future[None]:
+                while not self.exception and not self.outgoing:
+                    self.monitor.wait()
+
+                outgoing = self.outgoing[:bytes_allowed]
+                if not self.exception and not outgoing:
+                    self.monitor.wait(timeout=0.01)  # poll for space
+
+    def _notify_all_locked(self) -> None:
+        """Must be run with self.monitor lock held."""
+
+        self.monitor.notify_all()
+        if self.async_futures:
+            assert self.async_loop
+            self.async_loop.call_soon_threadsafe(self._resolve_futures_in_loop)
+
+    def create_future_in_loop(self) -> asyncio.Future[None]:
+        """Must be run from asyncio event loop."""
+
         assert self.async_loop
         with self.monitor:
             future = self.async_loop.create_future()
             self.async_futures.append(future)
+            data_log.debug(
+                "%s: Adding async future -> %d total",
+                self.pyserial.port,
+                len(self.async_futures),
+            )
             return future
 
-    def resolve_futures(self) -> None:
-        def run_in_loop():
-            with self.monitor:
-                while self.async_futures:
-                    self.async_futures.pop().set_result(None)
+    def _resolve_futures_in_loop(self) -> None:
+        """Must be run from asyncio event loop."""
 
-        if self.async_futures:
-            assert self.async_loop
-            self.async_loop.call_soon_threadsafe(run_in_loop)
+        assert self.async_loop
+        with self.monitor:
+            data_log.debug(
+                "%s: Waking %d async futures",
+                self.pyserial.port,
+                len(self.async_futures),
+            )
+            while self.async_futures:
+                self.async_futures.pop().set_result(None)
 
 
 def _deadline_from_timeout(timeout: float | None) -> float:

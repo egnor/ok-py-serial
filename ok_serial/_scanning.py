@@ -4,6 +4,7 @@ import msgspec
 import natsort
 import re
 import serial.tools.list_ports
+import typeguard
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class PortAttributes(msgspec.Struct, frozen=True, order=True):
     attr: dict[str, str]
 
 
+@typeguard.typechecked
 class PortMatcher:
     """A parsed expression for matching against PortAttributes results"""
 
@@ -74,6 +76,7 @@ class PortMatcher:
         return True
 
 
+@typeguard.typechecked
 def scan_ports() -> list[PortAttributes]:
     """Returns a list of serial ports found on the current system"""
 
