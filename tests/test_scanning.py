@@ -1,9 +1,9 @@
 """Unit tests for ok_serial._scanning."""
 
-import serial.tools.list_ports
-import serial.tools.list_ports_common
+from serial.tools import list_ports
+from serial.tools import list_ports_common
 
-from ok_serial import _scanning
+import ok_serial
 
 
 PARSE_CHECKS = [
@@ -25,16 +25,16 @@ PARSE_CHECKS = [
 ]
 
 
-def test_PortMatcher_init():
+def test_SerialPortMatcher_init():
     for spec, expected in PARSE_CHECKS:
-        actual = _scanning.PortMatcher(spec)._patterns
+        actual = ok_serial.SerialPortMatcher(spec)._patterns
         actual_unwrapped = {k: rx.pattern for k, rx in actual.items()}
         assert actual_unwrapped == expected
 
 
-def test_PortMatcher_matches():
-    PortAttr = _scanning.PortAttributes
-    matcher = _scanning.PortMatcher("*mid* A:a* b:*b")
+def test_SerialPortMatcher_matches():
+    PortAttr = ok_serial.SerialPortAttributes
+    matcher = ok_serial.SerialPortMatcher("*mid* A:a* b:*b")
     for id in [
         PortAttr(port="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
         PortAttr(port="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
@@ -53,9 +53,9 @@ def test_PortMatcher_matches():
 def test_scan_ports(mocker):
     mocker.patch("serial.tools.list_ports.comports")
 
-    bare_port = serial.tools.list_ports_common.ListPortInfo("/dev/zz")
+    bare_port = list_ports_common.ListPortInfo("/dev/zz")
 
-    full_port = serial.tools.list_ports_common.ListPortInfo("/dev/full")
+    full_port = list_ports_common.ListPortInfo("/dev/full")
     full_port.description = "Description"
     full_port.hwid = "HwId"
     full_port.vid = 111
@@ -66,10 +66,10 @@ def test_scan_ports(mocker):
     full_port.product = "Product"
     full_port.interface = "Interface"
 
-    serial.tools.list_ports.comports.return_value = [bare_port, full_port]
+    list_ports.comports.return_value = [bare_port, full_port]
 
-    PortAttr = _scanning.PortAttributes
-    assert _scanning.scan_ports() == [
+    PortAttr = ok_serial.SerialPortAttributes
+    assert ok_serial.scan_serial_ports() == [
         PortAttr(
             port="/dev/full",
             attr={

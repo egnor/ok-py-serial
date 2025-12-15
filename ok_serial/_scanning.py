@@ -3,15 +3,16 @@ import logging
 import msgspec
 import natsort
 import re
-import serial.tools.list_ports
 import typeguard
+from serial.tools import list_ports
+from serial.tools import list_ports_common
 
 from ok_serial import _exceptions
 
 log = logging.getLogger("ok_serial.scanning")
 
 
-class PortAttributes(msgspec.Struct, frozen=True, order=True):
+class SerialPortAttributes(msgspec.Struct, frozen=True, order=True):
     """What we know about a potentially available serial port on the system"""
 
     port: str
@@ -19,8 +20,8 @@ class PortAttributes(msgspec.Struct, frozen=True, order=True):
 
 
 @typeguard.typechecked
-class PortMatcher:
-    """A parsed expression for matching against PortAttributes results"""
+class SerialPortMatcher:
+    """A parsed expression for matching against SerialPortAttributes results"""
 
     _POSINT_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
@@ -35,7 +36,7 @@ class PortMatcher:
         globs: dict[str, str] = {}
         pos = 0
         while pos < len(spec):
-            match = PortMatcher._TERM_RE.match(spec, pos=pos)
+            match = SerialPortMatcher._TERM_RE.match(spec, pos=pos)
             if not (match and match.group(0)):
                 esc_spec = spec.encode("unicode-escape").decode()
                 esc_pos = len(spec[:pos].encode("unicode-escape").decode())
@@ -58,7 +59,7 @@ class PortMatcher:
 
         self._patterns = {}
         for k, glob in globs.items():
-            if PortMatcher._POSINT_RE.fullmatch(glob):
+            if SerialPortMatcher._POSINT_RE.fullmatch(glob):
                 num = int(glob, 0)
                 regex = f"({glob}|{num}|(0x)?0*{num:x}h?)\\Z"
             else:
@@ -67,7 +68,7 @@ class PortMatcher:
 
         log.debug("Parsed %s (%s)", repr(spec), ", ".join(globs.keys()))
 
-    def matches(self, port: PortAttributes) -> bool:
+    def matches(self, port: SerialPortAttributes) -> bool:
         """Tests this matcher against port attributes"""
 
         for k, rx in self._patterns.items():
@@ -79,15 +80,15 @@ class PortMatcher:
 
 
 @typeguard.typechecked
-def scan_ports() -> list[PortAttributes]:
+def scan_serial_ports() -> list[SerialPortAttributes]:
     """Returns a list of serial ports found on the current system"""
 
-    def conv(p: serial.tools.list_ports_common.ListPortInfo) -> PortAttributes:
+    def conv(p: list_ports_common.ListPortInfo) -> SerialPortAttributes:
         _NA = (None, "", "n/a")
         attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
-        return PortAttributes(p.device, attr)
+        return SerialPortAttributes(p.device, attr)
 
-    out = [conv(p) for p in serial.tools.list_ports.comports()]
+    out = [conv(p) for p in list_ports.comports()]
     out.sort(key=natsort.natsort_keygen(key=lambda p: p.port, alg=natsort.ns.P))
     log.debug("Scanned %d ports", len(out))
     return out

@@ -11,14 +11,14 @@ from typing import Literal
 from ok_serial import _exceptions
 
 
-SharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
+SerialSharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
 log = logging.getLogger("ok_serial.locking")
 
 
 @contextlib.contextmanager
 @typeguard.typechecked
-def using_lock_file(port: str, sharing: SharingType):
+def using_lock_file(port: str, sharing: SerialSharingType):
     parts = Path(port).parts[-2:]
     if parts[-1].isdigit() and parts[-2:][0].startswith("pt"):
         lock_path = Path(f"/var/lock/LCK..{'.'.join(parts[-2:])}")
@@ -38,7 +38,7 @@ def using_lock_file(port: str, sharing: SharingType):
 
 @contextlib.contextmanager
 @typeguard.typechecked
-def using_fd_lock(port: str, fd: int, sharing: SharingType):
+def using_fd_lock(port: str, fd: int, sharing: SerialSharingType):
     try:
         if sharing == "polite":
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -52,14 +52,14 @@ def using_fd_lock(port: str, fd: int, sharing: SharingType):
         message = "Serial port busy (flock claimed)"
         raise _exceptions.SerialPortBusy(message, port) from exc
     except OSError:
-        log.warn("Can't lock (flock) %s", port, exc_info=True)
+        log.warning("Can't lock (flock) %s", port, exc_info=True)
 
     try:
         if sharing in ("exclusive", "stomp"):
             fcntl.ioctl(fd, termios.TIOCEXCL)
             log.debug("Acquired TIOCEXCL on %s", port)
     except OSError:
-        log.warn("Can't lock (TIOCEXCL) %s", port, exc_info=True)
+        log.warning("Can't lock (TIOCEXCL) %s", port, exc_info=True)
 
     yield
 
@@ -67,17 +67,19 @@ def using_fd_lock(port: str, fd: int, sharing: SharingType):
         fcntl.ioctl(fd, termios.TIOCNXCL)
         log.debug("Released TIOCEXCL on %s", port)
     except OSError:
-        log.warn("Can't release TIOCEXCL on %s", port, exc_info=True)
+        log.warning("Can't release TIOCEXCL on %s", port, exc_info=True)
 
     try:
         if sharing != "oblivious":
             fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
             log.debug("Released flock on %s", port)
     except OSError:
-        log.warn("Can't release flock on %s", port, exc_info=True)
+        log.warning("Can't release flock on %s", port, exc_info=True)
 
 
-def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
+def _try_lock_file(
+    *, port: str, lock_path: Path, sharing: SerialSharingType
+) -> bool:
     if sharing == "oblivious":
         return True
 
@@ -95,7 +97,7 @@ def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
                 os.kill(owner_pid, signal.SIGTERM)
                 log.debug("Killed owner %d of %s", owner_pid, lock_path)
             except OSError:
-                log.warn(
+                log.warning(
                     "Can't kill owner %d of %s",
                     owner_pid,
                     lock_path,
@@ -111,17 +113,17 @@ def _try_lock_file(*, port: str, lock_path: Path, sharing: SharingType) -> bool:
         with lock_path.open(write_mode) as lock_file:
             lock_file.write(f"{os.getpid():>10d}\n")
     except FileExistsError:
-        log.warn("Conflict creating %s", lock_path)
+        log.warning("Conflict creating %s", lock_path)
         return False  # try again (with a retry limit)
     except OSError:
-        log.warn("Can't create %s", lock_path, exc_info=True)
+        log.warning("Can't create %s", lock_path, exc_info=True)
         return True  # proceed anyway
 
     log.debug("Claimed %s", lock_path)
     return True
 
 
-def _release_lock_file(lock_path: Path, sharing: SharingType) -> None:
+def _release_lock_file(lock_path: Path, sharing: SerialSharingType) -> None:
     if sharing == "oblivious" or _lock_file_owner(lock_path) != os.getpid():
         return
 
@@ -129,7 +131,7 @@ def _release_lock_file(lock_path: Path, sharing: SharingType) -> None:
         lock_path.unlink()
         log.debug("Released %s", lock_path)
     except OSError:
-        log.warn("Can't release %s", lock_path, exc_info=True)
+        log.warning("Can't release %s", lock_path, exc_info=True)
 
 
 def _lock_file_owner(lock_path: Path) -> int | None:
@@ -145,8 +147,8 @@ def _lock_file_owner(lock_path: Path) -> int | None:
             lock_path.unlink()
             log.debug("Removed bad/stale %s", lock_path)
         except OSError:
-            log.warn("Can't remove %s", lock_path, exc_info=True)
+            log.warning("Can't remove %s", lock_path, exc_info=True)
         return None
     except OSError:
-        log.warn("Can't check %s", lock_path, exc_info=True)
+        log.warning("Can't check %s", lock_path, exc_info=True)
         return None

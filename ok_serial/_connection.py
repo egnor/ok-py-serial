@@ -15,19 +15,13 @@ data_log = logging.getLogger(log.name + ".data")
 
 
 @typeguard.typechecked
-class ConnectionClosedException(OSError):
-    def __init__(self, message: str):
-        super().__init__(message)
-
-
-@typeguard.typechecked
 class SerialConnection(contextlib.AbstractContextManager):
     def __init__(
         self,
         port: str,
         *,
         baud: int = 115200,
-        sharing: _locking.SharingType = "exclusive",
+        sharing: _locking.SerialSharingType = "exclusive",
     ):
         with contextlib.ExitStack() as cleanup:
             self._port = port
@@ -185,8 +179,12 @@ class _IoThreads(contextlib.AbstractContextManager):
         while not self.exception:
             incoming, error = b"", None
             try:
-                # TODO: find a more efficient variable-length blocking read?
+                # Block for at least one byte, then grab all available
                 incoming = self.pyserial.read(size=1)
+                if incoming:
+                    waiting = self.pyserial.in_waiting
+                    if waiting > 0:
+                        incoming += self.pyserial.read(size=waiting)
             except OSError as exc:
                 message, port = "Serial read error", self.pyserial.port
                 error = _exceptions.SerialIoFailed(message, port, exc)
@@ -204,11 +202,12 @@ class _IoThreads(contextlib.AbstractContextManager):
 
     def _writeloop(self) -> None:
         log.debug("Starting thread")
+
+        # Avoid blocking on writes to avoid pyserial bugs:
+        # https://github.com/pyserial/pyserial/issues/280
+        # https://github.com/pyserial/pyserial/issues/281
         chunk, error = b"", None
         while not self.exception:
-            # Avoid blocking on writes if at all possible:
-            # https://github.com/pyserial/pyserial/issues/280
-            # https://github.com/pyserial/pyserial/issues/281
             if chunk:
                 try:
                     self.pyserial.write(chunk)
@@ -220,17 +219,17 @@ class _IoThreads(contextlib.AbstractContextManager):
                     data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
-                if chunk or error:
+                if chunk:
                     assert self.outgoing.startswith(chunk)
-                    del self.outgoing[: len(chunk)]
+                    chunk_len, outgoing_len = len(chunk), len(self.outgoing)
+                    data_log.debug("Wrote %d/%db", chunk_len, outgoing_len)
+                    del self.outgoing[:chunk_len]
+                if chunk or error:
                     self.exception = self.exception or error
                     self._notify_all_locked()
-
                 while not self.exception and not self.outgoing:
                     self.monitor.wait()
-
                 chunk = self.outgoing[:256]
-                data_log.debug("Writing %d/%db", len(chunk), len(self.outgoing))
 
     def _notify_all_locked(self) -> None:
         """Must be run with self.monitor lock held."""
