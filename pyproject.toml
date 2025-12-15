@@ -21,7 +21,7 @@ requires = ["uv_build>=0.9.13,<0.10.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = ["black", "mypy", "pytest", "pytest-mock", "ruff"]
+dev = ["black", "mypy", "pytest", "pytest-asyncio", "pytest-mock", "ruff"]
 
 [tool.black]
 line-length = 80
@@ -31,6 +31,7 @@ exclude_gitignore = true
 files = "."
 
 [tool.pytest]
+asyncio_mode = "auto"
 log_level = "CRITICAL"
 strict = true
 

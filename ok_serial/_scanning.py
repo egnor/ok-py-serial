@@ -6,6 +6,8 @@ import re
 import serial.tools.list_ports
 import typeguard
 
+from ok_serial import _exceptions
+
 log = logging.getLogger("ok_serial.scanning")
 
 
@@ -37,7 +39,7 @@ class PortMatcher:
             if not (match and match.group(0)):
                 esc_spec = spec.encode("unicode-escape").decode()
                 esc_pos = len(spec[:pos].encode("unicode-escape").decode())
-                raise SerialMatcherParseFailed(
+                raise _exceptions.SerialMatcherParseFailed(
                     f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
                 )
 
