@@ -15,11 +15,9 @@ log = logging.getLogger("ok_serial.scanning")
 class SerialPortAttributes(pydantic.BaseModel):
     """What we know about a potentially available serial port on the system"""
 
+    model_config = pydantic.ConfigDict(frozen=True)
     port: str
     attr: dict[str, str]
-
-    def __lt__(self, other: "SerialPortAttributes") -> bool:
-        return (self.port, self.attr) < (other.port, other.attr)
 
 
 class SerialPortMatcher:

@@ -11,7 +11,7 @@ log = logging.getLogger("ok_serial.tracker")
 
 class TrackerOptions(pydantic.BaseModel):
     match: _scanning.SerialPortMatcher
-    poll_interval: float = 1.0  # seconds
+    poll_seconds: float = 0.5
 
 
 class SerialTracker(contextlib.AbstractContextManager):
@@ -21,8 +21,8 @@ class SerialTracker(contextlib.AbstractContextManager):
         topts: str | TrackerOptions,
         copts: int | _connection.SerialOptions = _connection.SerialOptions(),
     ):
-        self._topts = (
-            TrackerOptions(match=_scanning.SerialPortMatcher(topts))
-            if isinstance(topts, str)
-            else topts
-        )
+        if isinstance(topts, str):
+            topts = TrackerOptions(match=_scanning.SerialPortMatcher(topts))
+
+        self._tracker_opts = topts
+        self._connection_opts = copts

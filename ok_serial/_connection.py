@@ -22,26 +22,19 @@ class SerialOptions(pydantic.BaseModel):
 
 class SerialConnection(contextlib.AbstractContextManager):
     @pydantic.validate_call
-    def __init__(
-        self, port: str, options: SerialOptions | int = SerialOptions()
-    ):
-        if isinstance(options, int):
-            options = SerialOptions(baud=options)
+    def __init__(self, port: str, opts: SerialOptions | int = SerialOptions()):
+        if isinstance(opts, int):
+            opts = SerialOptions(baud=opts)
 
         with contextlib.ExitStack() as cleanup:
-            self._port = port
-            self._sharing = options.sharing
+            cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
 
-            cleanup.enter_context(
-                _locking.using_lock_file(port, options.sharing)
-            )
-
-            log.debug("Opening %s (%s)", port, options)
+            log.debug("Opening %s (%s)", port, opts)
             try:
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
-                        baudrate=options.baud,
+                        baudrate=opts.baud,
                         write_timeout=0.1,
                     )
                 )
@@ -54,7 +47,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenFailed(message, port) from exc
 
             if hasattr(pyserial, "fileno"):
-                fd, sharing = pyserial.fileno(), options.sharing
+                fd, sharing = pyserial.fileno(), opts.sharing
                 cleanup.enter_context(_locking.using_fd_lock(port, fd, sharing))
 
             self._io = cleanup.enter_context(_IoThreads(pyserial))

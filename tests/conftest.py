@@ -16,10 +16,7 @@ ok_logging_setup.install(
 
 
 class PseudoTtySerial(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(
-        frozen=True, arbitrary_types_allowed=True
-    )
-
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
     path: str
     control: io.FileIO
     simulated: io.FileIO
