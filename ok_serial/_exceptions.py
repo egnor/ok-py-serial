@@ -11,21 +11,21 @@ class OkSerialException(OSError):
         self.port = port
 
 
-class SerialIoFailed(OkSerialException):
+class SerialIoException(OkSerialException):
     pass
 
 
-class SerialIoClosed(SerialIoFailed):
+class SerialIoClosed(SerialIoException):
     pass
 
 
-class SerialOpenFailed(OkSerialException):
+class SerialOpenException(OkSerialException):
     pass
 
 
-class SerialPortBusy(SerialOpenFailed):
+class SerialOpenBusy(SerialOpenException):
     pass
 
 
-class SerialMatcherParseFailed(ValueError):
+class SerialMatcherException(ValueError):
     pass

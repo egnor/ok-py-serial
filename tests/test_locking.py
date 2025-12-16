@@ -108,7 +108,7 @@ def test_raises_when_port_busy(fs):
     # PID 1 (init/systemd) always exists
     lock_path.write_text("         1\n")
 
-    with pytest.raises(_exceptions.SerialPortBusy):
+    with pytest.raises(_exceptions.SerialOpenBusy):
         with _locking.using_lock_file("/dev/ttyUSB0", sharing="exclusive"):
             pass
 
@@ -129,7 +129,6 @@ def test_stomp_overwrites_existing_lock(fs, mocker):
 
 
 def test_reentry_allowed_same_process(fs):
-    """Test that same process can re-enter lock."""
     fs.create_dir("/var/lock")
     lock_path = Path("/var/lock/LCK..ttyUSB0")
 
@@ -140,7 +139,6 @@ def test_reentry_allowed_same_process(fs):
 
 
 def test_missing_lock_directory_proceeds(fs):
-    """Test that missing /var/lock directory doesn't block."""
     # Don't create /var/lock
     with _locking.using_lock_file("/dev/ttyUSB0", sharing="exclusive"):
         pass  # Should succeed without error
@@ -152,7 +150,6 @@ def test_missing_lock_directory_proceeds(fs):
 
 
 def test_fd_lock_oblivious_skips_locking(mocker):
-    """Test oblivious mode doesn't call flock."""
     mock_flock = mocker.patch("fcntl.flock")
     mock_ioctl = mocker.patch("fcntl.ioctl")
 
@@ -164,7 +161,6 @@ def test_fd_lock_oblivious_skips_locking(mocker):
 
 
 def test_fd_lock_polite_uses_shared_lock(mocker):
-    """Test polite mode acquires then downgrades to shared lock."""
     import fcntl
 
     mock_flock = mocker.patch("fcntl.flock")
@@ -181,7 +177,6 @@ def test_fd_lock_polite_uses_shared_lock(mocker):
 
 
 def test_fd_lock_exclusive_uses_exclusive_lock(mocker):
-    """Test exclusive mode acquires exclusive flock."""
     import fcntl
 
     mock_flock = mocker.patch("fcntl.flock")
@@ -195,17 +190,15 @@ def test_fd_lock_exclusive_uses_exclusive_lock(mocker):
 
 
 def test_fd_lock_raises_when_busy(mocker):
-    """Test SerialPortBusy raised when flock fails."""
     mocker.patch("fcntl.flock", side_effect=BlockingIOError())
     mocker.patch("fcntl.ioctl")
 
-    with pytest.raises(_exceptions.SerialPortBusy):
+    with pytest.raises(_exceptions.SerialOpenBusy):
         with _locking.using_fd_lock("/dev/test", fd=999, sharing="exclusive"):
             pass
 
 
 def test_fd_lock_uses_tiocexcl(mocker):
-    """Test exclusive/stomp modes call TIOCEXCL."""
     import termios
 
     mocker.patch("fcntl.flock")

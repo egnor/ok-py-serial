@@ -4,12 +4,12 @@ import errno
 import logging
 import serial
 import threading
-import time
 
 import pydantic
 
 from ok_serial import _exceptions
 from ok_serial import _locking
+from ok_serial import _timeout_math
 
 log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
@@ -38,13 +38,13 @@ class SerialConnection(contextlib.AbstractContextManager):
                         write_timeout=0.1,
                     )
                 )
-            except OSError as exc:
-                if exc.errno == errno.EBUSY:
+            except OSError as ex:
+                if ex.errno == errno.EBUSY:
                     message = "Serial port busy (EBUSY)"
-                    raise _exceptions.SerialPortBusy(message, port) from exc
+                    raise _exceptions.SerialOpenBusy(message, port) from ex
                 else:
                     message = "Serial port open error"
-                    raise _exceptions.SerialOpenFailed(message, port) from exc
+                    raise _exceptions.SerialOpenException(message, port) from ex
 
             if hasattr(pyserial, "fileno"):
                 fd, sharing = pyserial.fileno(), opts.sharing
@@ -73,7 +73,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         max: int = 65536,
         timeout: float | None = None,
     ) -> bytes:
-        deadline = _deadline_from_timeout(timeout)
+        deadline = _timeout_math.to_deadline(timeout)
         while True:
             with self._io.monitor:
                 if len(self._io.incoming) >= min:
@@ -83,10 +83,10 @@ class SerialConnection(contextlib.AbstractContextManager):
                 elif self._io.exception:
                     raise self._io.exception
                 else:
-                    wait_timeout = _timeout_from_deadline(deadline)
-                    if wait_timeout <= 0:
+                    wait = _timeout_math.from_deadline(deadline)
+                    if wait <= 0:
                         return b""
-                    self._io.monitor.wait(timeout=wait_timeout)
+                    self._io.monitor.wait(timeout=wait)
 
     @pydantic.validate_call
     async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
@@ -108,7 +108,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     @pydantic.validate_call
     def drain_sync(self, *, max: int = 0, timeout: float | None = None) -> bool:
-        deadline = _deadline_from_timeout(timeout)
+        deadline = _timeout_math.to_deadline(timeout)
         while True:
             with self._io.monitor:
                 if self._io.exception:
@@ -116,10 +116,10 @@ class SerialConnection(contextlib.AbstractContextManager):
                 elif len(self._io.outgoing) <= max:
                     return True
                 else:
-                    wait_timeout = _timeout_from_deadline(deadline)
-                    if wait_timeout <= 0:
+                    wait = _timeout_math.from_deadline(deadline)
+                    if wait <= 0:
                         return False
-                    self._io.monitor.wait(timeout=wait_timeout)
+                    self._io.monitor.wait(timeout=wait)
 
     @pydantic.validate_call
     async def drain_async(self, max: int = 0) -> bool:
@@ -147,7 +147,7 @@ class _IoThreads(contextlib.AbstractContextManager):
         self.monitor = threading.Condition()
         self.incoming = bytearray()
         self.outgoing = bytearray()
-        self.exception: None | _exceptions.SerialIoFailed = None
+        self.exception: None | _exceptions.SerialIoException = None
         self.async_futures: list[asyncio.Future[None]] = []
         self.async_loop: asyncio.AbstractEventLoop | None
         try:
@@ -194,10 +194,10 @@ class _IoThreads(contextlib.AbstractContextManager):
                     waiting = self.pyserial.in_waiting
                     if waiting > 0:
                         incoming += self.pyserial.read(size=waiting)
-            except OSError as exc:
+            except OSError as ex:
                 message, port = "Serial read error", self.pyserial.port
-                error = _exceptions.SerialIoFailed(message, port)
-                error.__cause__ = exc
+                error = _exceptions.SerialIoException(message, port)
+                error.__cause__ = ex
                 data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
@@ -222,11 +222,11 @@ class _IoThreads(contextlib.AbstractContextManager):
                 try:
                     self.pyserial.write(chunk)
                     self.pyserial.flush()
-                except OSError as exc:
+                except OSError as ex:
                     chunk = b""
                     message, port = "Serial write error", self.pyserial.port
-                    error = _exceptions.SerialIoFailed(message, port)
-                    error.__cause__ = exc
+                    error = _exceptions.SerialIoException(message, port)
+                    error.__cause__ = ex
                     data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
@@ -274,23 +274,6 @@ class _IoThreads(contextlib.AbstractContextManager):
                 self.pyserial.port,
                 len(self.async_futures),
             )
-            while self.async_futures:
-                self.async_futures.pop().set_result(None)
-
-
-def _deadline_from_timeout(timeout: float | None) -> float:
-    if timeout is None or timeout >= threading.TIMEOUT_MAX:
-        return threading.TIMEOUT_MAX
-    elif timeout <= 0:
-        return 0
-    else:
-        return min(threading.TIMEOUT_MAX, time.monotonic() + timeout)
-
-
-def _timeout_from_deadline(deadline: float) -> float:
-    if deadline >= threading.TIMEOUT_MAX:
-        return threading.TIMEOUT_MAX
-    elif deadline <= 0:
-        return 0
-    else:
-        return max(0, deadline - time.monotonic())
+            while f := self.async_futures.pop():
+                if not f.done():
+                    f.set_result(None)

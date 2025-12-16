@@ -1,4 +1,4 @@
-"""Unit tests for ok_serial._connection."""
+"""Unit tests for ok_serial.SerialConnection."""
 
 import asyncio
 import termios
@@ -7,7 +7,6 @@ import time
 import pytest
 
 import ok_serial
-from ok_serial import _connection
 from ok_serial import _exceptions
 
 #
@@ -362,37 +361,3 @@ async def test_large_async_read(pty_serial):
             chunk = await conn.read_async(min=1, max=512 - len(received))
             received += chunk
         assert received == data
-
-
-#
-# Utility function tests
-#
-
-
-def test_deadline_from_timeout(mocker):
-    TMAX = threading.TIMEOUT_MAX
-    mocker.patch("time.monotonic")
-    time.monotonic.return_value = 1000.0
-
-    assert _connection._deadline_from_timeout(-1) == 0
-    assert _connection._deadline_from_timeout(0) == 0
-    assert _connection._deadline_from_timeout(1) == 1001.0
-    assert _connection._deadline_from_timeout(None) == TMAX
-    assert _connection._deadline_from_timeout(TMAX - 1) == TMAX
-    assert _connection._deadline_from_timeout(TMAX) == TMAX
-    assert _connection._deadline_from_timeout(TMAX + 1) == TMAX
-
-
-def test_timeout_from_deadline(mocker):
-    TMAX = threading.TIMEOUT_MAX
-    mocker.patch("time.monotonic")
-    time.monotonic.return_value = 1000.0
-
-    assert _connection._timeout_from_deadline(-1) == 0
-    assert _connection._timeout_from_deadline(0) == 0
-    assert _connection._timeout_from_deadline(999) == 0
-    assert _connection._timeout_from_deadline(1000) == 0
-    assert _connection._timeout_from_deadline(1001) == 1
-    assert _connection._timeout_from_deadline(TMAX - 1) == TMAX - 1001
-    assert _connection._timeout_from_deadline(TMAX) == TMAX
-    assert _connection._timeout_from_deadline(TMAX + 1) == TMAX

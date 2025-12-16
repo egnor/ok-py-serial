@@ -30,7 +30,7 @@ def using_lock_file(port: str, sharing: SerialSharingType):
             break
     else:
         message = "Serial port busy (retries exceeded)"
-        raise _exceptions.SerialPortBusy(message, port)
+        raise _exceptions.SerialOpenBusy(message, port)
 
     yield
 
@@ -49,9 +49,9 @@ def using_fd_lock(port: str, fd: int, sharing: SerialSharingType):
         elif sharing != "oblivious":
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             log.debug("Acquired flock(LOCK_EX) on %s", port)
-    except BlockingIOError as exc:
+    except BlockingIOError as ex:
         message = "Serial port busy (flock claimed)"
-        raise _exceptions.SerialPortBusy(message, port) from exc
+        raise _exceptions.SerialOpenBusy(message, port) from ex
     except OSError:
         log.warning("Can't lock (flock) %s", port, exc_info=True)
 
@@ -107,7 +107,7 @@ def _try_lock_file(
         else:
             log.debug("PID %d owns %s", owner_pid, lock_path)
             message = f"Serial port busy ({lock_path}: pid={owner_pid})"
-            raise _exceptions.SerialPortBusy(message, port)
+            raise _exceptions.SerialOpenBusy(message, port)
 
     try:
         write_mode = "wt" if sharing == "stomp" else "xt"

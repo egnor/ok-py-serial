@@ -41,7 +41,7 @@ class SerialPortMatcher:
             if not (match and match.group(0)):
                 esc_spec = spec.encode("unicode-escape").decode()
                 esc_pos = len(spec[:pos].encode("unicode-escape").decode())
-                raise _exceptions.SerialMatcherParseFailed(
+                raise _exceptions.SerialMatcherException(
                     f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
                 )
 
