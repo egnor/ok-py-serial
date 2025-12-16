@@ -61,6 +61,9 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self._cleanup.__exit__(exc_type, exc_value, traceback)
 
+    def __repr__(self) -> str:
+        return f"SerialConnection({self._io.pyserial.port!r})"
+
     @pydantic.validate_call
     def close(self) -> None:
         self._cleanup.close()

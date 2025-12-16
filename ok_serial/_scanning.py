@@ -67,7 +67,11 @@ class SerialPortMatcher:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)
 
+        self.spec = spec
         log.debug("Parsed %s (%s)", repr(spec), ", ".join(globs.keys()))
+
+    def __repr__(self) -> str:
+        return f"SerialPortMatcher({self.spec!r})"
 
     @pydantic.validate_call
     def matches(self, port: SerialPortAttributes) -> bool:
