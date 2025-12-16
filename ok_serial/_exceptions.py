@@ -6,11 +6,9 @@ class OkSerialException(OSError):
         self,
         message: str,
         port: str | None = None,
-        cause: Exception | None = None,
     ):
         super().__init__(f"{port}: {message}" if port else message)
         self.port = port
-        self.__cause__ = cause
 
 
 class SerialIoFailed(OkSerialException):

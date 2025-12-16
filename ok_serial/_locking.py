@@ -4,9 +4,10 @@ import logging
 import os
 import signal
 import termios
-import typeguard
 from pathlib import Path
 from typing import Literal
+
+import pydantic
 
 from ok_serial import _exceptions
 
@@ -17,7 +18,7 @@ log = logging.getLogger("ok_serial.locking")
 
 
 @contextlib.contextmanager
-@typeguard.typechecked
+@pydantic.validate_call
 def using_lock_file(port: str, sharing: SerialSharingType):
     parts = Path(port).parts[-2:]
     if parts[-1].isdigit() and parts[-2:][0].startswith("pt"):
@@ -37,7 +38,7 @@ def using_lock_file(port: str, sharing: SerialSharingType):
 
 
 @contextlib.contextmanager
-@typeguard.typechecked
+@pydantic.validate_call
 def using_fd_lock(port: str, fd: int, sharing: SerialSharingType):
     try:
         if sharing == "polite":

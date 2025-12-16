@@ -1,10 +1,11 @@
 import contextlib
-import msgspec
+import io
 import ok_logging_setup
 import os
 import pty
 import pytest
-import typing
+
+import pydantic
 
 ok_logging_setup.install(
     {
@@ -14,10 +15,14 @@ ok_logging_setup.install(
 )
 
 
-class PseudoTtySerial(msgspec.Struct, frozen=True):
+class PseudoTtySerial(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        frozen=True, arbitrary_types_allowed=True
+    )
+
     path: str
-    control: typing.IO[bytes]
-    simulated: typing.IO[bytes]
+    control: io.FileIO
+    simulated: io.FileIO
 
 
 @pytest.fixture

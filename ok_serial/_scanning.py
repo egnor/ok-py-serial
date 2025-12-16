@@ -1,25 +1,27 @@
 import fnmatch
 import logging
-import msgspec
 import natsort
 import re
-import typeguard
 from serial.tools import list_ports
 from serial.tools import list_ports_common
+
+import pydantic
 
 from ok_serial import _exceptions
 
 log = logging.getLogger("ok_serial.scanning")
 
 
-class SerialPortAttributes(msgspec.Struct, frozen=True, order=True):
+class SerialPortAttributes(pydantic.BaseModel):
     """What we know about a potentially available serial port on the system"""
 
     port: str
     attr: dict[str, str]
 
+    def __lt__(self, other: "SerialPortAttributes") -> bool:
+        return (self.port, self.attr) < (other.port, other.attr)
 
-@typeguard.typechecked
+
 class SerialPortMatcher:
     """A parsed expression for matching against SerialPortAttributes results"""
 
@@ -29,6 +31,7 @@ class SerialPortMatcher:
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
     )
 
+    @pydantic.validate_call
     def __init__(self, spec: str):
         """Parses string 'spec' as a fielded glob matcher on port attributes"""
 
@@ -68,6 +71,7 @@ class SerialPortMatcher:
 
         log.debug("Parsed %s (%s)", repr(spec), ", ".join(globs.keys()))
 
+    @pydantic.validate_call
     def matches(self, port: SerialPortAttributes) -> bool:
         """Tests this matcher against port attributes"""
 
@@ -79,14 +83,14 @@ class SerialPortMatcher:
         return True
 
 
-@typeguard.typechecked
+@pydantic.validate_call
 def scan_serial_ports() -> list[SerialPortAttributes]:
     """Returns a list of serial ports found on the current system"""
 
     def conv(p: list_ports_common.ListPortInfo) -> SerialPortAttributes:
         _NA = (None, "", "n/a")
         attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
-        return SerialPortAttributes(p.device, attr)
+        return SerialPortAttributes(port=p.device, attr=attr)
 
     out = [conv(p) for p in list_ports.comports()]
     out.sort(key=natsort.natsort_keygen(key=lambda p: p.port, alg=natsort.ns.P))

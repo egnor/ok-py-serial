@@ -8,11 +8,10 @@ urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
 version = "0.1"
 dependencies = [
-  "msgspec>=0.20.0",
   "natsort>=8.4.0",
   "ok-logging-setup>=0.11",
+  "pydantic>=2.0",
   "pyserial>=3.5",
-  "typeguard>=4.4.4",
   "types-pyserial>=3.5.0.20251001",
 ]
 

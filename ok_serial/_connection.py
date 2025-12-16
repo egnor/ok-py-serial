@@ -2,11 +2,11 @@ import asyncio
 import contextlib
 import errno
 import logging
-import msgspec
 import serial
 import threading
 import time
-import typeguard
+
+import pydantic
 
 from ok_serial import _exceptions
 from ok_serial import _locking
@@ -15,32 +15,33 @@ log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
-class SerialOptions(msgspec.Struct, forbid_unknown_fields=True):
+class SerialOptions(pydantic.BaseModel):
     baud: int = 115200
     sharing: _locking.SerialSharingType = "exclusive"
 
-    def __post_init__(self):
-        pass
 
-
-@typeguard.typechecked
 class SerialConnection(contextlib.AbstractContextManager):
-    def __init__(self, port: str, options: OptionsType | int = OptionsType()):
+    @pydantic.validate_call
+    def __init__(
+        self, port: str, options: SerialOptions | int = SerialOptions()
+    ):
         if isinstance(options, int):
-            options = SerialOptions(options)
+            options = SerialOptions(baud=options)
 
         with contextlib.ExitStack() as cleanup:
             self._port = port
-            self._sharing = opts.sharing
+            self._sharing = options.sharing
 
-            cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
+            cleanup.enter_context(
+                _locking.using_lock_file(port, options.sharing)
+            )
 
-            log.debug("Opening %s (%s)", port, opts)
+            log.debug("Opening %s (%s)", port, options)
             try:
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
-                        baudrate=opts.baud,
+                        baudrate=options.baud,
                         write_timeout=0.1,
                     )
                 )
@@ -53,7 +54,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenFailed(message, port) from exc
 
             if hasattr(pyserial, "fileno"):
-                fd, sharing = pyserial.fileno(), opts.sharing
+                fd, sharing = pyserial.fileno(), options.sharing
                 cleanup.enter_context(_locking.using_fd_lock(port, fd, sharing))
 
             self._io = cleanup.enter_context(_IoThreads(pyserial))
@@ -67,9 +68,11 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self._cleanup.__exit__(exc_type, exc_value, traceback)
 
+    @pydantic.validate_call
     def close(self) -> None:
         self._cleanup.close()
 
+    @pydantic.validate_call
     def read_sync(
         self,
         *,
@@ -92,6 +95,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                         return b""
                     self._io.monitor.wait(timeout=wait_timeout)
 
+    @pydantic.validate_call
     async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
@@ -100,6 +104,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 return out
             await future
 
+    @pydantic.validate_call
     def write(self, data: bytes) -> None:
         with self._io.monitor:
             if self._io.exception:
@@ -108,6 +113,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
+    @pydantic.validate_call
     def drain_sync(self, *, max: int = 0, timeout: float | None = None) -> bool:
         deadline = _deadline_from_timeout(timeout)
         while True:
@@ -122,6 +128,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                         return False
                     self._io.monitor.wait(timeout=wait_timeout)
 
+    @pydantic.validate_call
     async def drain_async(self, max: int = 0) -> bool:
         while True:
             future = self._io.create_future_in_loop()  # BEFORE drain_sync
@@ -129,10 +136,12 @@ class SerialConnection(contextlib.AbstractContextManager):
                 return True
             await future
 
+    @pydantic.validate_call
     def incoming_size(self) -> int:
         with self._io.monitor:
             return len(self._io.incoming)
 
+    @pydantic.validate_call
     def outgoing_size(self) -> int:
         with self._io.monitor:
             return len(self._io.outgoing)
@@ -194,7 +203,8 @@ class _IoThreads(contextlib.AbstractContextManager):
                         incoming += self.pyserial.read(size=waiting)
             except OSError as exc:
                 message, port = "Serial read error", self.pyserial.port
-                error = _exceptions.SerialIoFailed(message, port, exc)
+                error = _exceptions.SerialIoFailed(message, port)
+                error.__cause__ = exc
                 data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:
@@ -222,7 +232,8 @@ class _IoThreads(contextlib.AbstractContextManager):
                 except OSError as exc:
                     chunk = b""
                     message, port = "Serial write error", self.pyserial.port
-                    error = _exceptions.SerialIoFailed(message, port, exc)
+                    error = _exceptions.SerialIoFailed(message, port)
+                    error.__cause__ = exc
                     data_log.warn("%s", message, exc_info=True)
 
             with self.monitor:

@@ -16,7 +16,7 @@ from ok_serial import _exceptions
 
 
 def test_basic_connection(pty_serial):
-    with ok_serial.SerialConnection(pty_serial.path, baud=57600) as conn:
+    with ok_serial.SerialConnection(pty_serial.path, 57600) as conn:
         tcattr = termios.tcgetattr(pty_serial.simulated.fileno())
         iflag, oflag, cflag, lflag, ispeed, ospeed, cc = tcattr
         assert ispeed == termios.B57600
