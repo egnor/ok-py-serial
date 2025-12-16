@@ -15,16 +15,19 @@ log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
-class SerialOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+class SerialOptions(msgspec.Struct, forbid_unknown_fields=True):
     baud: int = 115200
     sharing: _locking.SerialSharingType = "exclusive"
+
+    def __post_init__(self):
+        pass
 
 
 @typeguard.typechecked
 class SerialConnection(contextlib.AbstractContextManager):
-    def __init__(self, port: str, opts: SerialOptions | int = SerialOptions()):
-        opts = SerialOptions(opts) if isinstance(opts, int) else opts
-        opts = msgspec.convert(msgspec.to_builtins(opts), SerialOptions)
+    def __init__(self, port: str, options: OptionsType | int = OptionsType()):
+        if isinstance(options, int):
+            options = SerialOptions(options)
 
         with contextlib.ExitStack() as cleanup:
             self._port = port
