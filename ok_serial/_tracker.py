@@ -55,11 +55,11 @@ class SerialTracker(contextlib.AbstractContextManager):
                         self._conn.write(b"")
                         return self._conn
                     except _exceptions.SerialIoClosed:
-                        log.debug("%s closed, will rescan", self._conn.port)
+                        log.debug("%s closed, scanning", self._conn.port)
                         self._conn = None
-                    except _exceptions.SerialIoException:
-                        msg, port = "%s failed, will rescan", self._conn.port
-                        log.warning(msg, port, exc_info=True)
+                    except _exceptions.SerialIoException as exc:
+                        msg, port = "%s failed, scanning (%s)", self._conn.port
+                        log.warning(msg, port, exc)
                         self._conn.close()
                         self._conn = None
 
@@ -76,8 +76,8 @@ class SerialTracker(contextlib.AbstractContextManager):
                             self._conn = _connection.SerialConnection(port, opt)
                             log.debug(f"Opened {port}")
                             return self._conn
-                        except _exceptions.SerialOpenException:
-                            log.warning("Can't open %s", port, exc_info=True)
+                        except _exceptions.SerialOpenException as exc:
+                            log.warning("Can't open %s (%s)", port, exc)
 
                     interval = self._tracker_opts.scan_interval
                     self._next_scan = time.monotonic() + interval

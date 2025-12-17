@@ -188,8 +188,8 @@ class _IoThreads(contextlib.AbstractContextManager):
             self.pyserial.cancel_read()
             self.pyserial.cancel_write()
             log.debug("Cancelled %s I/O", self.pyserial.port)
-        except OSError:
-            log.warn("Can't cancel %s I/O", self.pyserial.port, exc_info=True)
+        except OSError as ex:
+            log.warning("Can't cancel %s I/O (%s)", self.pyserial.port, ex)
 
         log.debug("Joining %s I/O threads", self.pyserial.port)
         for thr in self.threads:
@@ -210,7 +210,7 @@ class _IoThreads(contextlib.AbstractContextManager):
                 message, port = "Serial read error", self.pyserial.port
                 error = _exceptions.SerialIoException(message, port)
                 error.__cause__ = ex
-                data_log.warn("%s", message, exc_info=True)
+                data_log.warning("%s (%s)", message, ex)
 
             with self.monitor:
                 if incoming:
@@ -239,7 +239,7 @@ class _IoThreads(contextlib.AbstractContextManager):
                     message, port = "Serial write error", self.pyserial.port
                     error = _exceptions.SerialIoException(message, port)
                     error.__cause__ = ex
-                    data_log.warn("%s", message, exc_info=True)
+                    data_log.warning("%s (%s)", message, ex)
 
             with self.monitor:
                 if chunk:
