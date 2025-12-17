@@ -14,6 +14,7 @@ log = logging.getLogger("ok_serial.tracker")
 
 
 class TrackerOptions(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
     matcher: _scanning.SerialPortMatcher
     scan_interval: float = 0.5
 
@@ -52,7 +53,7 @@ class SerialTracker(contextlib.AbstractContextManager):
             with self._conn_lock:
                 if self._conn:
                     try:
-                        self._conn.write(b"")
+                        self._conn.write(b"")  # check for liveness
                         return self._conn
                     except _exceptions.SerialIoClosed:
                         log.debug("%s closed, scanning", self._conn.port)
@@ -63,8 +64,7 @@ class SerialTracker(contextlib.AbstractContextManager):
                         self._conn.close()
                         self._conn = None
 
-                poll_wait = _timeout_math.from_deadline(self._next_scan)
-                if poll_wait <= 0:
+                if _timeout_math.from_deadline(self._next_scan) <= 0:
                     ports = _scanning.scan_serial_ports()
                     matcher = self._tracker_opts.matcher
                     matching = [p for p in ports if matcher.matches(p)]
@@ -82,11 +82,14 @@ class SerialTracker(contextlib.AbstractContextManager):
                     interval = self._tracker_opts.scan_interval
                     self._next_scan = time.monotonic() + interval
 
-            wait = min(poll_wait, _timeout_math.from_deadline(deadline))
-            if wait <= 0:
+                poll_wait = _timeout_math.from_deadline(self._next_scan)
+                log.debug("Next scan in %.2fs", poll_wait)
+
+            timeout_wait = _timeout_math.from_deadline(deadline)
+            if timeout_wait <= 0:
                 return None
-            log.debug("Next scan in %.2fs", wait)
-            time.sleep(wait)
+
+            time.sleep(min(poll_wait, timeout_wait))
 
     async def connect_async(self) -> _connection.SerialConnection:
         while True:

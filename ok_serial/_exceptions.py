@@ -27,5 +27,9 @@ class SerialOpenBusy(SerialOpenException):
     pass
 
 
-class SerialMatcherException(ValueError):
+class SerialScanException(OkSerialException):
+    pass
+
+
+class SerialMatcherInvalid(ValueError):
     pass

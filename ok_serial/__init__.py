@@ -4,6 +4,15 @@ port sharing semantics, and interface.
 """
 
 from ok_serial._connection import SerialConnection
+from ok_serial._exceptions import (
+    OkSerialException,
+    SerialIoClosed,
+    SerialIoException,
+    SerialMatcherInvalid,
+    SerialOpenBusy,
+    SerialOpenException,
+    SerialScanException,
+)
 from ok_serial._locking import SerialSharingType
 from ok_serial._scanning import (
     SerialPortAttributes,

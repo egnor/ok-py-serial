@@ -1,6 +1,8 @@
 import fnmatch
 import logging
 import natsort
+import os
+import pathlib
 import re
 from serial.tools import list_ports
 from serial.tools import list_ports_common
@@ -41,7 +43,7 @@ class SerialPortMatcher:
             if not (match and match.group(0)):
                 esc_spec = spec.encode("unicode-escape").decode()
                 esc_pos = len(spec[:pos].encode("unicode-escape").decode())
-                raise _exceptions.SerialMatcherException(
+                raise _exceptions.SerialMatcherInvalid(
                     f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
                 )
 
@@ -85,16 +87,36 @@ class SerialPortMatcher:
         return True
 
 
+_scan_override_adapter = pydantic.TypeAdapter(dict[str, dict[str, str]])
+
+
 @pydantic.validate_call
 def scan_serial_ports() -> list[SerialPortAttributes]:
     """Returns a list of serial ports found on the current system"""
+
+    ov_path = os.getenv("OK_SERIAL_SCAN_OVERRIDE")
+    if ov_path:
+        try:
+            ov_data = pathlib.Path(ov_path).read_bytes()
+            ov = _scan_override_adapter.validate_json(ov_data)
+        except (OSError, ValueError) as ex:
+            msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov_path}"
+            raise _exceptions.SerialScanException(msg) from ex
+
+        out = [SerialPortAttributes(port=p, attr=a) for p, a in ov.items()]
+        log.debug("$OK_SERIAL_SCAN_OVERRIDE (%s): %d ports", ov_path, len(out))
+        return out
 
     def conv(p: list_ports_common.ListPortInfo) -> SerialPortAttributes:
         _NA = (None, "", "n/a")
         attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
         return SerialPortAttributes(port=p.device, attr=attr)
 
-    out = [conv(p) for p in list_ports.comports()]
+    try:
+        out = [conv(p) for p in list_ports.comports()]
+    except OSError as ex:
+        raise _exceptions.SerialScanException("Can't scan serial ports") from ex
+
     out.sort(key=natsort.natsort_keygen(key=lambda p: p.port, alg=natsort.ns.P))
-    log.debug("Scanned %d ports", len(out))
+    log.debug("Scanned %d serial ports", len(out))
     return out

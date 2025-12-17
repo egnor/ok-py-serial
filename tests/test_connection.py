@@ -7,7 +7,6 @@ import time
 import pytest
 
 import ok_serial
-from ok_serial import _exceptions
 
 #
 # Basic smoke test
@@ -248,13 +247,13 @@ def test_operations_after_close_raise(pty_serial):
     conn = ok_serial.SerialConnection(pty_serial.path)
     conn.close()
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         conn.read_sync(min=1, timeout=1.0)
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         conn.write(b"test")
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         conn.drain_sync(timeout=1.0)
 
 
@@ -263,10 +262,10 @@ async def test_async_operations_after_close_raise(pty_serial):
     conn = ok_serial.SerialConnection(pty_serial.path)
     conn.close()
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         await conn.read_async(min=1)
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         await conn.drain_async()
 
 
@@ -276,7 +275,7 @@ def test_context_manager_closes_on_exit(pty_serial):
         conn.write(b"test")
         conn.drain_sync(timeout=1.0)
 
-    with pytest.raises(_exceptions.SerialIoClosed):
+    with pytest.raises(ok_serial.SerialIoClosed):
         conn.read_sync(min=1, timeout=0.1)
 
 

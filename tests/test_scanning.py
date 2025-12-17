@@ -1,5 +1,7 @@
 """Unit tests for ok_serial._scanning."""
 
+import json
+import pytest
 from serial.tools import list_ports
 from serial.tools import list_ports_common
 
@@ -87,4 +89,28 @@ def test_scan_ports(mocker):
             },
         ),
         PortAttr(port="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
+    ]
+
+
+def test_scan_parts_with_override(monkeypatch, tmp_path):
+    override_path = tmp_path / "scan_override.json"
+    monkeypatch.setenv("OK_SERIAL_SCAN_OVERRIDE", str(override_path))
+    with pytest.raises(ok_serial.SerialScanException):
+        ok_serial.scan_serial_ports()  # fails: file does not exist
+
+    override_path.write_text("bad json")
+    with pytest.raises(ok_serial.SerialScanException):
+        ok_serial.scan_serial_ports()  # fails: format is invalid
+
+    override_path.write_text(json.dumps({"bad": {"entry": None}}))
+    with pytest.raises(ok_serial.SerialScanException):
+        ok_serial.scan_serial_ports()  # fails: structure is invalid
+
+    override = {"port1": {"aname": "avalue", "bname": "bvalue"}, "port2": {}}
+    override_path.write_text(json.dumps(override))
+
+    PortAttr = ok_serial.SerialPortAttributes
+    assert ok_serial.scan_serial_ports() == [
+        PortAttr(port="port1", attr={"aname": "avalue", "bname": "bvalue"}),
+        PortAttr(port="port2", attr={}),
     ]
