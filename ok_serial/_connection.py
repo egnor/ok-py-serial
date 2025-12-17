@@ -64,6 +64,14 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __repr__(self) -> str:
         return f"SerialConnection({self._io.pyserial.port!r})"
 
+    @property
+    def port(self):
+        return self._io.pyserial.port
+
+    @property
+    def pyserial(self):
+        return self._io.pyserial
+
     @pydantic.validate_call
     def close(self) -> None:
         self._cleanup.close()
@@ -170,9 +178,10 @@ class _IoThreads(contextlib.AbstractContextManager):
 
     def stop(self):
         with self.monitor:
-            if not self.exception:
+            if not isinstance(self.exception, _exceptions.SerialIoClosed):
                 message, port = "Serial port closed", self.pyserial.port
-                self.exception = _exceptions.SerialIoClosed(message, port)
+                exc = _exceptions.SerialIoClosed(message, port)
+                exc.__context__, self.exception = self.exception, exc
                 self._notify_all_locked()
 
         try:

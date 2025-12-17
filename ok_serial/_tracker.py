@@ -31,7 +31,6 @@ class SerialTracker(contextlib.AbstractContextManager):
         self._tracker_opts = topts
         self._conn_opts = copts
         self._conn_lock = threading.Lock()
-        self._conn_port: str = "(no connection)"
         self._conn: _connection.SerialConnection | None = None
         self._next_scan = 0.0
 
@@ -56,12 +55,13 @@ class SerialTracker(contextlib.AbstractContextManager):
                         self._conn.write(b"")
                         return self._conn
                     except _exceptions.SerialIoClosed:
-                        pass
+                        log.debug("%s closed, will rescan", self._conn.port)
+                        self._conn = None
                     except _exceptions.SerialIoException:
-                        log.warning("%s failed, will rescan", self._conn_port)
+                        msg, port = "%s failed, will rescan", self._conn.port
+                        log.warning(msg, port, exc_info=True)
                         self._conn.close()
                         self._conn = None
-                        raise
 
                 poll_wait = _timeout_math.from_deadline(self._next_scan)
                 if poll_wait <= 0:
@@ -74,7 +74,6 @@ class SerialTracker(contextlib.AbstractContextManager):
                         port, opt = attr.port, self._conn_opts
                         try:
                             self._conn = _connection.SerialConnection(port, opt)
-                            self._conn_port = port
                             log.debug(f"Opened {port}")
                             return self._conn
                         except _exceptions.SerialOpenException:
