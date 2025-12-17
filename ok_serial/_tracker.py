@@ -31,6 +31,7 @@ class SerialTracker(contextlib.AbstractContextManager):
         self._tracker_opts = topts
         self._conn_opts = copts
         self._conn_lock = threading.Lock()
+        self._conn_port: str = "(no connection)"
         self._conn: _connection.SerialConnection | None = None
         self._next_scan = 0.0
 
@@ -44,7 +45,7 @@ class SerialTracker(contextlib.AbstractContextManager):
     def __repr__(self) -> str:
         return f"SerialTracker({self._tracker_opts!r}, {self._conn_opts!r})"
 
-    def get_connection_sync(
+    def connect_sync(
         self, timeout: float | None = None
     ) -> _connection.SerialConnection | None:
         deadline = _timeout_math.to_deadline(timeout)
@@ -54,8 +55,10 @@ class SerialTracker(contextlib.AbstractContextManager):
                     try:
                         self._conn.write(b"")
                         return self._conn
+                    except _exceptions.SerialIoClosed:
+                        pass
                     except _exceptions.SerialIoException:
-                        log.warning("Connection failed, will rescan")
+                        log.warning("%s failed, will rescan", self._conn_port)
                         self._conn.close()
                         self._conn = None
                         raise
@@ -66,15 +69,16 @@ class SerialTracker(contextlib.AbstractContextManager):
                     matcher = self._tracker_opts.matcher
                     matching = [p for p in ports if matcher.matches(p)]
                     np, nm = len(ports), len(matching)
-                    log.warning("Scanned %d ports, %d match...", np, nm)
+                    log.debug('%d/%d ports match "%s"', nm, np, matcher.spec)
                     for attr in matching:
+                        port, opt = attr.port, self._conn_opts
                         try:
-                            port, opt = attr.port, self._conn_opts
                             self._conn = _connection.SerialConnection(port, opt)
+                            self._conn_port = port
                             log.debug(f"Opened {port}")
                             return self._conn
-                        except _exceptions.SerialIoException:
-                            log.warning("Can't open %s", exc_info=True)
+                        except _exceptions.SerialOpenException:
+                            log.warning("Can't open %s", port, exc_info=True)
 
                     interval = self._tracker_opts.scan_interval
                     self._next_scan = time.monotonic() + interval
@@ -85,10 +89,12 @@ class SerialTracker(contextlib.AbstractContextManager):
             log.debug("Next scan in %.2fs", wait)
             time.sleep(wait)
 
-    async def get_connection_async(self) -> _connection.SerialConnection:
-        while not (conn := self.get_connection_sync(timeout=0)):
+    async def connect_async(self) -> _connection.SerialConnection:
+        while True:
             with self._conn_lock:
-                poll_wait = _timeout_math.from_deadline(self._next_scan)
-            await asyncio.sleep(poll_wait)
-
-        return conn
+                next_scan = self._next_scan
+            if conn := self.connect_sync(timeout=0):
+                return conn
+            wait = _timeout_math.from_deadline(next_scan)
+            log.debug("Next scan in %.2fs", wait)
+            await asyncio.sleep(wait)

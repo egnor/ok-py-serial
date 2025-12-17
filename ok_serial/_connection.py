@@ -29,7 +29,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         with contextlib.ExitStack() as cleanup:
             cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
 
-            log.debug("Opening %s (%s)", port, opts)
+            log.debug("Opening %s %s", port, opts)
             try:
                 pyserial = cleanup.enter_context(
                     serial.Serial(
@@ -171,9 +171,9 @@ class _IoThreads(contextlib.AbstractContextManager):
     def stop(self):
         with self.monitor:
             if not self.exception:
-                message, port = "Serial port was closed", self.pyserial.port
+                message, port = "Serial port closed", self.pyserial.port
                 self.exception = _exceptions.SerialIoClosed(message, port)
-            self.monitor.notify_all()
+                self._notify_all_locked()
 
         try:
             self.pyserial.cancel_read()
@@ -254,7 +254,7 @@ class _IoThreads(contextlib.AbstractContextManager):
             self.async_loop.call_soon_threadsafe(self._resolve_futures_in_loop)
 
     def create_future_in_loop(self) -> asyncio.Future[None]:
-        """Must be run from asyncio event loop."""
+        """Must be run from an asyncio event loop."""
 
         assert self.async_loop
         with self.monitor:
@@ -268,15 +268,15 @@ class _IoThreads(contextlib.AbstractContextManager):
             return future
 
     def _resolve_futures_in_loop(self) -> None:
-        """Must be run from asyncio event loop."""
+        """Must be run from an asyncio event loop."""
 
+        # Exceptions will be handled by the event loop exception handler
         assert self.async_loop
         with self.monitor:
-            data_log.debug(
-                "%s: Waking %d async futures",
-                self.pyserial.port,
-                len(self.async_futures),
-            )
-            while f := self.async_futures.pop():
-                if not f.done():
-                    f.set_result(None)
+            to_resolve, self.async_futures = self.async_futures, []
+
+        port = self.pyserial.port
+        data_log.debug("%s: Waking %d async futures", port, len(to_resolve))
+        for future in to_resolve:
+            if not future.done():
+                future.set_result(None)
