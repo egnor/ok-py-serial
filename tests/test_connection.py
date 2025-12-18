@@ -7,6 +7,8 @@ import time
 import pytest
 
 import ok_serial
+import serial
+from ok_serial._connection import SerialSignals
 
 #
 # Basic smoke test
@@ -360,3 +362,62 @@ async def test_large_async_read(pty_serial):
             chunk = await conn.read_async(min=1, max=512 - len(received))
             received += chunk
         assert received == data
+
+
+#
+# Serial signals (DTR, RTS, etc.)
+#
+
+
+def test_get_signals(pty_serial, mocker):
+    with ok_serial.SerialConnection(pty_serial.path) as conn:
+        mocker.patch.object(serial.Serial, "dtr", new_callable=lambda: True)
+        mocker.patch.object(serial.Serial, "dsr", new_callable=lambda: False)
+        mocker.patch.object(serial.Serial, "cts", new_callable=lambda: True)
+        mocker.patch.object(serial.Serial, "rts", new_callable=lambda: False)
+        mocker.patch.object(
+            serial.Serial, "break_condition", new_callable=lambda: True
+        )
+
+        signals = conn.get_signals()
+        assert isinstance(signals, SerialSignals)
+        assert signals == SerialSignals(
+            dtr=True, dsr=False, cts=True, rts=False, send_break=True
+        )
+
+
+def test_set_signals(pty_serial, mocker):
+    with ok_serial.SerialConnection(pty_serial.path) as conn:
+        mock_dtr = mocker.patch.object(
+            serial.Serial, "dtr", new_callable=mocker.PropertyMock
+        )
+        mock_dsr = mocker.patch.object(
+            serial.Serial, "dsr", new_callable=mocker.PropertyMock
+        )
+        mock_rts = mocker.patch.object(
+            serial.Serial, "rts", new_callable=mocker.PropertyMock
+        )
+        mock_cts = mocker.patch.object(
+            serial.Serial, "cts", new_callable=mocker.PropertyMock
+        )
+        mock_break = mocker.patch.object(
+            serial.Serial, "break_condition", new_callable=mocker.PropertyMock
+        )
+
+        conn.set_signals(SerialSignals(dtr=True, rts=False, send_break=True))
+        mock_dtr.assert_called_with(True)
+        mock_dsr.assert_not_called()
+        mock_rts.assert_called_with(False)
+        mock_cts.assert_not_called()
+        mock_break.assert_called_with(True)
+
+
+def test_signals_after_close_raises(pty_serial):
+    conn = ok_serial.SerialConnection(pty_serial.path)
+    conn.close()
+
+    with pytest.raises(ok_serial.SerialIoClosed):
+        conn.get_signals()
+
+    with pytest.raises(ok_serial.SerialIoClosed):
+        conn.set_signals(SerialSignals(dtr=True))

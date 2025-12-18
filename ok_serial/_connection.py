@@ -2,10 +2,10 @@ import asyncio
 import contextlib
 import errno
 import logging
+import pydantic
 import serial
 import threading
-
-import pydantic
+import typing
 
 from ok_serial import _exceptions
 from ok_serial import _locking
@@ -15,9 +15,17 @@ log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
-class SerialOptions(pydantic.BaseModel):
+class SerialOptions(typing.NamedTuple):
     baud: int = 115200
     sharing: _locking.SerialSharingType = "exclusive"
+
+
+class SerialSignals(typing.NamedTuple):
+    dtr: bool | None = None
+    dsr: bool | None = None
+    cts: bool | None = None
+    rts: bool | None = None
+    send_break: bool | None = None
 
 
 class SerialConnection(contextlib.AbstractContextManager):
@@ -40,11 +48,11 @@ class SerialConnection(contextlib.AbstractContextManager):
                 )
             except OSError as ex:
                 if ex.errno == errno.EBUSY:
-                    message = "Serial port busy (EBUSY)"
-                    raise _exceptions.SerialOpenBusy(message, port) from ex
+                    msg = "Serial port busy (EBUSY)"
+                    raise _exceptions.SerialOpenBusy(msg, port) from ex
                 else:
-                    message = "Serial port open error"
-                    raise _exceptions.SerialOpenException(message, port) from ex
+                    msg = "Serial port open error"
+                    raise _exceptions.SerialOpenException(msg, port) from ex
 
             if hasattr(pyserial, "fileno"):
                 fd, sharing = pyserial.fileno(), opts.sharing
@@ -64,17 +72,61 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __repr__(self) -> str:
         return f"SerialConnection({self._io.pyserial.port!r})"
 
-    @property
-    def port(self):
-        return self._io.pyserial.port
-
-    @property
-    def pyserial(self):
-        return self._io.pyserial
-
     @pydantic.validate_call
     def close(self) -> None:
         self._cleanup.close()
+
+    @property
+    def port(self) -> str:
+        return self._io.pyserial.port
+
+    @property
+    def pyserial(self) -> serial.Serial:
+        return self._io.pyserial
+
+    @pydantic.validate_call
+    def fileno(self) -> int:
+        try:
+            return self._io.serial.fileno()
+        except AttributeError:
+            return -1
+
+    @pydantic.validate_call
+    def set_signals(self, signals: SerialSignals) -> None:
+        with self._io.monitor:
+            if self._io.exception:
+                raise self._io.exception
+            try:
+                if signals.dtr is not None:
+                    self._io.pyserial.dtr = signals.dtr
+                if signals.rts is not None:
+                    self._io.pyserial.rts = signals.rts
+                if signals.send_break is not None:
+                    self._io.pyserial.break_condition = signals.send_break
+            except OSError as ex:
+                msg, port = "Can't set control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, port)
+                self._io.exception.__cause__ = ex
+                raise self._io.exception
+
+    @pydantic.validate_call
+    def get_signals(self) -> SerialSignals:
+        with self._io.monitor:
+            if self._io.exception:
+                raise self._io.exception
+            try:
+                return SerialSignals(
+                    dtr=self._io.pyserial.dtr,
+                    dsr=self._io.pyserial.dsr,
+                    cts=self._io.pyserial.cts,
+                    rts=self._io.pyserial.rts,
+                    send_break=self._io.pyserial.break_condition,
+                )
+            except OSError as ex:
+                msg, port = "Can't get control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, port)
+                self._io.exception.__cause__ = ex
+                raise self._io.exception
 
     @pydantic.validate_call
     def read_sync(
@@ -179,8 +231,8 @@ class _IoThreads(contextlib.AbstractContextManager):
     def stop(self):
         with self.monitor:
             if not isinstance(self.exception, _exceptions.SerialIoClosed):
-                message, port = "Serial port closed", self.pyserial.port
-                exc = _exceptions.SerialIoClosed(message, port)
+                msg, port = "Serial port closed", self.pyserial.port
+                exc = _exceptions.SerialIoClosed(msg, port)
                 exc.__context__, self.exception = self.exception, exc
                 self._notify_all_locked()
 
@@ -207,10 +259,10 @@ class _IoThreads(contextlib.AbstractContextManager):
                     if waiting > 0:
                         incoming += self.pyserial.read(size=waiting)
             except OSError as ex:
-                message, port = "Serial read error", self.pyserial.port
-                error = _exceptions.SerialIoException(message, port)
+                msg, port = "Serial read error", self.pyserial.port
+                error = _exceptions.SerialIoException(msg, port)
                 error.__cause__ = ex
-                data_log.warning("%s (%s)", message, ex)
+                data_log.warning("%s (%s)", msg, ex)
 
             with self.monitor:
                 if incoming:
@@ -236,10 +288,10 @@ class _IoThreads(contextlib.AbstractContextManager):
                     self.pyserial.flush()
                 except OSError as ex:
                     chunk = b""
-                    message, port = "Serial write error", self.pyserial.port
-                    error = _exceptions.SerialIoException(message, port)
+                    msg, port = "Serial write error", self.pyserial.port
+                    error = _exceptions.SerialIoException(msg, port)
                     error.__cause__ = ex
-                    data_log.warning("%s (%s)", message, ex)
+                    data_log.warning("%s (%s)", msg, ex)
 
             with self.monitor:
                 if chunk:
