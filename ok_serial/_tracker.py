@@ -1,9 +1,9 @@
 import asyncio
 import contextlib
 import logging
-import pydantic
 import threading
 import time
+import typing
 
 from ok_serial import _connection
 from ok_serial import _exceptions
@@ -13,14 +13,12 @@ from ok_serial import _timeout_math
 log = logging.getLogger("ok_serial.tracker")
 
 
-class TrackerOptions(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+class TrackerOptions(typing.NamedTuple):
     matcher: _scanning.SerialPortMatcher
-    scan_interval: float = 0.5
+    scan_interval: float | int = 0.5
 
 
 class SerialTracker(contextlib.AbstractContextManager):
-    @pydantic.validate_call(config={"arbitrary_types_allowed": True})
     def __init__(
         self,
         topts: str | TrackerOptions,
@@ -46,7 +44,7 @@ class SerialTracker(contextlib.AbstractContextManager):
         return f"SerialTracker({self._tracker_opts!r}, {self._conn_opts!r})"
 
     def connect_sync(
-        self, timeout: float | None = None
+        self, timeout: float | int | None = None
     ) -> _connection.SerialConnection | None:
         deadline = _timeout_math.to_deadline(timeout)
         while True:

@@ -4,8 +4,7 @@ import ok_logging_setup
 import os
 import pty
 import pytest
-
-import pydantic
+import typing
 
 ok_logging_setup.install(
     {
@@ -15,8 +14,7 @@ ok_logging_setup.install(
 )
 
 
-class PseudoTtySerial(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+class PseudoTtySerial(typing.NamedTuple):
     path: str
     control: io.FileIO
     simulated: io.FileIO

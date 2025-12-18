@@ -1,23 +1,22 @@
 import fnmatch
+import json
 import logging
 import natsort
 import os
 import pathlib
 import re
+import typing
 from serial.tools import list_ports
 from serial.tools import list_ports_common
-
-import pydantic
 
 from ok_serial import _exceptions
 
 log = logging.getLogger("ok_serial.scanning")
 
 
-class SerialPortAttributes(pydantic.BaseModel):
+class SerialPortAttributes(typing.NamedTuple):
     """What we know about a potentially available serial port on the system"""
 
-    model_config = pydantic.ConfigDict(frozen=True)
     port: str
     attr: dict[str, str]
 
@@ -31,7 +30,6 @@ class SerialPortMatcher:
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
     )
 
-    @pydantic.validate_call
     def __init__(self, spec: str):
         """Parses string 'spec' as a fielded glob matcher on port attributes"""
 
@@ -75,7 +73,6 @@ class SerialPortMatcher:
     def __repr__(self) -> str:
         return f"SerialPortMatcher({self.spec!r})"
 
-    @pydantic.validate_call
     def matches(self, port: SerialPortAttributes) -> bool:
         """Tests this matcher against port attributes"""
 
@@ -87,18 +84,19 @@ class SerialPortMatcher:
         return True
 
 
-_scan_override_adapter = pydantic.TypeAdapter(dict[str, dict[str, str]])
-
-
-@pydantic.validate_call
 def scan_serial_ports() -> list[SerialPortAttributes]:
     """Returns a list of serial ports found on the current system"""
 
     ov_path = os.getenv("OK_SERIAL_SCAN_OVERRIDE")
     if ov_path:
         try:
-            ov_data = pathlib.Path(ov_path).read_bytes()
-            ov = _scan_override_adapter.validate_json(ov_data)
+            ov = json.loads(pathlib.Path(ov_path).read_text())
+            if not isinstance(ov, dict) or not all(
+                isinstance(attr, dict)
+                and all(isinstance(aval, str) for aval in attr.values())
+                for attr in ov.values()
+            ):
+                raise ValueError("Override data is not a dict of dicts")
         except (OSError, ValueError) as ex:
             msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov_path}"
             raise _exceptions.SerialScanException(msg) from ex

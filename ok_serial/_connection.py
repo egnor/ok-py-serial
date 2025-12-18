@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import errno
 import logging
-import pydantic
 import serial
 import threading
 import typing
@@ -29,7 +28,6 @@ class SerialSignals(typing.NamedTuple):
 
 
 class SerialConnection(contextlib.AbstractContextManager):
-    @pydantic.validate_call
     def __init__(self, port: str, opts: SerialOptions | int = SerialOptions()):
         if isinstance(opts, int):
             opts = SerialOptions(baud=opts)
@@ -72,7 +70,6 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __repr__(self) -> str:
         return f"SerialConnection({self._io.pyserial.port!r})"
 
-    @pydantic.validate_call
     def close(self) -> None:
         self._cleanup.close()
 
@@ -84,14 +81,12 @@ class SerialConnection(contextlib.AbstractContextManager):
     def pyserial(self) -> serial.Serial:
         return self._io.pyserial
 
-    @pydantic.validate_call
     def fileno(self) -> int:
         try:
             return self._io.serial.fileno()
         except AttributeError:
             return -1
 
-    @pydantic.validate_call
     def set_signals(self, signals: SerialSignals) -> None:
         with self._io.monitor:
             if self._io.exception:
@@ -109,7 +104,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.exception.__cause__ = ex
                 raise self._io.exception
 
-    @pydantic.validate_call
     def get_signals(self) -> SerialSignals:
         with self._io.monitor:
             if self._io.exception:
@@ -128,7 +122,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.exception.__cause__ = ex
                 raise self._io.exception
 
-    @pydantic.validate_call
     def read_sync(
         self,
         *,
@@ -151,7 +144,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                         return b""
                     self._io.monitor.wait(timeout=wait)
 
-    @pydantic.validate_call
     async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
@@ -160,7 +152,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                 return out
             await future
 
-    @pydantic.validate_call
     def write(self, data: bytes) -> None:
         with self._io.monitor:
             if self._io.exception:
@@ -169,7 +160,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
-    @pydantic.validate_call
     def drain_sync(self, *, max: int = 0, timeout: float | None = None) -> bool:
         deadline = _timeout_math.to_deadline(timeout)
         while True:
@@ -184,7 +174,6 @@ class SerialConnection(contextlib.AbstractContextManager):
                         return False
                     self._io.monitor.wait(timeout=wait)
 
-    @pydantic.validate_call
     async def drain_async(self, max: int = 0) -> bool:
         while True:
             future = self._io.create_future_in_loop()  # BEFORE drain_sync
@@ -192,12 +181,10 @@ class SerialConnection(contextlib.AbstractContextManager):
                 return True
             await future
 
-    @pydantic.validate_call
     def incoming_size(self) -> int:
         with self._io.monitor:
             return len(self._io.incoming)
 
-    @pydantic.validate_call
     def outgoing_size(self) -> int:
         with self._io.monitor:
             return len(self._io.outgoing)
