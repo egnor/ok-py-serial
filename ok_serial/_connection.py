@@ -23,11 +23,13 @@ class SerialOptions:
 
 @dataclasses.dataclass(frozen=True)
 class SerialSignals:
-    dtr: bool | None = None
-    dsr: bool | None = None
-    cts: bool | None = None
-    rts: bool | None = None
-    send_break: bool | None = None
+    dtr: bool
+    dsr: bool
+    cts: bool
+    rts: bool
+    ri: bool
+    cd: bool
+    sending_break: bool
 
 
 class SerialConnection(contextlib.AbstractContextManager):
@@ -116,17 +118,22 @@ class SerialConnection(contextlib.AbstractContextManager):
         except AttributeError:
             return -1
 
-    def set_signals(self, signals: SerialSignals) -> None:
+    def set_signals(
+        self,
+        dtr: bool | None = None,
+        rts: bool | None = None,
+        send_break: bool | None = None,
+    ) -> None:
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
             try:
-                if signals.dtr is not None:
-                    self._io.pyserial.dtr = signals.dtr
-                if signals.rts is not None:
-                    self._io.pyserial.rts = signals.rts
-                if signals.send_break is not None:
-                    self._io.pyserial.break_condition = signals.send_break
+                if dtr is not None:
+                    self._io.pyserial.dtr = dtr
+                if rts is not None:
+                    self._io.pyserial.rts = rts
+                if send_break is not None:
+                    self._io.pyserial.break_condition = send_break
             except OSError as ex:
                 msg, dev = "Can't set control signals", self._io.pyserial.port
                 self._io.exception = _exceptions.SerialIoException(msg, dev)
@@ -143,7 +150,9 @@ class SerialConnection(contextlib.AbstractContextManager):
                     dsr=self._io.pyserial.dsr,
                     cts=self._io.pyserial.cts,
                     rts=self._io.pyserial.rts,
-                    send_break=self._io.pyserial.break_condition,
+                    ri=self._io.pyserial.ri,
+                    cd=self._io.pyserial.cd,
+                    sending_break=self._io.pyserial.break_condition,
                 )
             except OSError as ex:
                 msg, dev = "Can't get control signals", self._io.pyserial.port
