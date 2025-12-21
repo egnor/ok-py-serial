@@ -15,11 +15,14 @@ from ok_serial._exceptions import (
 )
 from ok_serial._locking import SerialSharingType
 from ok_serial._scanning import (
-    SerialPortAttributes,
+    SerialPort,
     SerialPortMatcher,
     scan_serial_ports,
 )
+from ok_serial._tracker import SerialTracker, TrackerOptions
 
 from beartype.claw import beartype_this_package as _beartype_me
 
 _beartype_me()
+
+__all__ = [n for n in dir() if not n.startswith("_")]

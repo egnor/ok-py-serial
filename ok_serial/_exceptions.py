@@ -5,10 +5,10 @@ class OkSerialException(OSError):
     def __init__(
         self,
         message: str,
-        port: str | None = None,
+        device: str | None = None,
     ):
-        super().__init__(f"{port}: {message}" if port else message)
-        self.port = port
+        super().__init__(f"{device}: {message}" if device else message)
+        self.device = device
 
 
 class SerialIoException(OkSerialException):

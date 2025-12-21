@@ -16,18 +16,18 @@ log = logging.getLogger("ok_serial.locking")
 
 
 @contextlib.contextmanager
-def using_lock_file(port: str, sharing: SerialSharingType):
-    parts = Path(port).parts[-2:]
+def using_lock_file(device: str, sharing: SerialSharingType):
+    parts = Path(device).parts[-2:]
     if parts[-1].isdigit() and parts[-2:][0].startswith("pt"):
         lock_path = Path(f"/var/lock/LCK..{'.'.join(parts[-2:])}")
     else:
         lock_path = Path(f"/var/lock/LCK..{parts[-1]}")
     for _try in range(10):
-        if _try_lock_file(port=port, lock_path=lock_path, sharing=sharing):
+        if _try_lock_file(device=device, lock_path=lock_path, sharing=sharing):
             break
     else:
         message = "Serial port busy (retries exceeded)"
-        raise _exceptions.SerialOpenBusy(message, port)
+        raise _exceptions.SerialOpenBusy(message, device)
 
     yield
 
@@ -35,47 +35,47 @@ def using_lock_file(port: str, sharing: SerialSharingType):
 
 
 @contextlib.contextmanager
-def using_fd_lock(port: str, fd: int, sharing: SerialSharingType):
+def using_fd_lock(device: str, fd: int, sharing: SerialSharingType):
     try:
         if sharing == "polite":
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            log.debug("Acquired flock(LOCK_SH) on %s", port)
+            log.debug("Acquired flock(LOCK_SH) on %s", device)
         elif sharing != "oblivious":
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            log.debug("Acquired flock(LOCK_EX) on %s", port)
+            log.debug("Acquired flock(LOCK_EX) on %s", device)
     except BlockingIOError as ex:
         message = "Serial port busy (flock claimed)"
-        raise _exceptions.SerialOpenBusy(message, port) from ex
+        raise _exceptions.SerialOpenBusy(message, device) from ex
     except OSError:
-        log.warning("Can't lock (flock) %s", port, exc_info=True)
+        log.warning("Can't lock (flock) %s", device, exc_info=True)
 
     try:
         if sharing in ("exclusive", "stomp"):
             fcntl.ioctl(fd, termios.TIOCEXCL)
-            log.debug("Acquired TIOCEXCL on %s", port)
+            log.debug("Acquired TIOCEXCL on %s", device)
     except OSError:
-        log.warning("Can't lock (TIOCEXCL) %s", port, exc_info=True)
+        log.warning("Can't lock (TIOCEXCL) %s", device, exc_info=True)
 
     yield
 
     try:
         fcntl.ioctl(fd, termios.TIOCNXCL)
-        log.debug("Released TIOCEXCL on %s", port)
+        log.debug("Released TIOCEXCL on %s", device)
     except OSError:
-        log.warning("Can't release TIOCEXCL on %s", port, exc_info=True)
+        log.warning("Can't release TIOCEXCL on %s", device, exc_info=True)
 
     try:
         if sharing != "oblivious":
             fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
-            log.debug("Released flock on %s", port)
+            log.debug("Released flock on %s", device)
     except OSError:
-        log.warning("Can't release flock on %s", port, exc_info=True)
+        log.warning("Can't release flock on %s", device, exc_info=True)
 
 
 def _try_lock_file(
-    *, port: str, lock_path: Path, sharing: SerialSharingType
+    *, device: str, lock_path: Path, sharing: SerialSharingType
 ) -> bool:
     if sharing == "oblivious":
         return True
@@ -103,7 +103,7 @@ def _try_lock_file(
         else:
             log.debug("PID %d owns %s", owner_pid, lock_path)
             message = f"Serial port busy ({lock_path}: pid={owner_pid})"
-            raise _exceptions.SerialOpenBusy(message, port)
+            raise _exceptions.SerialOpenBusy(message, device)
 
     try:
         write_mode = "wt" if sharing == "stomp" else "xt"

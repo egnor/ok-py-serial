@@ -6,6 +6,7 @@ from serial.tools import list_ports
 from serial.tools import list_ports_common
 
 import ok_serial
+from ok_serial import SerialPort
 
 
 PARSE_CHECKS = [
@@ -35,19 +36,18 @@ def test_SerialPortMatcher_init():
 
 
 def test_SerialPortMatcher_matches():
-    PortAttr = ok_serial.SerialPortAttributes
     matcher = ok_serial.SerialPortMatcher("*mid* A:a* b:*b")
     for id in [
-        PortAttr(port="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
-        PortAttr(port="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
-        PortAttr(port="z", attr={"a": "Amid", "b": "xxB"}),
+        SerialPort(name="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
+        SerialPort(name="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
+        SerialPort(name="z", attr={"a": "Amid", "b": "xxB"}),
     ]:
         assert matcher.matches(id)
 
     for id in [
-        PortAttr(port="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
-        PortAttr(port="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
-        PortAttr(port="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
+        SerialPort(name="z", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
+        SerialPort(name="z", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
+        SerialPort(name="z", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
     ]:
         assert not matcher.matches(id)
 
@@ -70,10 +70,9 @@ def test_scan_ports(mocker):
 
     list_ports.comports.return_value = [bare_port, full_port]
 
-    PortAttr = ok_serial.SerialPortAttributes
     assert ok_serial.scan_serial_ports() == [
-        PortAttr(
-            port="/dev/full",
+        SerialPort(
+            name="/dev/full",
             attr={
                 "device": "/dev/full",
                 "name": "full",
@@ -88,7 +87,7 @@ def test_scan_ports(mocker):
                 "location": "Location",
             },
         ),
-        PortAttr(port="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
+        SerialPort(name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
     ]
 
 
@@ -109,8 +108,7 @@ def test_scan_parts_with_override(monkeypatch, tmp_path):
     override = {"port1": {"aname": "avalue", "bname": "bvalue"}, "port2": {}}
     override_path.write_text(json.dumps(override))
 
-    PortAttr = ok_serial.SerialPortAttributes
     assert ok_serial.scan_serial_ports() == [
-        PortAttr(port="port1", attr={"aname": "avalue", "bname": "bvalue"}),
-        PortAttr(port="port2", attr={}),
+        SerialPort(name="port1", attr={"aname": "avalue", "bname": "bvalue"}),
+        SerialPort(name="port2", attr={}),
     ]

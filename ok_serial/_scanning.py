@@ -1,3 +1,4 @@
+import dataclasses
 import fnmatch
 import json
 import logging
@@ -5,7 +6,6 @@ import natsort
 import os
 import pathlib
 import re
-import typing
 from serial.tools import list_ports
 from serial.tools import list_ports_common
 
@@ -14,15 +14,19 @@ from ok_serial import _exceptions
 log = logging.getLogger("ok_serial.scanning")
 
 
-class SerialPortAttributes(typing.NamedTuple):
+@dataclasses.dataclass(frozen=True)
+class SerialPort:
     """What we know about a potentially available serial port on the system"""
 
-    port: str
+    name: str
     attr: dict[str, str]
+
+    def __str__(self):
+        return self.name
 
 
 class SerialPortMatcher:
-    """A parsed expression for matching against SerialPortAttributes results"""
+    """A parsed expression for matching against SerialPort results"""
 
     _POSINT_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
@@ -30,23 +34,24 @@ class SerialPortMatcher:
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
     )
 
-    def __init__(self, spec: str):
-        """Parses string 'spec' as a fielded glob matcher on port attributes"""
+    def __init__(self, match: str):
+        """Parses string 'match' as fielded globs matching port attributes"""
+
+        self._input = match
+        self._patterns: dict[str, re.Pattern] = {}
 
         current_field = ""
         globs: dict[str, str] = {}
         pos = 0
-        while pos < len(spec):
-            match = SerialPortMatcher._TERM_RE.match(spec, pos=pos)
-            if not (match and match.group(0)):
-                esc_spec = spec.encode("unicode-escape").decode()
-                esc_pos = len(spec[:pos].encode("unicode-escape").decode())
-                raise _exceptions.SerialMatcherInvalid(
-                    f"Bad port spec:\n  [{esc_spec}]\n  -{'-' * esc_pos}^"
-                )
+        while pos < len(match):
+            rxm = SerialPortMatcher._TERM_RE.match(match, pos=pos)
+            if not (rxm and rxm.group(0)):
+                match_esc = match.encode("unicode-escape").decode()
+                esc_pos = len(match[:pos].encode("unicode-escape").decode())
+                msg = f"Bad port matcher:\n  [{match_esc}]\n  -{'-' * esc_pos}^"
+                raise _exceptions.SerialMatcherInvalid(msg)
 
-            pos = match.end()
-            wspace, field, value = match.groups(default="")
+            pos, (wspace, field, value) = rxm.end(), rxm.groups(default="")
             if value.startswith('"') and value.endswith('"'):
                 value = value[1:-1].encode().decode("unicode-escape", "ignore")
             if field:
@@ -58,7 +63,6 @@ class SerialPortMatcher:
                 current_field = "*"
                 globs[current_field] = wspace + value
 
-        self._patterns = {}
         for k, glob in globs.items():
             if SerialPortMatcher._POSINT_RE.fullmatch(glob):
                 num = int(glob, 0)
@@ -67,13 +71,15 @@ class SerialPortMatcher:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)
 
-        self.spec = spec
-        log.debug("Parsed %s (%s)", repr(spec), ", ".join(globs.keys()))
+        log.debug("Parsed %s (%s)", repr(match), ", ".join(globs.keys()))
 
     def __repr__(self) -> str:
-        return f"SerialPortMatcher({self.spec!r})"
+        return f"SerialPortMatcher({self._input!r})"
 
-    def matches(self, port: SerialPortAttributes) -> bool:
+    def __str__(self) -> str:
+        return self._input
+
+    def matches(self, port: SerialPort) -> bool:
         """Tests this matcher against port attributes"""
 
         for k, rx in self._patterns.items():
@@ -84,37 +90,49 @@ class SerialPortMatcher:
         return True
 
 
-def scan_serial_ports() -> list[SerialPortAttributes]:
+def scan_serial_ports(
+    match: str | SerialPortMatcher | None = None,
+) -> list[SerialPort]:
     """Returns a list of serial ports found on the current system"""
 
-    ov_path = os.getenv("OK_SERIAL_SCAN_OVERRIDE")
-    if ov_path:
+    if ov := os.getenv("OK_SERIAL_SCAN_OVERRIDE"):
         try:
-            ov = json.loads(pathlib.Path(ov_path).read_text())
-            if not isinstance(ov, dict) or not all(
+            ov_data = json.loads(pathlib.Path(ov).read_text())
+            if not isinstance(ov_data, dict) or not all(
                 isinstance(attr, dict)
                 and all(isinstance(aval, str) for aval in attr.values())
-                for attr in ov.values()
+                for attr in ov_data.values()
             ):
                 raise ValueError("Override data is not a dict of dicts")
         except (OSError, ValueError) as ex:
-            msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov_path}"
+            msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov}"
             raise _exceptions.SerialScanException(msg) from ex
 
-        out = [SerialPortAttributes(port=p, attr=a) for p, a in ov.items()]
-        log.debug("$OK_SERIAL_SCAN_OVERRIDE (%s): %d ports", ov_path, len(out))
-        return out
+        found = [SerialPort(name=p, attr=a) for p, a in ov_data.items()]
+        log.debug("$OK_SERIAL_SCAN_OVERRIDE (%s): %d ports", ov, len(found))
+    else:
+        try:
+            ports = list_ports.comports()
+        except OSError as ex:
+            raise _exceptions.SerialScanException("Can't scan serial") from ex
 
-    def conv(p: list_ports_common.ListPortInfo) -> SerialPortAttributes:
-        _NA = (None, "", "n/a")
-        attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
-        return SerialPortAttributes(port=p.device, attr=attr)
+        found = [_convert_port(p) for p in ports]
 
-    try:
-        out = [conv(p) for p in list_ports.comports()]
-    except OSError as ex:
-        raise _exceptions.SerialScanException("Can't scan serial ports") from ex
+    if match:
+        if isinstance(match, str):
+            match = SerialPortMatcher(match)
+        out = [p for p in found if match.matches(p)]
+        nf, no = len(found), len(out)
+        log.debug("Found %d ports, %d match %r", nf, no, str(match))
+    else:
+        out = found
+        log.debug("Found %d ports", len(out))
 
-    out.sort(key=natsort.natsort_keygen(key=lambda p: p.port, alg=natsort.ns.P))
-    log.debug("Scanned %d serial ports", len(out))
+    out.sort(key=natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P))
     return out
+
+
+def _convert_port(p: list_ports_common.ListPortInfo) -> SerialPort:
+    _NA = (None, "", "n/a")
+    attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
+    return SerialPort(name=p.device, attr=attr)

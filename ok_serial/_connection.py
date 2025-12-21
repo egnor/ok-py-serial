@@ -1,25 +1,28 @@
 import asyncio
 import contextlib
+import dataclasses
 import errno
 import logging
 import serial
 import threading
-import typing
 
 from ok_serial import _exceptions
 from ok_serial import _locking
+from ok_serial import _scanning
 from ok_serial import _timeout_math
 
 log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
-class SerialOptions(typing.NamedTuple):
+@dataclasses.dataclass(frozen=True)
+class SerialOptions:
     baud: int = 115200
     sharing: _locking.SerialSharingType = "exclusive"
 
 
-class SerialSignals(typing.NamedTuple):
+@dataclasses.dataclass(frozen=True)
+class SerialSignals:
     dtr: bool | None = None
     dsr: bool | None = None
     cts: bool | None = None
@@ -28,14 +31,39 @@ class SerialSignals(typing.NamedTuple):
 
 
 class SerialConnection(contextlib.AbstractContextManager):
-    def __init__(self, port: str, opts: SerialOptions | int = SerialOptions()):
-        if isinstance(opts, int):
-            opts = SerialOptions(baud=opts)
+    def __init__(
+        self,
+        *,
+        match: str | _scanning.SerialPortMatcher | None = None,
+        port: str | _scanning.SerialPort | None = None,
+        opts: SerialOptions = SerialOptions(),
+        **kwargs,
+    ):
+        assert bool(match) + bool(port) == 1, "Need one of match or port"
+        opts = dataclasses.replace(opts, **kwargs)
+
+        if match:
+            if isinstance(match, str):
+                match = _scanning.SerialPortMatcher(match)
+            found = _scanning.scan_serial_ports(match)
+            if len(found) == 0:
+                msg = f'No ports match "{match}"'
+                raise _exceptions.SerialScanException(msg)
+            elif len(found) > 1:
+                found_text = "".join(f"\n  {p}" for p in found)
+                msg = f'Multiple ports match "{match}": {found_text}'
+                raise _exceptions.SerialScanException(msg)
+            else:
+                port = found[0].name
+                log.debug("Scanned %r, found %s", match, port)
+
+        assert port
+        if isinstance(port, _scanning.SerialPort):
+            port = port.name
 
         with contextlib.ExitStack() as cleanup:
             cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
 
-            log.debug("Opening %s %s", port, opts)
             try:
                 pyserial = cleanup.enter_context(
                     serial.Serial(
@@ -44,6 +72,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                         write_timeout=0.1,
                     )
                 )
+                log.debug("Opened %s %s", port, opts)
             except OSError as ex:
                 if ex.errno == errno.EBUSY:
                     msg = "Serial port busy (EBUSY)"
@@ -53,8 +82,8 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenException(msg, port) from ex
 
             if hasattr(pyserial, "fileno"):
-                fd, sharing = pyserial.fileno(), opts.sharing
-                cleanup.enter_context(_locking.using_fd_lock(port, fd, sharing))
+                fd, share = pyserial.fileno(), opts.sharing
+                cleanup.enter_context(_locking.using_fd_lock(port, fd, share))
 
             self._io = cleanup.enter_context(_IoThreads(pyserial))
             self._io.start()
@@ -74,7 +103,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         self._cleanup.close()
 
     @property
-    def port(self) -> str:
+    def port_name(self) -> str:
         return self._io.pyserial.port
 
     @property
@@ -99,8 +128,8 @@ class SerialConnection(contextlib.AbstractContextManager):
                 if signals.send_break is not None:
                     self._io.pyserial.break_condition = signals.send_break
             except OSError as ex:
-                msg, port = "Can't set control signals", self._io.pyserial.port
-                self._io.exception = _exceptions.SerialIoException(msg, port)
+                msg, dev = "Can't set control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, dev)
                 self._io.exception.__cause__ = ex
                 raise self._io.exception
 
@@ -117,8 +146,8 @@ class SerialConnection(contextlib.AbstractContextManager):
                     send_break=self._io.pyserial.break_condition,
                 )
             except OSError as ex:
-                msg, port = "Can't get control signals", self._io.pyserial.port
-                self._io.exception = _exceptions.SerialIoException(msg, port)
+                msg, dev = "Can't get control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, dev)
                 self._io.exception.__cause__ = ex
                 raise self._io.exception
 
@@ -210,16 +239,16 @@ class _IoThreads(contextlib.AbstractContextManager):
 
     def start(self):
         for t, n in ((self._readloop, "reader"), (self._writeloop, "writer")):
-            port = self.pyserial.port
-            thread = threading.Thread(target=t, name=f"{port} {n}", daemon=True)
+            dev = self.pyserial.port
+            thread = threading.Thread(target=t, name=f"{dev} {n}", daemon=True)
             thread.start()
             self.threads.append(thread)
 
     def stop(self):
         with self.monitor:
             if not isinstance(self.exception, _exceptions.SerialIoClosed):
-                msg, port = "Serial port closed", self.pyserial.port
-                exc = _exceptions.SerialIoClosed(msg, port)
+                msg, dev = "Serial port closed", self.pyserial.port
+                exc = _exceptions.SerialIoClosed(msg, dev)
                 exc.__context__, self.exception = self.exception, exc
                 self._notify_all_locked()
 
@@ -246,8 +275,8 @@ class _IoThreads(contextlib.AbstractContextManager):
                     if waiting > 0:
                         incoming += self.pyserial.read(size=waiting)
             except OSError as ex:
-                msg, port = "Serial read error", self.pyserial.port
-                error = _exceptions.SerialIoException(msg, port)
+                msg, dev = "Serial read error", self.pyserial.port
+                error = _exceptions.SerialIoException(msg, dev)
                 error.__cause__ = ex
                 data_log.warning("%s (%s)", msg, ex)
 
@@ -275,8 +304,8 @@ class _IoThreads(contextlib.AbstractContextManager):
                     self.pyserial.flush()
                 except OSError as ex:
                     chunk = b""
-                    msg, port = "Serial write error", self.pyserial.port
-                    error = _exceptions.SerialIoException(msg, port)
+                    msg, dev = "Serial write error", self.pyserial.port
+                    error = _exceptions.SerialIoException(msg, dev)
                     error.__cause__ = ex
                     data_log.warning("%s (%s)", msg, ex)
 
@@ -308,11 +337,8 @@ class _IoThreads(contextlib.AbstractContextManager):
         with self.monitor:
             future = self.async_loop.create_future()
             self.async_futures.append(future)
-            data_log.debug(
-                "%s: Adding async future -> %d total",
-                self.pyserial.port,
-                len(self.async_futures),
-            )
+            dev, nf = self.pyserial.port, len(self.async_futures)
+            data_log.debug("%s: Adding async future -> %d total", dev, nf)
             return future
 
     def _resolve_futures_in_loop(self) -> None:
@@ -323,8 +349,8 @@ class _IoThreads(contextlib.AbstractContextManager):
         with self.monitor:
             to_resolve, self.async_futures = self.async_futures, []
 
-        port = self.pyserial.port
-        data_log.debug("%s: Waking %d async futures", port, len(to_resolve))
+        dev = self.pyserial.port
+        data_log.debug("%s: Waking %d async futures", dev, len(to_resolve))
         for future in to_resolve:
             if not future.done():
                 future.set_result(None)

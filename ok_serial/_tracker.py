@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import threading
 import time
@@ -14,26 +15,35 @@ log = logging.getLogger("ok_serial.tracker")
 
 
 class TrackerOptions(typing.NamedTuple):
-    matcher: _scanning.SerialPortMatcher
     scan_interval: float | int = 0.5
 
 
 class SerialTracker(contextlib.AbstractContextManager):
     def __init__(
         self,
-        topts: str | TrackerOptions,
-        copts: int | _connection.SerialOptions = _connection.SerialOptions(),
+        match: str | _scanning.SerialPortMatcher | None = None,
+        *,
+        port: str | _scanning.SerialPort | None = None,
+        baud: int = 0,
+        topts: TrackerOptions = TrackerOptions(),
+        copts: _connection.SerialOptions = _connection.SerialOptions(),
     ):
-        if isinstance(topts, str):
-            topts = TrackerOptions(matcher=_scanning.SerialPortMatcher(topts))
+        if isinstance(match, str):
+            match = _scanning.SerialPortMatcher(match)
+        if isinstance(port, _scanning.SerialPort):
+            port = port.name
+        if baud:
+            copts = dataclasses.replace(copts, baud=baud)
 
+        self._match = match
+        self._port = port
         self._tracker_opts = topts
         self._conn_opts = copts
         self._conn_lock = threading.Lock()
         self._conn: _connection.SerialConnection | None = None
         self._next_scan = 0.0
 
-        log.debug("Tracking [%s]", topts.matcher.spec)
+        log.debug("Tracking %s %s", match, topts)
 
     def __exit__(self, exc_type, exc_value, traceback):
         with self._conn_lock:
@@ -54,25 +64,28 @@ class SerialTracker(contextlib.AbstractContextManager):
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except _exceptions.SerialIoClosed:
-                        log.debug("%s closed, scanning", self._conn.port)
+                        port = self._conn.port_name
+                        log.debug("%s closed, scanning", port)
                         self._conn = None
                     except _exceptions.SerialIoException as exc:
-                        msg, port = "%s failed, scanning (%s)", self._conn.port
-                        log.warning(msg, port, exc)
+                        port = self._conn.port_name
+                        log.warning("%s failed, scanning (%s)", port, exc)
                         self._conn.close()
                         self._conn = None
 
                 if _timeout_math.from_deadline(self._next_scan) <= 0:
-                    ports = _scanning.scan_serial_ports()
-                    matcher = self._tracker_opts.matcher
-                    matching = [p for p in ports if matcher.matches(p)]
-                    np, nm = len(ports), len(matching)
-                    log.debug('%d/%d ports match "%s"', nm, np, matcher.spec)
-                    for attr in matching:
-                        port, opt = attr.port, self._conn_opts
+                    if self._match:
+                        scan = _scanning.scan_serial_ports(self._match)
+                        ports = [p.name for p in scan]
+                    else:
+                        assert self._port
+                        ports = [self._port]
+
+                    for port in ports:
                         try:
-                            self._conn = _connection.SerialConnection(port, opt)
-                            log.debug(f"Opened {port}")
+                            self._conn = _connection.SerialConnection(
+                                port=port, opts=self._conn_opts
+                            )
                             return self._conn
                         except _exceptions.SerialOpenException as exc:
                             log.warning("Can't open %s (%s)", port, exc)
