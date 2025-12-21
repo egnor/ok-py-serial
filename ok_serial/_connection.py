@@ -48,11 +48,11 @@ class SerialConnection(contextlib.AbstractContextManager):
             found = _scanning.scan_serial_ports(match)
             if len(found) == 0:
                 msg = f'No ports match "{match}"'
-                raise _exceptions.SerialScanException(msg)
+                raise _exceptions.SerialOpenException(msg)
             elif len(found) > 1:
                 found_text = "".join(f"\n  {p}" for p in found)
                 msg = f'Multiple ports match "{match}": {found_text}'
-                raise _exceptions.SerialScanException(msg)
+                raise _exceptions.SerialOpenException(msg)
             else:
                 port = found[0].name
                 log.debug("Scanned %r, found %s", match, port)

@@ -8,7 +8,6 @@ import pytest
 
 import ok_serial
 import serial
-from ok_serial._connection import SerialSignals
 
 #
 # Basic connectivity test
@@ -29,7 +28,14 @@ def test_basic_connection(pty_serial):
         assert pty_serial.control.read(256) == b"FROM SERIAL"
 
 
-# TODO add a test of using match=
+def test_connection_with_port_match(pty_serial, set_scan_override):
+    set_scan_override({pty_serial.path: {"name": "test"}})
+    with ok_serial.SerialConnection(match="name: test") as conn:
+        assert conn.port_name == pty_serial.path
+
+    with pytest.raises(ok_serial.SerialOpenException):
+        with ok_serial.SerialConnection(match="name: toast") as conn:
+            pass
 
 
 #
@@ -383,8 +389,8 @@ def test_get_signals(pty_serial, mocker):
         )
 
         signals = conn.get_signals()
-        assert isinstance(signals, SerialSignals)
-        assert signals == SerialSignals(
+        assert isinstance(signals, ok_serial.SerialSignals)
+        assert signals == ok_serial.SerialSignals(
             dtr=True, dsr=False, cts=True, rts=False, send_break=True
         )
 
@@ -407,7 +413,9 @@ def test_set_signals(pty_serial, mocker):
             serial.Serial, "break_condition", new_callable=mocker.PropertyMock
         )
 
-        conn.set_signals(SerialSignals(dtr=True, rts=False, send_break=True))
+        conn.set_signals(
+            ok_serial.SerialSignals(dtr=True, rts=False, send_break=True)
+        )
         mock_dtr.assert_called_with(True)
         mock_dsr.assert_not_called()
         mock_rts.assert_called_with(False)
@@ -423,4 +431,4 @@ def test_signals_after_close_raises(pty_serial):
         conn.get_signals()
 
     with pytest.raises(ok_serial.SerialIoClosed):
-        conn.set_signals(SerialSignals(dtr=True))
+        conn.set_signals(ok_serial.SerialSignals(dtr=True))

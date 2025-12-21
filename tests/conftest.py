@@ -7,12 +7,8 @@ import pty
 import pytest
 import typing
 
-ok_logging_setup.install(
-    {
-        "OK_LOGGING_LEVEL": "ok_serial=DEBUG,WARNING",
-        "OK_LOGGING_OUTPUT": "stdout",
-    }
-)
+_log_setup = {"LEVEL": "ok_serial=DEBUG,WARNING", "OUTPUT": "stdout"}
+ok_logging_setup.install({f"OK_LOGGING_{k}": v for k, v in _log_setup.items()})
 
 
 class PseudoTtySerial(typing.NamedTuple):

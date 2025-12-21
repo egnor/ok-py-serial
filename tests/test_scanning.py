@@ -91,7 +91,7 @@ def test_scan_ports(mocker):
     ]
 
 
-def test_scan_parts_with_override(monkeypatch, tmp_path):
+def test_scan_ports_with_override(monkeypatch, tmp_path):
     override_path = tmp_path / "scan_override.json"
     monkeypatch.setenv("OK_SERIAL_SCAN_OVERRIDE", str(override_path))
     with pytest.raises(ok_serial.SerialScanException):
