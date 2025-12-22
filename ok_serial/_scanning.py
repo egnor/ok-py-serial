@@ -31,7 +31,8 @@ class SerialPortMatcher:
     _POSINT_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
     _TERM_RE = re.compile(
-        r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
+        r"""(\s*)(?:(\w+)\s*:\s*)?"""  # whitespace, field
+        r"""(["'](?:\\.|[^"\\])*["']|(?:\\.|[^:"'\s\\])*)"""  # value
     )
 
     _VIDPID_RE = re.compile(r"([0-9a-f]{4}):([0-9a-f]{4})", re.I)
@@ -60,8 +61,12 @@ class SerialPortMatcher:
                 continue
 
             wspace, field, value = term.groups(default="")
-            if value.startswith('"') and value.endswith('"'):
-                value = value[1:-1].encode().decode("unicode-escape", "ignore")
+            if (value[:1] + value[-1:]) in ('""', "''"):
+                try:
+                    value = value[1:-1].encode().decode("unicode-escape")
+                except UnicodeDecodeError as ex:
+                    msg = f"Bad port matcher value: {value}"
+                    raise _exceptions.SerialMatcherInvalid(msg) from ex
             if field:
                 current_field = field.rstrip().rstrip(":").strip().lower()
                 globs[current_field] = value
@@ -79,7 +84,14 @@ class SerialPortMatcher:
                 regex = fnmatch.translate(glob)
             self._patterns[k] = re.compile(regex, re.I)
 
-        log.debug("Parsed %s (%s)", repr(match), ", ".join(globs.keys()))
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(
+                "Parsed %s:%s",
+                repr(match),
+                "".join(
+                    f"\n  {k}: /{p.pattern}/" for k, p in self._patterns.items()
+                ),
+            )
 
     def __repr__(self) -> str:
         return f"SerialPortMatcher({self._input!r})"

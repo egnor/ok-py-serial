@@ -3,6 +3,7 @@
 """CLI tool to scan serial ports"""
 
 import argparse
+import logging
 import ok_logging_setup
 import ok_serial
 import re
@@ -33,20 +34,33 @@ def main():
     )
 
     args = parser.parse_args()
-    ports = ok_serial.scan_serial_ports(args.match)
-    match_text = f" matching {args.match!r}" if args.match else ""
-    if args.one:
-        if args.verbose:
-            args.list = True
-        if not ports:
-            ok_logging_setup.exit(f"No serial ports found{match_text}")
-        if len(ports) > 1:
+    matcher = ok_serial.SerialPortMatcher(args.match) if args.match else None
+    found = ok_serial.scan_serial_ports()
+    if not found:
+        ok_logging_setup.exit("ok_serial_scan: No ports found")
+    if not matcher:
+        matching = found
+        logging.info("ok_serial_scan: %d ports found", len(found))
+    else:
+        matching = [p for p in found if matcher.matches(p)]
+        nf, nm, m = len(found), len(matching), str(matcher)
+        if not matching:
             ok_logging_setup.exit(
-                f"{len(ports)} serial ports found{match_text}:"
-                + "".join(f"\n  {format_standard(p)}" for p in ports)
+                "ok_serial_scan: %d ports found, none match %r", nf, m
+            )
+        v = "matches" if nm == 1 else "match"
+        logging.info("ok_serial_scan: %d ports found, %d %s %r", nf, nm, v, m)
+
+    if args.one:
+        if not args.verbose:
+            args.list = True
+        if (nm := len(matching)) > 1:
+            ok_logging_setup.exit(
+                f"ok_serial_scan: {nm} ports match, only --one allowed:"
+                + "".join(f"\n  {format_standard(p)}" for p in matching)
             )
 
-    for port in ports:
+    for port in matching:
         if args.verbose:
             print(format_verbose(port), end="\n\n")
         elif args.list:
@@ -76,7 +90,7 @@ def format_standard(port: ok_serial.SerialPort):
 
 
 def format_verbose(port: ok_serial.SerialPort):
-    return port.name + "".join(
+    return f"Serial port: {port.name}:" + "".join(
         f"\n  {k}: {repr(v)}" for k, v in port.attr.items()
     )
 
