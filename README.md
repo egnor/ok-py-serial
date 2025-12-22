@@ -1,6 +1,6 @@
 # ok-serial for Python
 
-Python serial port I/O ([wrapping PySerial](https://www.pyserial.com/)) with
+Python serial port I/O ([based on PySerial](https://www.pyserial.com/)) with
 improved port discovery, concurrency, and non-blocking semantics.
 
 Think twice before using this library! Consider something more established:
@@ -20,7 +20,7 @@ Since 2001, [PySerial](https://www.pyserial.com/) has been the
 workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port)
 ([UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter))
 library for Python. It runs on most Python platforms and abstracts
-lots of gnarly system details. However, certain problems keep coming up:
+lots of gnarly system details. However, some problems keep coming up:
 
 - Most serial ports are USB, and USB serial ports get assigned cryptic
   temporary names like `/dev/ttyACM3` or `COM4`. Using
@@ -39,3 +39,8 @@ lots of gnarly system details. However, certain problems keep coming up:
 - Port locking is off by default in PySerial; even if enabled, it only
   uses one advisory locking method. Bad things happen if multiple programs
   try to use the same port.
+
+The `ok-py-serial` uses PySerial internally but has its own consistent
+interface to fix these problems and for general smooooveness:
+
+- 

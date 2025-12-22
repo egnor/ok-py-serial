@@ -1,12 +1,5 @@
 [project]
 authors = [{ name = "Dan Egnor", email = "egnor@ofb.net" }]
-description = "Serial port library (PySerial wrapper) with more features"
-name = "ok-serial"
-readme = "README.md"
-requires-python = ">=3.10"
-urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
-urls.Repository = "https://github.com/egnor/ok-py-serial.git"
-version = "0.1"
 dependencies = [
   "beartype>=0.22.9",
   "natsort>=8.4.0",
@@ -14,6 +7,16 @@ dependencies = [
   "pyserial>=3.5",
   "types-pyserial>=3.5.0.20251001",
 ]
+description = "Serial port library (PySerial wrapper) with more features"
+name = "ok-serial"
+readme = "README.md"
+requires-python = ">=3.10"
+urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
+urls.Repository = "https://github.com/egnor/ok-py-serial.git"
+version = "0.1"
+
+[project.scripts]
+ok_scan_serial = "ok_serial.ok_scan_serial_cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.13,<0.10.0"]
