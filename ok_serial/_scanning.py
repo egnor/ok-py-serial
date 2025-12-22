@@ -34,6 +34,8 @@ class SerialPortMatcher:
         r'(\s*)(?:(\w+)\s*:\s*)?("(?:\\.|[^"\\])*"|(?:\\.|[^:"\s\\])*)'
     )
 
+    _VIDPID_RE = re.compile(r"([0-9a-f]{4}):([0-9a-f]{4})", re.I)
+
     def __init__(self, match: str):
         """Parses string 'match' as fielded globs matching port attributes"""
 
@@ -44,14 +46,20 @@ class SerialPortMatcher:
         globs: dict[str, str] = {}
         pos = 0
         while pos < len(match):
-            rxm = SerialPortMatcher._TERM_RE.match(match, pos=pos)
-            if not (rxm and rxm.group(0)):
+            term = SerialPortMatcher._TERM_RE.match(match, pos=pos)
+            if not (term and term.group(0)):
                 match_esc = match.encode("unicode-escape").decode()
                 esc_pos = len(match[:pos].encode("unicode-escape").decode())
                 msg = f"Bad port matcher:\n  [{match_esc}]\n  -{'-' * esc_pos}^"
                 raise _exceptions.SerialMatcherInvalid(msg)
 
-            pos, (wspace, field, value) = rxm.end(), rxm.groups(default="")
+            pos = term.end()
+            if vidpid := SerialPortMatcher._VIDPID_RE.fullmatch(term.group(0)):
+                globs["vid"] = f"0x{vidpid[1]}"
+                globs["pid"] = f"0x{vidpid[2]}"
+                continue
+
+            wspace, field, value = term.groups(default="")
             if value.startswith('"') and value.endswith('"'):
                 value = value[1:-1].encode().decode("unicode-escape", "ignore")
             if field:
@@ -83,9 +91,10 @@ class SerialPortMatcher:
         """Tests this matcher against port attributes"""
 
         for k, rx in self._patterns.items():
-            if k == "*" and any(rx.match(v) for v in port.attr.values()):
-                continue
-            if not rx.match(port.attr.get(k, "")):
+            if not any(
+                (k == "*" or ak.startswith(k)) and rx.match(av)
+                for ak, av in port.attr.items()
+            ):
                 return False
         return True
 
