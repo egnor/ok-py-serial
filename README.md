@@ -1,7 +1,7 @@
-# ok-serial for Python
+# ok-serial for Python &nbsp; 🔌〡〇〡〇〡🐍
 
-Python serial port I/O ([based on PySerial](https://www.pyserial.com/)) with
-improved port discovery, concurrency, and non-blocking semantics.
+Python serial I/O library [based on PySerial](https://www.pyserial.com/) with
+improved discovery and interface semantics.
 
 Think twice before using this library! Consider something more established:
 
@@ -43,29 +43,30 @@ lots of gnarly system details. However, some problems keep coming up:
 The `ok-serial` library uses PySerial internally but has its own consistent
 interface to fix these problems and be generally smoove:
 
-- Ports are referenced by a string expression that can match many properties
+- Ports are referenced by
+  [string expressions](#identifying-ports) that can match attributes
   with wildcard support, eg. `desc:Arduino*` or `2e43:0226` or `*RP2040*`.
-  (See below; you can also specify exact device path if desired.)
+  (You can also specify exact device path if desired.)
 
 - I/O operations are thread safe and can be blocking, non-blocking,
   timeout, or async. All blocking operations can be interrupted.
   Semantics are well described, including concurrent access, partial
   reads/writes, errors, and other edge cases.
 
-- I/O buffers are unlimited except for system memory. Writes
+- I/O buffers are unlimited except for system memory; writes
   never block. (You can use a blocking drain operation to wait for
   output completion if desired.)
 
-- Offers `oblivious`, `polite`, `exclusive`, and `stomp` port locking modes
+- Includes `oblivious`, `polite`, `exclusive`, and `stomp` port locking modes
   (see below), with `exclusive` as default. Uses _all_ of
   [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html),
   [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial),
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
   (as available) to prevent contention.
 
-- Offers a `SerialTracker` helper to wait for a device of interest to appear,
-  rescanning after disconnection, to work with devices that might get
-  plugged and unplugged.
+- Includes a `SerialTracker` helper to wait for a device of interest to
+  appear, rescanning as needed after disconnection, to handle devices
+  that might get plugged and unplugged.
 
 ## Installation
 
@@ -75,16 +76,17 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
-## Serial port match expressions
+## Identifying ports
 
-Serial ports can be identified by their operating system device name
-(like `/dev/ttyUSB3` or `COM4`), but are more usefully identified
-by attributes such as their manufacturer (eg. `Adafruit`), product name
-(eg. `CP2102 USB to UART Bridge Controller`), serial number, or other
-properties (eg. USB vendor/product `239a:812d`).
+Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB
+serial ports, so `ok-serial` uses **port match expressions** which
+are strings that identify ports of interest by attributes such as the
+device manufacturer (eg. `Adafruit`), product name (eg.
+`CP2102 USB to UART Bridge Controller`), USB vendor/product ID (eg.
+`239a:812d`), serial number, or other properties.
 
-After installing `ok-serial`, running `ok_scan_serial -v` shows the
-known attributes of ports on your system, formatted like this:
+To see port attributes, install `ok-serial` and run
+`ok_scan_serial --verbose` to list available ports like this:
 
 ```text
 Serial port: /dev/ttyACM3
@@ -105,48 +107,46 @@ Serial port: /dev/ttyACM3
   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
-The specific attribute names and values are inherited from PySerial and
-somewhat system-dependent, but
+Attribute names and value formats are inherited from PySerial and
+the underlying OS and can vary, but
 `device`, `name`, `description`, `hwid`, and (for USB) `vid`, `pid`,
 `serial_number`, `location`, `manufacturer`, `product` and `interface`
-are semi standardized.
+are semi-standardized.
 
-In `ok-serial`, **match expressions** are string values that select ports
-based on attributes. They can be simple strings to match any attribute
-value exactly:
+Match expressions can be a simple value, selecting any port with a
+matching value (case-insensitive whole-string match):
 
 ```text
 Pico Serial
 ```
 
-They can include `*` and `?` wildcards:
+Match values can include `*` and `?` wildcards:
 
 ```text
 *RP2040*
 ```
 
-They can include a field selector, which may be abbreviated to a prefix:
+Expressions can include a field selector (prefix abbreviation is OK):
 
 ```text
-subsystem:usb
+subsys:usb
 ```
 
-If the value to match contains colons, quotes, or special characters, they
-should be quoted with Python/C/JS/JSON string quoting:
+Values containing colons, quotes, or special characters
+should be quoted using Python/C/JS string escaping:
 
 ```text
 location:"3-2.1:1.0"
 ```
 
-Multiple constraints can be combined:
+Multiple constraints can be combined; all must match:
 
 ```text
 manufacturer:Adafruit serial:DF625*
 ```
 
-For experimentation, you can give a match expression to `ok_scan_serial`
-on the command line; if you set `$OK_LOGGING_LEVEL=debug` you can see the
-parsing result:
+To experiment, pass a match expression to `ok_scan_serial` on the
+command line; set `$OK_LOGGING_LEVEL=debug` to see the parse result:
 
 ```text
 % OK_LOGGING_LEVEL=debug ok_scan_serial -v 'manufacturer:Adafruit serial:DF625*'
@@ -172,3 +172,31 @@ Serial port: /dev/ttyACM3
   subsystem: 'usb'
   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
+
+## Sharing modes
+
+When opening a port, `ok-serial` supports a choice of four sharing modes:
+
+- `oblivious` - no locking is done and advisory locks are ignored. If
+  multiple programs open the port, they will all send and receive data
+  to the same device. This mode is not recommended.
+
+- `polite` - locking is checked at open, and if the port is in use the
+  open fails. Once opened, no locks are held except for a shared lock
+  to discourage other `polite` users from opening the port. If a
+  less polite program opens the port later there will be conflict.
+  (In the future, this mode will attempt to notice such conflicts
+  and close out the port, deferring to the less-polite program.)
+
+- `exclusive` (the default mode) - locking is checked at open, and if the
+  port is in use the open fails. Once opened, several means of locking
+  are employed to prevent or discourage others from opening the port.
+
+- `stomp` (use with care!) - locking is checked at open, and if the port
+  is in use, _the program using the port is killed_ if permissions
+  allow. The port is opened regardless of any other users and all
+  available locks are taken.
+
+The library's ability to implement these modes can be limited by
+operating system capabilities, process permissions, and the variously
+questionable historical conventions for port usage coordination.
