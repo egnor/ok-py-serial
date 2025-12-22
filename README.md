@@ -25,7 +25,7 @@ lots of gnarly system details. However, some problems keep coming up:
 - Most serial ports are USB, and USB serial ports get assigned cryptic
   temporary names like `/dev/ttyACM3` or `COM4`. Using
   [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep)
-  is a clumsy multi step process; linux supports
+  is a clumsy multi step process; linux allows
   [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk)
   but they're not exactly user friendly.
 
@@ -175,7 +175,7 @@ Serial port: /dev/ttyACM3
 
 ## Sharing modes
 
-When opening a port, `ok-serial` supports a choice of four sharing modes:
+When opening a port, `ok-serial` offers a choice of four sharing modes:
 
 - `oblivious` - no locking is done and advisory locks are ignored. If
   multiple programs open the port, they will all send and receive data
