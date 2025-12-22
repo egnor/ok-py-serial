@@ -57,12 +57,12 @@ interface to fix these problems and be generally smoove:
   never block. (You can use a blocking drain operation to wait for
   output completion if desired.)
 
-- Includes `oblivious`, `polite`, `exclusive`, and `stomp` port locking modes
-  (see below), with `exclusive` as default. Uses _all_ of
+- Includes [multiple port locking modes](#sharing-modes) with exclusive locking
+  as the default. Employs _all_ of
   [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html),
   [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial),
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
-  (as available) to prevent contention.
+  (as available) to avoid contention.
 
 - Includes a `SerialTracker` helper to wait for a device of interest to
   appear, rescanning as needed after disconnection, to handle devices
