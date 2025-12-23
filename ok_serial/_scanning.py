@@ -29,21 +29,24 @@ class SerialPortMatcher:
     """A parsed expression for matching against SerialPort results"""
 
     _TERM_RE = re.compile(
-        r"\s*(?:"
-        r"""([A-Z_]+)\s*~\s*/((?:\\.|[^/\\])*)/"""  # field~/regex/
-        r"|"
-        r"""(?:([A-Z_]+)\s*(:|=)\s*)?["']((?:\\.|[^"\\])*)["']"""  # field:"str"
-        r"|"
-        r"""([^\s"'\\~]+)"""  # naked value, no field
+        # beginning of term
+        r"\s*(?<!\S)(?:"
+        # vid:pid OR
+        r"""([0-9A-F]{4}):([0-9A-F]{4})(?!\S)|"""
+        # attr~/regex/, ~/regex/ OR
+        r"""([A-Z_]+)?~/((?:\\.|[^\\/])*)/|"""
+        # attr:"str", attr:'str', "str", 'str' OR
+        r"""(?:([A-Z_]+)(:|=))?["']((?:\\.|[^\\"])*)["']|"""
+        # naked number OR
+        r"""(0|[1-9][0-9]*|0x[0-9a-f]+)|"""
+        # naked term
+        r"""((?:\\.|[^\\\s"'~])+)"""
+        # end of term
         r")(?!\S)\s*",
         re.I,
     )
 
-    _VIDPID_TERM_RE = re.compile(
-        r"\s*([0-9A-F]{4}):([0-9A-F]{4})(?!\S)\s*", re.I
-    )
-
-    _POSINT_VALUE_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
+    _FNMATCH_RE = re.compile(r"^\(\?s:(.*)\)\\Z")
 
     def __init__(self, match: str):
         """Parses string 'match' as fielded globs matching port attributes"""
@@ -53,58 +56,60 @@ class SerialPortMatcher:
 
         pos = 0
         while pos < len(match):
-            if vp := SerialPortMatcher._VIDPID_TERM_RE.match(match, pos=pos):
-                self._patterns.append(("vid", re.compile(f"{int(vp[1], 16)}")))
-                self._patterns.append(("pid", re.compile(f"{int(vp[2], 16)}")))
-                continue
-
-            term = SerialPortMatcher._TERM_RE.match(match, pos=pos)
-            if not (term and term[0]):
+            tm = self._TERM_RE.match(match, pos=pos)
+            if not (tm and tm[0]):
                 repr_pos = len(repr(match[:pos])) - 1
                 msg = f"Bad port matcher:\n  {match!r}\n -{'-' * repr_pos}^"
                 raise _exceptions.SerialMatcherInvalid(msg)
 
-            rfield, regex, qfield, qop, quoted, naked = term.groups(default="")
-            pos = term.end()
+            vi, pi, ratt, rx, qatt, qop, qv, num, naked = tm.groups(default="")
+            pos = tm.end()
 
-            if regex:
+            if vi and pi:
+                self._patterns.append(("vid", re.compile(f"^{int(vi, 16)}$")))
+                self._patterns.append(("pid", re.compile(f"^{int(pi, 16)}$")))
+
+            elif rx:
                 try:
-                    self._patterns.append((rfield, re.compile(regex)))
+                    self._patterns.append((ratt or "*", re.compile(rx)))
                 except re.error as ex:
-                    msg = f"Bad port matcher regex: /{regex}/"
+                    msg = f"Bad port matcher regex: /{rx}/"
                     raise _exceptions.SerialMatcherInvalid(msg) from ex
 
-            elif quoted:
+            elif qv:
                 try:
-                    unquoted = quoted.encode().decode("unicode-escape")
+                    unquoted = qv.encode().decode("unicode-escape")
                 except UnicodeDecodeError as ex:
-                    msg = f"Bad port matcher string {quoted}"
+                    msg = f"Bad port matcher string {qv}"
                     raise _exceptions.SerialMatcherInvalid(msg) from ex
-                regex = re.escape(unquoted)
-                regex = f"^{regex}$" if qop == "=" else regex
-                prefix = r"(?<!\w)" if unquoted[:1].isalnum() else ""
-                suffix = r"(?!\w)" if unquoted[-1:].isalnum() else ""
-                regex = f"{prefix}{regex}{suffix}"
-                self._patterns.append((qfield or "*", re.compile(regex)))
+                rx = re.escape(unquoted)
+                rx = f"^{rx}$" if qop == "=" else rx
+                rx = r"(?<!\w)" + rx if unquoted[:1].isalnum() else rx
+                rx = rx + r"(?!\w)" if unquoted[-1:].isalnum() else rx
+                self._patterns.append((qatt or "*", re.compile(rx)))
+
+            elif num:
+                nv = int(num, 0)
+                rx = r"(?<!\w)" f"(0*{nv}|(0x)?0*{nv:x}h?)" r"(?!\w)"
+                self._patterns.append(("*", re.compile(rx)))
 
             elif naked:
-                if pi := SerialPortMatcher._POSINT_VALUE_RE.fullmatch(naked):
-                    num = int(pi[0], 0)
-                    regex = f"({re.escape(naked)}|0x{num:04x}|0*{num})"
-                else:
-                    regex = fnmatch.translate(naked)
-                    regex = regex.replace(r"\Z", "").replace(r"(?s:", "(")
-                prefix = r"(?<!\w)" if naked[:1].isalnum() else ""
-                suffix = r"(?!\w)" if naked[-1:].isalnum() else ""
-                regex = f"{prefix}{regex}{suffix}"
-                self._patterns.append(("*", re.compile(regex, re.I)))
+                rx = fnmatch.translate(naked)
+                rx = m[1] if (m := self._FNMATCH_RE.match(rx)) else rx
+                rx = r"(?<!\w)" + rx if naked[:1].isalnum() else rx
+                rx = rx + r"(?!\w)" if naked[-1:].isalnum() else rx
+                self._patterns.append(("*", re.compile(rx, re.I)))
 
             else:
-                assert False, f"bad regexp match: {term!r}"
+                assert False, f"bad regexp match: {tm[0]!r}"
 
         if log.isEnabledFor(logging.DEBUG):
-            pats = "".join(f"\n  {k}: /{p.pattern}/" for k, p in self._patterns)
-            log.debug("Parsed %s:%s", repr(match), pats)
+            patterns = "".join(
+                f"\n  {k.replace('*', '')}~/{pat}/"
+                for k, p in self._patterns
+                for pat in [p.pattern.replace("/", r"\/")]
+            )
+            log.debug("Parsed %s:%s", repr(match), patterns)
 
     def __repr__(self) -> str:
         return f"SerialPortMatcher({self._input!r})"

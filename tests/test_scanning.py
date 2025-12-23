@@ -9,28 +9,40 @@ import ok_serial
 from ok_serial import SerialPort
 
 
+WB, WE = r"(?<!\w)", r"(?!\w)"
+
 PARSE_CHECKS = [
-    ("simple", {"*": r"(?s:simple)\Z"}),
-    # fnmatch will backslash whitespace (space, \t, \n, etc) for some reason
-    (" \twith whitespace\n ", {"*": "(?s:\\ \\\twith\\ whitespace\\\n\\ )\\Z"}),
-    ("wild*card?expr", {"*": r"(?s:wild.*card.expr)\Z"}),
-    ("field:wild*card?expr", {"field": r"(?s:wild.*card.expr)\Z"}),
-    ("  field  :  wild*card?expr", {"field": r"(?s:wild.*card.expr)\Z"}),
-    ("a:avalue b:bvalue", {"a": r"(?s:avalue)\Z", "b": r"(?s:bvalue)\Z"}),
+    ("simple", [("*", r"(?<!\w)simple(?!\w)")]),
     (
-        "val a:av etc b:bv etc",
-        {"*": r"(?s:val)\Z", "a": r"(?s:av\ etc)\Z", "b": r"(?s:bv\ etc)\Z"},
+        " \twith whitespace\n ",
+        [("*", WB + r"with" + WE), ("*", WB + r"whitespace" + WE)],
     ),
-    ('a: " quoted: \\"string\\" "', {"a": r'(?s:\ quoted:\ "string"\ )\Z'}),
-    ("0", {"*": r"(0|0|(0x)?0*0h?)\Z"}),
-    ("123", {"*": r"(123|123|(0x)?0*7bh?)\Z"}),
-    ("0x07B", {"*": r"(0x07B|123|(0x)?0*7bh?)\Z"}),
+    ("wild*card?expr", [("*", WB + r"wild.*card.expr" + WE)]),
+    ("field:'don\\'t panic'", [("field", WB + r"don't\ panic" + WE)]),
+    ('a:" quoted: \\"string\\" "', [("a", r'\ quoted:\ "string"\ ')]),
+    (
+        'a:"avalue" b:"bvalue"',
+        [("a", WB + r"avalue" + WE), ("b", WB + r"bvalue" + WE)],
+    ),
+    (
+        "val a='av' etc b:\"bv\" etc",
+        [
+            ("*", WB + r"val" + WE),
+            ("a", WB + r"^av$" + WE),
+            ("*", WB + r"etc" + WE),
+            ("b", WB + r"bv" + WE),
+            ("*", WB + r"etc" + WE),
+        ],
+    ),
+    ("0", [("*", WB + r"(0*0|(0x)?0*0h?)" + WE)]),
+    ("123", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
+    ("0x07B", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
     (
         "01ab:23cd",
-        {
-            "vid": r"(0x01ab|427|(0x)?0*1abh?)\Z",
-            "pid": r"(0x23cd|9165|(0x)?0*23cdh?)\Z",
-        },
+        [
+            ("vid", r"^427$"),
+            ("pid", r"^9165$"),
+        ],
     ),
 ]
 
@@ -38,12 +50,12 @@ PARSE_CHECKS = [
 def test_SerialPortMatcher_init():
     for spec, expected in PARSE_CHECKS:
         actual = ok_serial.SerialPortMatcher(spec)._patterns
-        actual_unwrapped = {k: rx.pattern for k, rx in actual.items()}
+        actual_unwrapped = [(k, rx.pattern) for k, rx in actual]
         assert actual_unwrapped == expected
 
 
 def test_SerialPortMatcher_matches():
-    matcher = ok_serial.SerialPortMatcher("*mid* A:a* b:*b")
+    matcher = ok_serial.SerialPortMatcher("*mid* a* *b")
     for id in [
         SerialPort(name="z", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
         SerialPort(name="z", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),

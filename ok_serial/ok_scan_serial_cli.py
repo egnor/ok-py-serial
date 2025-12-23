@@ -16,7 +16,7 @@ logger = logging.getLogger("ok_serial_scan")
 
 def main():
     parser = argparse.ArgumentParser(description="Scan and list serial ports.")
-    parser.add_argument("match", nargs="?", help="Properties to search for")
+    parser.add_argument("match", nargs="*", help="Properties to search for")
     parser.add_argument(
         "--list",
         "-l",
@@ -37,7 +37,8 @@ def main():
     )
 
     args = parser.parse_args()
-    matcher = ok_serial.SerialPortMatcher(args.match) if args.match else None
+    match = " ".join(args.match)
+    matcher = ok_serial.SerialPortMatcher(match) if match else None
     found = ok_serial.scan_serial_ports()
     if not found:
         ok_logging_setup.exit("ok_serial_scan: No ports found")
@@ -74,13 +75,13 @@ def format_oneline(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher | None
 ):
     hits = {k: True for k in matcher.matching_attrs(port)} if matcher else {}
-    dev, name, sub, ser, desc = (
+    sub, ser, desc = (
         f"{port.attr[k]}✅" if hits.pop(k, False) else port.attr.get(k, "")
-        for k in "device name subsystem serial_number description".split()
+        for k in "subsystem serial_number description".split()
     )
 
-    dev = dev.replace(port.attr["name"], name) if "device" not in hits else dev
-    words = [dev, sub]
+    nhits = [k for k in list(hits) if port.attr[k] in port.name and hits.pop(k)]
+    words = [f"{port.name}✅" if nhits else port.name, sub]
 
     try:
         vid_int, pid_int = int(port.attr["vid"], 0), int(port.attr["pid"], 0)
@@ -91,7 +92,7 @@ def format_oneline(
         words.append(f"{vid_int:04x}:{pid_int:04x}{'✅' if vp_hit else ''}")
 
     words.extend((ser, desc))
-    words.extend(f"{k}:{v}✅" for k, v in ((k, port.attr[k]) for k in hits))
+    words.extend(f"{k}={v!r}✅" for k, v in ((k, port.attr[k]) for k in hits))
     return " ".join(w for w in words if w)
 
 
@@ -100,7 +101,7 @@ def format_verbose(
 ):
     hits = matcher.matching_attrs(port) if matcher else set()
     return f"Serial port: {port.name}" + "".join(
-        f"\n✅ {k}: {v}" if k in hits else f"\n   {k}: {v}"
+        f"\n✅ {k}={v!r}" if k in hits else f"\n   {k}={v!r}"
         for k, v in port.attr.items()
     )
 

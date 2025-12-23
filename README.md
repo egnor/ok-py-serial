@@ -111,9 +111,17 @@ Attribute definitions are inherited from PySerial and the OS and can vary, but
 `serial_number`, `location`, `manufacturer`, `product` and `interface`
 are semi-standardized.
 
-A match expression indlues one or more space separated search terms, which can
-be any of `word`, `wild*card*`, `attr:"quoted value"`, or `attr~/regexp/`.
-Attribute names can be abbreviated; all terms must match to select a port.
+Match expressions include space separated search terms, each of which can be:
+- `word` - matches `word` in any attribute value, case INsensitive but
+  respecting word boundaries
+- `wild*card?` - glob matching applies to unquoted expression words
+- `"quoted text"` - case SENSITIVE, non-glob match for C/JS/Python-style
+  quoted strings
+- `attr:"quoted text"` - as above but for a specific attribute
+  (the attribute name can be abbreviated)
+- `attr="exact match"` - as above but must match the entire attribute value
+- `~/regexp/` - regular expression match (using Python `re`) in any attribute
+- `attr~/regexp/` - regular expression match within a given attribute
 
 Some examples:
 
@@ -132,26 +140,26 @@ command line and set `$OK_LOGGING_LEVEL=debug` to see parsing results:
 ```text
 % OK_LOGGING_LEVEL=debug ok_scan_serial -v 'Adafruit serial~/^DF625.*/'
 🕸  ok_serial.scanning: Parsed 'Adafruit serial~/^DF625.*/':
-  *: /(?<!\w)(Adafruit)(?!\w)/
-  serial: /^DF625.*/
+  *~/(?<!\w)(Adafruit)(?!\w)/
+  serial~/^DF625.*/
 🕸  ok_serial.scanning: Found 36 ports
 36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
 Serial port: /dev/ttyACM3
-   device: '/dev/ttyACM3'
-   name: 'ttyACM3'
-   description: 'Feather RP2040 RFM - Pico Serial'
-   hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-   vid: '9114'
-   pid: '33069'
-✅ serial_number: 'DF62585783553434'
-   location: '3-2.1:1.0'
-✅ manufacturer: 'Adafruit'
-   product: 'Feather RP2040 RFM'
-   interface: 'Pico Serial'
-   usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-   device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-   subsystem: 'usb'
-   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   device='/dev/ttyACM3'
+   name='ttyACM3'
+   description='Feather RP2040 RFM - Pico Serial'
+   hwid='USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
+   vid='9114'
+   pid='33069'
+✅ serial_number='DF62585783553434'
+   location='3-2.1:1.0'
+✅ manufacturer='Adafruit'
+   product='Feather RP2040 RFM'
+   interface='Pico Serial'
+   usb_device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
+   device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   subsystem='usb'
+   usb_interface_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
 ## Sharing modes

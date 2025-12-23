@@ -9,7 +9,7 @@ import ok_serial
 
 def test_connect_sync_finds_port(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "test"}})
-    with ok_serial.SerialTracker("name:test") as tracker:
+    with ok_serial.SerialTracker("test") as tracker:
         conn = tracker.connect_sync(timeout=1)
         assert conn is not None
         assert conn.port_name == pty_serial.path
@@ -17,14 +17,14 @@ def test_connect_sync_finds_port(pty_serial, set_scan_override):
 
 def test_connect_sync_no_match_times_out(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "other"}})
-    with ok_serial.SerialTracker("name:nomatch") as tracker:
+    with ok_serial.SerialTracker("nomatch") as tracker:
         conn = tracker.connect_sync(timeout=0.2)
         assert conn is None
 
 
 def test_connect_sync_reuses_connection(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "test"}})
-    with ok_serial.SerialTracker("name:test") as tracker:
+    with ok_serial.SerialTracker("test") as tracker:
         conn1 = tracker.connect_sync(timeout=1)
         conn2 = tracker.connect_sync(timeout=1)
         assert conn1 is conn2
@@ -32,7 +32,7 @@ def test_connect_sync_reuses_connection(pty_serial, set_scan_override):
 
 def test_connect_sync_reconnects_after_close(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "test"}})
-    with ok_serial.SerialTracker("name:test") as tracker:
+    with ok_serial.SerialTracker("test") as tracker:
         conn1 = tracker.connect_sync(timeout=1)
         conn1.close()
         conn2 = tracker.connect_sync(timeout=1)
@@ -50,7 +50,7 @@ def test_connect_sync_waits_for_port_to_appear(pty_serial, set_scan_override):
     thread = threading.Thread(target=add_port_later)
     thread.start()
     opts = ok_serial.TrackerOptions(scan_interval=0.05)
-    with ok_serial.SerialTracker("name:delayed", topts=opts) as tracker:
+    with ok_serial.SerialTracker("delayed", topts=opts) as tracker:
         conn = tracker.connect_sync(timeout=2)
         assert conn is not None
         assert conn.port_name == pty_serial.path
@@ -59,7 +59,7 @@ def test_connect_sync_waits_for_port_to_appear(pty_serial, set_scan_override):
 
 async def test_connect_async_finds_port(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "async_test"}})
-    with ok_serial.SerialTracker("name:async_test") as tracker:
+    with ok_serial.SerialTracker("async_test") as tracker:
         conn = await asyncio.wait_for(tracker.connect_async(), timeout=1)
         assert conn.port_name == pty_serial.path
 
@@ -72,7 +72,7 @@ async def test_connect_async_waits_for_port(pty_serial, set_scan_override):
         set_scan_override({pty_serial.path: {"name": "appears"}})
 
     opts = ok_serial.TrackerOptions(scan_interval=0.05)
-    with ok_serial.SerialTracker("name:appears", topts=opts) as tracker:
+    with ok_serial.SerialTracker("appears", topts=opts) as tracker:
         asyncio.create_task(add_port_later())
         conn = await asyncio.wait_for(tracker.connect_async(), timeout=2)
         assert conn.port_name == pty_serial.path
