@@ -100,15 +100,27 @@ class SerialPortMatcher:
         return self._input
 
     def matches(self, port: SerialPort) -> bool:
-        """Tests this matcher against port attributes"""
+        """True if this matcher selects 'port'"""
 
-        for k, rx in self._patterns.items():
-            if not any(
-                (k == "*" or ak.startswith(k)) and rx.match(av)
+        return all(
+            any(
+                (mk == "*" or ak.startswith(mk)) and rx.match(av)
                 for ak, av in port.attr.items()
-            ):
-                return False
-        return True
+            )
+            for mk, rx in self._patterns.items()
+        )
+
+    def matching_attrs(self, port: SerialPort) -> set[str]:
+        """The set of attribute keys on 'port' matched by this matcher"""
+
+        return set(
+            ak
+            for ak, av in port.attr.items()
+            if any(
+                (mk == "*" or ak.startswith(mk)) and rx.match(av)
+                for mk, rx in self._patterns.items()
+            )
+        )
 
 
 def scan_serial_ports(
