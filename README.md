@@ -79,98 +79,79 @@ pip install ok-serial
 ## Identifying ports
 
 Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB
-serial ports, so `ok-serial` uses **port match expressions** which
-are strings that identify ports of interest by attributes such as the
-device manufacturer (eg. `Adafruit`), product name (eg.
-`CP2102 USB to UART Bridge Controller`), USB vendor/product ID (eg.
-`239a:812d`), serial number, or other properties.
+serial ports, so `ok-serial` uses **port match expressions**, search strings
+which match attributes such as the device manufacturer (eg. `Adafruit`),
+product name (eg. `CP2102 USB to UART Bridge Controller`),
+USB vendor/product ID (eg. `239a:812d`), serial number, etc.
 
 To see port attributes, install `ok-serial` and run
 `ok_scan_serial --verbose` to list available ports like this:
 
 ```text
 Serial port: /dev/ttyACM3
-  device: '/dev/ttyACM3'
-  name: 'ttyACM3'
-  description: 'Feather RP2040 RFM - Pico Serial'
-  hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-  vid: '9114'
-  pid: '33069'
-  serial_number: 'DF62585783553434'
-  location: '3-2.1:1.0'
-  manufacturer: 'Adafruit'
-  product: 'Feather RP2040 RFM'
-  interface: 'Pico Serial'
-  usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-  device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-  subsystem: 'usb'
-  usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   device: '/dev/ttyACM3'
+   name: 'ttyACM3'
+   description: 'Feather RP2040 RFM - Pico Serial'
+   hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
+   vid: '9114'
+   pid: '33069'
+   serial_number: 'DF62585783553434'
+   location: '3-2.1:1.0'
+   manufacturer: 'Adafruit'
+   product: 'Feather RP2040 RFM'
+   interface: 'Pico Serial'
+   usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
+   device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   subsystem: 'usb'
+   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
-Attribute names and value formats are inherited from PySerial and
-the underlying OS and can vary, but
+Attribute definitions are inherited from PySerial and the OS and can vary, but
 `device`, `name`, `description`, `hwid`, and (for USB) `vid`, `pid`,
 `serial_number`, `location`, `manufacturer`, `product` and `interface`
 are semi-standardized.
 
-Match expressions can be a simple value, selecting any port with a
-matching value (case-insensitive whole-string match):
+A match expression indlues one or more space separated search terms, which can
+be any of `word`, `wild*card*`, `attr:"quoted value"`, or `attr~/regexp/`.
+Attribute names can be abbreviated; all terms must match to select a port.
+
+Some examples:
+
+- `Pico Serial` - any port with the words `pico` AND `serial` anywhere in any
+attributes (case insensitive, respecting word boundaries; `tampico` would
+not match)
+- `RP2040 DF625*` - any port with the word `rp2040` AND a word starting
+  with `DF625` in any attributes
+- `subsys:"usb"` - the `subsystem` attribute must be lowercase `usb` exactly
+- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere, and
+  `serial_number` must begin with `DF625`
+
+You can pass a match expression to `ok_scan_serial` on the
+command line and set `$OK_LOGGING_LEVEL=debug` to see parsing results:
 
 ```text
-Pico Serial
-```
-
-Match values can include `*` and `?` wildcards:
-
-```text
-*RP2040*
-```
-
-Expressions can include a field selector (prefix abbreviation is OK):
-
-```text
-subsys:usb
-```
-
-Values containing colons, quotes, or special characters
-should be quoted using Python/C/JS string escaping:
-
-```text
-location:"3-2.1:1.0"
-```
-
-Multiple constraints can be combined; all must match:
-
-```text
-manufacturer:Adafruit serial:DF625*
-```
-
-To experiment, pass a match expression to `ok_scan_serial` on the
-command line; set `$OK_LOGGING_LEVEL=debug` to see the parse result:
-
-```text
-% OK_LOGGING_LEVEL=debug ok_scan_serial -v 'manufacturer:Adafruit serial:DF625*'
-🕸  ok_serial.scanning: Parsed 'manufacturer:Adafruit serial:DF625*':
-  manufacturer: /(?s:Adafruit)\Z/
-  serial: /(?s:DF625.*)\Z/
+% OK_LOGGING_LEVEL=debug ok_scan_serial -v 'Adafruit serial~/^DF625.*/'
+🕸  ok_serial.scanning: Parsed 'Adafruit serial~/^DF625.*/':
+  *: /(?<!\w)(Adafruit)(?!\w)/
+  serial: /^DF625.*/
 🕸  ok_serial.scanning: Found 36 ports
-36 serial ports found, 1 matches 'manufacturer:Adafruit serial:DF625*'
+36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
 Serial port: /dev/ttyACM3
-  device: '/dev/ttyACM3'
-  name: 'ttyACM3'
-  description: 'Feather RP2040 RFM - Pico Serial'
-  hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-  vid: '9114'
-  pid: '33069'
-  serial_number: 'DF62585783553434'
-  location: '3-2.1:1.0'
-  manufacturer: 'Adafruit'
-  product: 'Feather RP2040 RFM'
-  interface: 'Pico Serial'
-  usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-  device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-  subsystem: 'usb'
-  usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   device: '/dev/ttyACM3'
+   name: 'ttyACM3'
+   description: 'Feather RP2040 RFM - Pico Serial'
+   hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
+   vid: '9114'
+   pid: '33069'
+✅ serial_number: 'DF62585783553434'
+   location: '3-2.1:1.0'
+✅ manufacturer: 'Adafruit'
+   product: 'Feather RP2040 RFM'
+   interface: 'Pico Serial'
+   usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
+   device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   subsystem: 'usb'
+   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
 ## Sharing modes

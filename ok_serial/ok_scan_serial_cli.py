@@ -6,9 +6,10 @@ import argparse
 import logging
 import ok_logging_setup
 import ok_serial
-import re
 
 ok_logging_setup.install()
+ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
+ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
 logger = logging.getLogger("ok_serial_scan")
 
@@ -69,41 +70,38 @@ def main():
             print(format_oneline(port, matcher))
 
 
-UNQUOTED_RE = re.compile(r'[^:"\s\\]*')
-
-
-XXX fix highlighting
 def format_oneline(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher | None
 ):
-    attr = dict(port.attr)
-    line = attr.pop("device") or port.name
-    for hit in (matcher.matching_attrs(port) if matcher else set()):
-        line += f" *{hit}:{attr[hit][1:]!r}"
-        del attr[hit]
-        
-    if sub := attr.get("subsystem"):
-        line += f" {sub}"
+    hits = {k: True for k in matcher.matching_attrs(port)} if matcher else {}
+    dev, name, sub, ser, desc = (
+        f"{port.attr[k]}✅" if hits.pop(k, False) else port.attr.get(k, "")
+        for k in "device name subsystem serial_number description".split()
+    )
+
+    dev = dev.replace(port.attr["name"], name) if "device" not in hits else dev
+    words = [dev, sub]
+
     try:
-        vid_int, pid_int = int(attr["vid"], 0), int(attr["pid"], 0)
+        vid_int, pid_int = int(port.attr["vid"], 0), int(port.attr["pid"], 0)
     except (KeyError, ValueError):
         pass
     else:
-        vid, pid = attr.pop("vid", ""), attr.pop("pid", "")
-        starred = vid.startswith("*") or pid.startswith("*")
-        line += f" {'*' if starred else ''}{vid_int:04x}:{pid_int:04x}"
-    if ser := attr.pop("serial_number", None):
-        line += f" {ser}"
-    if desc := attr.pop("description", None):
-        line += f" {desc}"
-    return line
+        vp_hit = hits.pop("vid", False) + hits.pop("pid", False)
+        words.append(f"{vid_int:04x}:{pid_int:04x}{'✅' if vp_hit else ''}")
+
+    words.extend((ser, desc))
+    words.extend(f"{k}:{v}✅" for k, v in ((k, port.attr[k]) for k in hits))
+    return " ".join(w for w in words if w)
 
 
 def format_verbose(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher | None
 ):
-    return f"Serial port: {port.name}:" + "".join(
-        f"\n  {k}: {repr(v)}" for k, v in port.attr.items()
+    hits = matcher.matching_attrs(port) if matcher else set()
+    return f"Serial port: {port.name}" + "".join(
+        f"\n✅ {k}: {v}" if k in hits else f"\n   {k}: {v}"
+        for k, v in port.attr.items()
     )
 
 

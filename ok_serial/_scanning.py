@@ -28,70 +28,83 @@ class SerialPort:
 class SerialPortMatcher:
     """A parsed expression for matching against SerialPort results"""
 
-    _POSINT_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
-
     _TERM_RE = re.compile(
-        r"""(\s*)(?:(\w+)\s*:\s*)?"""  # whitespace, field
-        r"""(["'](?:\\.|[^"\\])*["']|(?:\\.|[^:"'\s\\])*)"""  # value
+        r"\s*(?:"
+        r"""([A-Z_]+)\s*~\s*/((?:\\.|[^/\\])*)/"""  # field~/regex/
+        r"|"
+        r"""(?:([A-Z_]+)\s*(:|=)\s*)?["']((?:\\.|[^"\\])*)["']"""  # field:"str"
+        r"|"
+        r"""([^\s"'\\~]+)"""  # naked value, no field
+        r")(?!\S)\s*",
+        re.I,
     )
 
-    _VIDPID_RE = re.compile(r"([0-9a-f]{4}):([0-9a-f]{4})", re.I)
+    _VIDPID_TERM_RE = re.compile(
+        r"\s*([0-9A-F]{4}):([0-9A-F]{4})(?!\S)\s*", re.I
+    )
+
+    _POSINT_VALUE_RE = re.compile(r"0|[1-9][0-9]*|0x[0-9a-f]+", re.I)
 
     def __init__(self, match: str):
         """Parses string 'match' as fielded globs matching port attributes"""
 
         self._input = match
-        self._patterns: dict[str, re.Pattern] = {}
+        self._patterns: list[tuple[str, re.Pattern]] = []
 
-        current_field = ""
-        globs: dict[str, str] = {}
         pos = 0
         while pos < len(match):
-            term = SerialPortMatcher._TERM_RE.match(match, pos=pos)
-            if not (term and term.group(0)):
-                match_esc = match.encode("unicode-escape").decode()
-                esc_pos = len(match[:pos].encode("unicode-escape").decode())
-                msg = f"Bad port matcher:\n  [{match_esc}]\n  -{'-' * esc_pos}^"
-                raise _exceptions.SerialMatcherInvalid(msg)
-
-            pos = term.end()
-            if vidpid := SerialPortMatcher._VIDPID_RE.fullmatch(term.group(0)):
-                globs["vid"] = f"0x{vidpid[1]}"
-                globs["pid"] = f"0x{vidpid[2]}"
+            if vp := SerialPortMatcher._VIDPID_TERM_RE.match(match, pos=pos):
+                self._patterns.append(("vid", re.compile(f"{int(vp[1], 16)}")))
+                self._patterns.append(("pid", re.compile(f"{int(vp[2], 16)}")))
                 continue
 
-            wspace, field, value = term.groups(default="")
-            if (value[:1] + value[-1:]) in ('""', "''"):
-                try:
-                    value = value[1:-1].encode().decode("unicode-escape")
-                except UnicodeDecodeError as ex:
-                    msg = f"Bad port matcher value: {value}"
-                    raise _exceptions.SerialMatcherInvalid(msg) from ex
-            if field:
-                current_field = field.rstrip().rstrip(":").strip().lower()
-                globs[current_field] = value
-            elif current_field:
-                globs[current_field] += wspace + value
-            else:
-                current_field = "*"
-                globs[current_field] = wspace + value
+            term = SerialPortMatcher._TERM_RE.match(match, pos=pos)
+            if not (term and term[0]):
+                repr_pos = len(repr(match[:pos])) - 1
+                msg = f"Bad port matcher:\n  {match!r}\n -{'-' * repr_pos}^"
+                raise _exceptions.SerialMatcherInvalid(msg)
 
-        for k, glob in globs.items():
-            if SerialPortMatcher._POSINT_RE.fullmatch(glob):
-                num = int(glob, 0)
-                regex = f"({glob}|{num}|(0x)?0*{num:x}h?)\\Z"
+            rfield, regex, qfield, qop, quoted, naked = term.groups(default="")
+            pos = term.end()
+
+            if regex:
+                try:
+                    self._patterns.append((rfield, re.compile(regex)))
+                except re.error as ex:
+                    msg = f"Bad port matcher regex: /{regex}/"
+                    raise _exceptions.SerialMatcherInvalid(msg) from ex
+
+            elif quoted:
+                try:
+                    unquoted = quoted.encode().decode("unicode-escape")
+                except UnicodeDecodeError as ex:
+                    msg = f"Bad port matcher string {quoted}"
+                    raise _exceptions.SerialMatcherInvalid(msg) from ex
+                regex = re.escape(unquoted)
+                regex = f"^{regex}$" if qop == "=" else regex
+                prefix = r"(?<!\w)" if unquoted[:1].isalnum() else ""
+                suffix = r"(?!\w)" if unquoted[-1:].isalnum() else ""
+                regex = f"{prefix}{regex}{suffix}"
+                self._patterns.append((qfield or "*", re.compile(regex)))
+
+            elif naked:
+                if pi := SerialPortMatcher._POSINT_VALUE_RE.fullmatch(naked):
+                    num = int(pi[0], 0)
+                    regex = f"({re.escape(naked)}|0x{num:04x}|0*{num})"
+                else:
+                    regex = fnmatch.translate(naked)
+                    regex = regex.replace(r"\Z", "").replace(r"(?s:", "(")
+                prefix = r"(?<!\w)" if naked[:1].isalnum() else ""
+                suffix = r"(?!\w)" if naked[-1:].isalnum() else ""
+                regex = f"{prefix}{regex}{suffix}"
+                self._patterns.append(("*", re.compile(regex, re.I)))
+
             else:
-                regex = fnmatch.translate(glob)
-            self._patterns[k] = re.compile(regex, re.I)
+                assert False, f"bad regexp match: {term!r}"
 
         if log.isEnabledFor(logging.DEBUG):
-            log.debug(
-                "Parsed %s:%s",
-                repr(match),
-                "".join(
-                    f"\n  {k}: /{p.pattern}/" for k, p in self._patterns.items()
-                ),
-            )
+            pats = "".join(f"\n  {k}: /{p.pattern}/" for k, p in self._patterns)
+            log.debug("Parsed %s:%s", repr(match), pats)
 
     def __repr__(self) -> str:
         return f"SerialPortMatcher({self._input!r})"
@@ -103,11 +116,8 @@ class SerialPortMatcher:
         """True if this matcher selects 'port'"""
 
         return all(
-            any(
-                (mk == "*" or ak.startswith(mk)) and rx.match(av)
-                for ak, av in port.attr.items()
-            )
-            for mk, rx in self._patterns.items()
+            any(self._amatch(pk, prx, ak, av) for ak, av in port.attr.items())
+            for pk, prx in self._patterns
         )
 
     def matching_attrs(self, port: SerialPort) -> set[str]:
@@ -116,11 +126,11 @@ class SerialPortMatcher:
         return set(
             ak
             for ak, av in port.attr.items()
-            if any(
-                (mk == "*" or ak.startswith(mk)) and rx.match(av)
-                for mk, rx in self._patterns.items()
-            )
+            if any(self._amatch(pk, prx, ak, av) for pk, prx in self._patterns)
         )
+
+    def _amatch(self, pk: str, prx: re.Pattern, ak: str, av: str) -> bool:
+        return (pk == "*" or ak.startswith(pk)) and bool(prx.search(av))
 
 
 def scan_serial_ports(

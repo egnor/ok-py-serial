@@ -30,11 +30,11 @@ def test_basic_connection(pty_serial):
 
 def test_connection_with_port_match(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "test"}})
-    with ok_serial.SerialConnection(match="name: test") as conn:
+    with ok_serial.SerialConnection(match="test") as conn:
         assert conn.port_name == pty_serial.path
 
     with pytest.raises(ok_serial.SerialOpenException):
-        with ok_serial.SerialConnection(match="name: toast") as conn:
+        with ok_serial.SerialConnection(match="toast") as conn:
             pass
 
 
