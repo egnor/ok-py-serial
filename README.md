@@ -44,21 +44,21 @@ The `ok-serial` library uses PySerial internally but has its own consistent
 interface to fix these problems and be generally smoove:
 
 - Ports are referenced by
-  [string expressions](#identifying-ports) that can match attributes
-  with wildcard support, eg. `desc:Arduino*` or `2e43:0226` or `*RP2040*`.
-  (You can also specify exact device path if desired.)
+  [port match expressions](#identifying-ports-with-match-expressions)
+  that scan attributes with wildcard support, eg. `*RP2040*` or `2e43:0226`
+  or `manufacturer="Arduino"`. (You can also use device path if desired.)
 
 - I/O operations are thread safe and can be blocking, non-blocking,
   timeout, or async. All blocking operations can be interrupted.
   Semantics are well described, including concurrent access, partial
-  reads/writes, errors, and other edge cases.
+  reads/writes, interruption, I/O errors, and other edge cases.
 
 - I/O buffers are unlimited except for system memory; writes
   never block. (You can use a blocking drain operation to wait for
   output completion if desired.)
 
-- Includes [multiple port locking modes](#sharing-modes) with exclusive locking
-  as the default. Employs _all_ of
+- Includes [multiple port locking modes](#sharing-modes) with exclusive
+  locking by default. Employs _all_ of
   [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html),
   [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial),
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
@@ -76,7 +76,7 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
-## Identifying ports
+## Identifying ports with match expressions
 
 Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB
 serial ports, so `ok-serial` uses **port match expressions**, search strings

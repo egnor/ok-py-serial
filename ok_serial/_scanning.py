@@ -94,6 +94,8 @@ class SerialPortMatcher:
                 self._patterns.append(("*", re.compile(rx)))
 
             elif naked:
+                # TODO: debackslash escapes in naked value
+                # TODO: literalize backslashed * and ?
                 rx = fnmatch.translate(naked)
                 rx = m[1] if (m := self._FNMATCH_RE.match(rx)) else rx
                 rx = r"(?<!\w)" + rx if naked[:1].isalnum() else rx
