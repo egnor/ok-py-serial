@@ -112,6 +112,7 @@ Attribute definitions are inherited from PySerial and the OS and can vary, but
 are semi-standardized.
 
 Match expressions include space separated search terms, each of which can be:
+
 - `word` - matches `word` in any attribute value, case INsensitive but
   respecting word boundaries
 - `wild*card?` - glob matching applies to unquoted expression words
@@ -129,10 +130,10 @@ Some examples:
 attributes (case insensitive, respecting word boundaries; `tampico` would
 not match)
 - `RP2040 DF625*` - any port with the word `rp2040` AND a word starting
-  with `DF625` in any attributes
-- `subsys:"usb"` - the `subsystem` attribute must be lowercase `usb` exactly
-- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere, and
-  `serial_number` must begin with `DF625`
+  with `df625` (case insensitive, respecting word boundaries)
+- `subsys:"usb"` - the `subsystem` attribute must be `usb` exactly
+- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere (case
+insensitive), and `serial_number` must begin with `DF625` (case sensitive)
 
 You can pass a match expression to `ok_scan_serial` on the
 command line and set `$OK_LOGGING_LEVEL=debug` to see parsing results:
@@ -169,18 +170,15 @@ When opening a port, `ok-serial` offers a choice of four sharing modes:
 - `oblivious` - no locking is done and advisory locks are ignored. If
   multiple programs open the port, they will all send and receive data
   to the same device. This mode is not recommended.
-
 - `polite` - locking is checked at open, and if the port is in use the
   open fails. Once opened, no locks are held except for a shared lock
   to discourage other `polite` users from opening the port. If a
   less polite program opens the port later there will be conflict.
   (In the future, this mode will attempt to notice such conflicts
   and close out the port, deferring to the less-polite program.)
-
 - `exclusive` (the default mode) - locking is checked at open, and if the
   port is in use the open fails. Once opened, several means of locking
   are employed to prevent or discourage others from opening the port.
-
 - `stomp` (use with care!) - locking is checked at open, and if the port
   is in use, _the program using the port is killed_ if permissions
   allow. The port is opened regardless of any other users and all
