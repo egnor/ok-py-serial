@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""CLI tool to scan serial ports"""
+"""CLI tool to scan serial ports and/or communicate with them"""
 
 import argparse
 import logging
@@ -11,11 +11,9 @@ ok_logging_setup.install()
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
 ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
-logger = logging.getLogger("ok_serial_scan")
-
 
 def main():
-    parser = argparse.ArgumentParser(description="Scan and list serial ports.")
+    parser = argparse.ArgumentParser(description="Fuss with serial ports.")
     parser.add_argument("match", nargs="*", help="Properties to search for")
     parser.add_argument(
         "--list",
@@ -41,24 +39,24 @@ def main():
     matcher = ok_serial.SerialPortMatcher(match) if match else None
     found = ok_serial.scan_serial_ports()
     if not found:
-        ok_logging_setup.exit("ok_serial_scan: No ports found")
+        ok_logging_setup.exit("❌ No serial ports found")
     if not matcher:
         matching = found
-        logging.info("%d ports found", len(found))
+        logging.info("🔌 %d serial ports found", len(found))
     else:
         matching = [p for p in found if matcher.matches(p)]
         nf, nm, m = len(found), len(matching), str(matcher)
         if not matching:
-            ok_logging_setup.exit("%d ports, none match %r", nf, m)
-        v = "matches" if nm == 1 else "match"
-        logging.info("%d ports, %d %s %r", nf, nm, v, m)
+            ok_logging_setup.exit("🚫 %d serial ports, none match %r", nf, m)
+        e, v = ("🎯", "matches") if nm == 1 else ("🔎", "match")
+        logging.info("%s %d serial ports, %d %s %r", e, nf, nm, v, m)
 
     if args.one:
         if not args.verbose:
             args.list = True
         if (nm := len(matching)) > 1:
             ok_logging_setup.exit(
-                f"ok_serial_scan: {nm} ports, only --one allowed:"
+                f"{nm} serial ports, only --one allowed:"
                 + "".join(f"\n  {format_oneline(p, matcher)}" for p in matching)
             )
 
