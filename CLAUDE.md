@@ -36,7 +36,7 @@ uv run pytest tests/test_scanning.py::test_SerialPortMatcher_init
 
 - **`_scanning.py`**: Port discovery
   - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports
-  - `SerialPortMatcher` - fielded glob expressions for matching ports (e.g., `"vid:0x1234 pid:*"`)
+  - `SerialPortMatcher` - fielded glob expressions for matching ports
   - Supports `OK_SERIAL_SCAN_OVERRIDE` env var for testing with fake port data
 
 - **`_tracker.py`**: `SerialTracker` - auto-reconnecting connection manager

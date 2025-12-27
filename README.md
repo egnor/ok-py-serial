@@ -17,56 +17,54 @@ Think twice before using this library! Consider something more established:
 ## Purpose
 
 Since 2001, [PySerial](https://www.pyserial.com/) has been the
-workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port)
-([UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter))
-library for Python. It runs on most Python platforms and abstracts
+workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) /
+[UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter)
+library for Python. It runs most places Python does and abstracts
 lots of gnarly system details. However, some problems keep coming up:
 
-- Most serial ports are USB, and USB serial ports get assigned cryptic
-  temporary names like `/dev/ttyACM3` or `COM4`. Using
+- Most modern serial ports are USB, and USB serial ports get temporary
+  device names like `/dev/ttyACM3` or `COM4`. Solutions like pyserial's
   [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep)
-  is a clumsy multi step process; linux allows
+  or Linux's
   [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk)
-  but they're not exactly user friendly.
+  require extra clumsy steps to use.
 
 - Nonblocking or concurrent I/O with PySerial is perilous and often
   [broken](https://github.com/pyserial/pyserial/issues/281)
   [entirely](https://github.com/pyserial/pyserial/issues/280).
 
-- Buffer sizes are finite and unspecified; overruns cause lost data
-  and/or blocking.
+- Buffers in PySerial are small and unspecified; overruns cause lost data
+  and/or unexpected blocking.
 
-- Port locking is off by default in PySerial; even if enabled, it only
-  uses one advisory locking method. Bad things happen if multiple programs
+- PySerial doesn't lock ports by default; even when enabled, PySerial only
+  uses one advisory locking method. Bad things happen when multiple programs
   try to use the same port.
 
-The `ok-serial` library uses PySerial internally but has its own consistent
-interface to fix these problems and be generally smoove:
+The `ok-serial` library uses PySerial internally but has an improved interface:
 
 - Ports are referenced by
-  [port match expressions](#identifying-ports-with-match-expressions)
-  that scan attributes with wildcard support, eg. `*RP2040*` or `2e43:0226`
-  or `manufacturer="Arduino"`. (You can also use device path if desired.)
+  [port attribute match expressions](#identifying-serial-ports) with wildcard
+  support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
+  (You can also use device path if desired.)
 
 - I/O operations are thread safe and can be blocking, non-blocking,
-  timeout, or async. All blocking operations can be interrupted.
+  timeout, or async. Blocking operations can be interrupted.
   Semantics are well described, including concurrent access, partial
   reads/writes, interruption, I/O errors, and other edge cases.
 
-- I/O buffers are unlimited except for system memory; writes
-  never block. (You can use a blocking drain operation to wait for
-  output completion if desired.)
+- I/O buffers are limited only by system memory; writes never block.
+  (Blocking drain operations are available to wait for output completion.)
 
-- Includes [multiple port locking modes](#sharing-modes) with exclusive
-  locking by default. Employs _all_ of
+- [Multiple port locking modes](#sharing-modes) are supported, with exclusive
+  locking as the default. _All_ of
   [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html),
   [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial),
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
-  (as available) to avoid contention.
+  (as available) are used avoid contention.
 
-- Includes a `SerialTracker` helper to wait for a device of interest to
-  appear, rescanning as needed after disconnection, to handle devices
-  that might get plugged and unplugged.
+- Offers a `SerialTracker` helper to wait for a device of interest to
+  appear and rescan as needed after disconnection, to gracefully handle
+  pluggable devices.
 
 ## Installation
 
@@ -76,7 +74,7 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
-## Identifying ports with match expressions
+## Identifying serial ports
 
 Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB
 serial ports, so `ok-serial` uses **port match expressions**, search strings
@@ -85,7 +83,7 @@ product name (eg. `CP2102 USB to UART Bridge Controller`),
 USB vendor/product ID (eg. `239a:812d`), serial number, etc.
 
 To see port attributes, install `ok-serial` and run
-`ok_scan_serial --verbose` to list available ports like this:
+`okserial --verbose` to list available ports like this:
 
 ```text
 Serial port: /dev/ttyACM3
@@ -137,16 +135,16 @@ NOT match)
 - `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere (case
 insensitive), and `serial_number` must begin with `DF625` (case sensitive)
 
-You can pass a match expression to `ok_scan_serial` on the
-command line and set `$OK_LOGGING_LEVEL=debug` to see parsing results:
+You can pass a match expression to `okserial` and set
+`$OK_LOGGING_LEVEL=debug` to see parsing results:
 
 ```text
-% OK_LOGGING_LEVEL=debug ok_scan_serial -v 'Adafruit serial~/^DF625.*/'
+% OK_LOGGING_LEVEL=debug okserial -v 'Adafruit serial~/^DF625.*/'
 🕸  ok_serial.scanning: Parsed 'Adafruit serial~/^DF625.*/':
   *~/(?<!\w)(Adafruit)(?!\w)/
   serial~/^DF625.*/
 🕸  ok_serial.scanning: Found 36 ports
-36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
+🎯 36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
 Serial port: /dev/ttyACM3
    device='/dev/ttyACM3'
    name='ttyACM3'
@@ -182,10 +180,9 @@ When opening a port, `ok-serial` offers a choice of four sharing modes:
   port is in use the open fails. Once opened, several means of locking
   are employed to prevent or discourage others from opening the port.
 - `stomp` (use with care!) - locking is checked at open, and if the port
-  is in use, _the program using the port is killed_ if permissions
-  allow. The port is opened regardless of any other users and all
-  available locks are taken.
+  is in use, _the program using the port is killed_ if possible.
+  The port is opened regardless and all available locks are taken.
 
-The library's ability to implement these modes can be limited by
-operating system capabilities, process permissions, and the variously
-questionable historical conventions for port usage coordination.
+The implementation of these modes is limited by OS capabilities, process
+permissions, and the historical conventions of port usage coordination.
+Best efforts are taken but your mileage may vary.
