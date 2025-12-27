@@ -12,38 +12,33 @@ from ok_serial import SerialPort
 WB, WE = r"(?<!\w)", r"(?!\w)"
 
 PARSE_CHECKS = [
-    ("simple", [("*", r"(?<!\w)simple(?!\w)")]),
+    (r"simple", [("*", r"(?<!\w)simple(?!\w)")]),
     (
         " \twith whitespace\n ",
         [("*", WB + r"with" + WE), ("*", WB + r"whitespace" + WE)],
     ),
-    ("wild*card?expr", [("*", WB + r"wild.*card.expr" + WE)]),
-    ("field:'don\\'t panic'", [("field", WB + r"don't\ panic" + WE)]),
-    ('a:" quoted: \\"string\\" "', [("a", r'\ quoted:\ "string"\ ')]),
+    (r"wild*card?expr", [("*", WB + r"wild.*card.expr" + WE)]),
+    (r"wild\*card\?expr", [("*", WB + r"wild\*card\?expr" + WE)]),
+    (r"field:'don\'t panic'", [("field", WB + r"don't\ panic" + WE)]),
+    (r'a:" quoted: \"string\" "', [("a", r'\ quoted:\ "string"\ ')]),
     (
-        'a:"avalue" b:"bvalue"',
+        r'a:"avalue" b:"bvalue"',
         [("a", WB + r"avalue" + WE), ("b", WB + r"bvalue" + WE)],
     ),
     (
-        "val a='av' etc b:\"bv\" etc",
+        r"""val a='av' etc b:"bv" etc""",
         [
             ("*", WB + r"val" + WE),
-            ("a", WB + r"^av$" + WE),
+            ("a", "^" + WB + r"av" + WE + "$"),
             ("*", WB + r"etc" + WE),
             ("b", WB + r"bv" + WE),
             ("*", WB + r"etc" + WE),
         ],
     ),
-    ("0", [("*", WB + r"(0*0|(0x)?0*0h?)" + WE)]),
-    ("123", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
-    ("0x07B", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
-    (
-        "01ab:23cd",
-        [
-            ("vid", r"^427$"),
-            ("pid", r"^9165$"),
-        ],
-    ),
+    (r"0", [("*", WB + r"(0*0|(0x)?0*0h?)" + WE)]),
+    (r"123", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
+    (r"0x07B", [("*", WB + r"(0*123|(0x)?0*7bh?)" + WE)]),
+    (r"01ab:23cd", [("vid", r"^427$"), ("pid", r"^9165$")]),
 ]
 
 

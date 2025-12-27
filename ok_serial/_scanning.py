@@ -1,5 +1,4 @@
 import dataclasses
-import fnmatch
 import json
 import logging
 import natsort
@@ -12,6 +11,33 @@ from serial.tools import list_ports_common
 from ok_serial import _exceptions
 
 log = logging.getLogger("ok_serial.scanning")
+
+_TERM_RE = re.compile(
+    # beginning of term
+    r"\s*(?<!\S)(?:"
+    # vid:pid OR
+    r"""([0-9A-F]{4}):([0-9A-F]{4})(?!\S)|"""
+    # attr~/regex/, ~/regex/ OR
+    r"""([A-Z_]+)?~/((?:\\.|[^\\/])*)/|"""
+    # attr:"str", attr:'str', "str", 'str' OR
+    r"""(?:([A-Z_]+)(:|=))?["']((?:\\.|[^\\"])*)["']|"""
+    # naked number OR
+    r"""(0|[1-9][0-9]*|0x[0-9a-f]+)|"""
+    # naked term
+    r"""((?:\\.|[^\\\s"'~])+)"""
+    # end of term
+    r")(?!\S)\s*",
+    re.I,
+)
+
+_ESCAPE_RE = re.compile(
+    # unicode-escape OR
+    r"(\\[a-zA-Z0-9\\n][^\\*?]*)|"
+    # glob wildcards OR
+    r"([*])|([?])|"
+    # literal
+    r"\\?(.[^\\*?]*)"
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -28,82 +54,11 @@ class SerialPort:
 class SerialPortMatcher:
     """A parsed expression for matching against SerialPort results"""
 
-    _TERM_RE = re.compile(
-        # beginning of term
-        r"\s*(?<!\S)(?:"
-        # vid:pid OR
-        r"""([0-9A-F]{4}):([0-9A-F]{4})(?!\S)|"""
-        # attr~/regex/, ~/regex/ OR
-        r"""([A-Z_]+)?~/((?:\\.|[^\\/])*)/|"""
-        # attr:"str", attr:'str', "str", 'str' OR
-        r"""(?:([A-Z_]+)(:|=))?["']((?:\\.|[^\\"])*)["']|"""
-        # naked number OR
-        r"""(0|[1-9][0-9]*|0x[0-9a-f]+)|"""
-        # naked term
-        r"""((?:\\.|[^\\\s"'~])+)"""
-        # end of term
-        r")(?!\S)\s*",
-        re.I,
-    )
-
-    _FNMATCH_RE = re.compile(r"^\(\?s:(.*)\)\\Z")
-
     def __init__(self, match: str):
         """Parses string 'match' as fielded globs matching port attributes"""
 
         self._input = match
-        self._patterns: list[tuple[str, re.Pattern]] = []
-
-        pos = 0
-        while pos < len(match):
-            tm = self._TERM_RE.match(match, pos=pos)
-            if not (tm and tm[0]):
-                repr_pos = len(repr(match[:pos])) - 1
-                msg = f"Bad port matcher:\n  {match!r}\n -{'-' * repr_pos}^"
-                raise _exceptions.SerialMatcherInvalid(msg)
-
-            vi, pi, ratt, rx, qatt, qop, qv, num, naked = tm.groups(default="")
-            pos = tm.end()
-
-            if vi and pi:
-                self._patterns.append(("vid", re.compile(f"^{int(vi, 16)}$")))
-                self._patterns.append(("pid", re.compile(f"^{int(pi, 16)}$")))
-
-            elif rx:
-                try:
-                    self._patterns.append((ratt or "*", re.compile(rx)))
-                except re.error as ex:
-                    msg = f"Bad port matcher regex: /{rx}/"
-                    raise _exceptions.SerialMatcherInvalid(msg) from ex
-
-            elif qv:
-                try:
-                    unquoted = qv.encode().decode("unicode-escape")
-                except UnicodeDecodeError as ex:
-                    msg = f"Bad port matcher string {qv}"
-                    raise _exceptions.SerialMatcherInvalid(msg) from ex
-                rx = re.escape(unquoted)
-                rx = f"^{rx}$" if qop == "=" else rx
-                rx = r"(?<!\w)" + rx if unquoted[:1].isalnum() else rx
-                rx = rx + r"(?!\w)" if unquoted[-1:].isalnum() else rx
-                self._patterns.append((qatt or "*", re.compile(rx)))
-
-            elif num:
-                nv = int(num, 0)
-                rx = r"(?<!\w)" f"(0*{nv}|(0x)?0*{nv:x}h?)" r"(?!\w)"
-                self._patterns.append(("*", re.compile(rx)))
-
-            elif naked:
-                # TODO: debackslash escapes in naked value
-                # TODO: literalize backslashed * and ?
-                rx = fnmatch.translate(naked)
-                rx = m[1] if (m := self._FNMATCH_RE.match(rx)) else rx
-                rx = r"(?<!\w)" + rx if naked[:1].isalnum() else rx
-                rx = rx + r"(?!\w)" if naked[-1:].isalnum() else rx
-                self._patterns.append(("*", re.compile(rx, re.I)))
-
-            else:
-                assert False, f"bad regexp match: {tm[0]!r}"
+        self._patterns = _patterns_from_str(match)
 
         if log.isEnabledFor(logging.DEBUG):
             patterns = "".join(
@@ -138,6 +93,71 @@ class SerialPortMatcher:
 
     def _amatch(self, pk: str, prx: re.Pattern, ak: str, av: str) -> bool:
         return (pk == "*" or ak.startswith(pk)) and bool(prx.search(av))
+
+
+def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
+    out: list[tuple[str, re.Pattern]] = []
+    next_pos = 0
+    while next_pos < len(match):
+        tm = _TERM_RE.match(match, pos=next_pos)
+        if not (tm and tm[0]):
+            repr_pos = len(repr(match[:next_pos])) - 1
+            msg = f"Bad port matcher:\n  {match!r}\n -{'-' * repr_pos}^"
+            raise _exceptions.SerialMatcherInvalid(msg)
+
+        next_pos = tm.end()
+        vi, pi, ratt, rx, qatt, qop, qv, num, naked = tm.groups(default="")
+        if vi and pi:
+            out.append(("vid", re.compile(f"^{int(vi, 16)}$")))
+            out.append(("pid", re.compile(f"^{int(pi, 16)}$")))
+        elif rx:
+            try:
+                out.append((ratt or "*", re.compile(rx)))
+            except re.error as ex:
+                msg = f"Bad port matcher regex: /{rx}/"
+                raise _exceptions.SerialMatcherInvalid(msg) from ex
+        elif qv:
+            rx = _rx_from_str(qv, glob=False)
+            rx = f"^{rx}$" if qop == "=" else rx
+            out.append((qatt or "*", re.compile(rx)))
+        elif num:
+            nv = int(num, 0)
+            rx = r"(?<!\w)" f"(0*{nv}|(0x)?0*{nv:x}h?)" r"(?!\w)"
+            out.append(("*", re.compile(rx)))
+        elif naked:
+            rx = _rx_from_str(naked, glob=True)
+            out.append(("*", re.compile(rx, re.I)))
+        else:
+            assert False, f"bad term match: {tm[0]!r}"
+
+    return out
+
+
+def _rx_from_str(quoted: str, glob: bool) -> str:
+    out = ""
+    next_pos = 0
+    while next_pos < len(quoted):
+        em = _ESCAPE_RE.match(quoted, pos=next_pos)
+        assert em and em[0], "bad escape match: {quoted!r}"
+
+        next_pos = em.end()
+        uesc, star, qmark, literal = em.groups(default="")
+        if uesc:
+            try:
+                out += re.escape(uesc.encode().decode("unicode-escape"))
+            except UnicodeDecodeError as ex:
+                msg = f"Bad port matcher string {uesc}"
+                raise _exceptions.SerialMatcherInvalid(msg) from ex
+        elif star:
+            out += ".*" if glob else re.escape("*")
+        elif qmark:
+            out += "." if glob else re.escape("*")
+        elif literal:
+            out += re.escape(literal)
+
+    out = r"(?<!\w)" + out if out[:1].isalnum() else out
+    out = out + r"(?!\w)" if out[-1:].isalnum() else out
+    return out
 
 
 def scan_serial_ports(

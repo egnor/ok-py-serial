@@ -113,22 +113,24 @@ are semi-standardized.
 
 Match expressions include space separated search terms, each of which can be:
 
-- `word` - matches `word` in any attribute value, case INsensitive but
+- `word` - unquoted words match any attribute value, case INsensitive but
   respecting word boundaries
-- `wild*card?` - glob matching applies to unquoted expression words
-- `"quoted text"` - case SENSITIVE, non-glob match for C/JS/Python-style
-  quoted strings
-- `attr:"quoted text"` - as above but for a specific attribute
-  (the attribute name can be abbreviated)
-- `attr="exact match"` - as above but must match the entire attribute value
-- `~/regexp/` - regular expression match (using Python `re`) in any attribute
-- `attr~/regexp/` - regular expression match within a given attribute
+- `wild*card?` - unquoted words with glob matches
+- `spaces\ and\ st\*rs` - unquoted words with backslash-escaped literals
+- `"spaces and st*rs"` - C/JS/Python-style quoted strings use case SENSITIVE,
+  non-glob matching
+- `attr:"quoted text"` - quoted strings within a specific attribute
+  (attr name can be truncated)
+- `attr="exact match"` - as above but matching an entire attribute value
+- `~/regexp/` - regex match (using Python `re`) for any attribute
+- `attr~/regexp/` - regex match within a given attribute
+  (attr name can be truncated)
 
 Some examples:
 
 - `Pico Serial` - any port with the words `pico` AND `serial` anywhere in any
-attributes (case insensitive, respecting word boundaries; `tampico` would
-not match)
+attributes (case insensitive but respects word boundaries; `tampico` would
+NOT match)
 - `RP2040 DF625*` - any port with the word `rp2040` AND a word starting
   with `df625` (case insensitive, respecting word boundaries)
 - `subsys:"usb"` - the `subsystem` attribute must be `usb` exactly
