@@ -7,7 +7,6 @@ import logging
 import ok_logging_setup
 import ok_serial
 
-ok_logging_setup.install()
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
 ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
@@ -35,6 +34,10 @@ def main():
     )
 
     args = parser.parse_args()
+    ok_logging_setup.install(
+        {"OK_LOGGING_LEVEL": "warning" if args.list else "info"}
+    )
+
     match = " ".join(args.match)
     matcher = ok_serial.SerialPortMatcher(match) if match else None
     found = ok_serial.scan_serial_ports()
