@@ -76,14 +76,13 @@ pip install ok-serial
 
 ## Identifying serial ports
 
-Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB
-serial ports, so `ok-serial` uses **port match expressions**, search strings
-which match attributes such as the device manufacturer (eg. `Adafruit`),
-product name (eg. `CP2102 USB to UART Bridge Controller`),
-USB vendor/product ID (eg. `239a:812d`), serial number, etc.
+Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB serial
+ports, so `ok-serial` identifies ports by attributes like device manufacturer
+(eg. `Adafruit`), product name (eg. `CP2102 USB to UART Bridge Controller`),
+USB vendor/product ID (eg. `239a:812d`), serial number, etc..
 
-To see port attributes, install `ok-serial` and run
-`okserial --verbose` to list available ports like this:
+To see the attributes that can be used, install `ok-serial` and run
+`okserial --verbose` to list available ports in this format:
 
 ```text
 Serial port: /dev/ttyACM3
@@ -104,36 +103,35 @@ Serial port: /dev/ttyACM3
    usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
-Attribute definitions are inherited from PySerial and the OS and can vary, but
-`device`, `name`, `description`, `hwid`, and (for USB) `vid`, `pid`,
-`serial_number`, `location`, `manufacturer`, `product` and `interface`
-are semi-standardized.
+Attribute definitions are inherited from platform and can vary, but `device`,
+`name`, `description`, `hwid`, and (for USB) `vid`, `pid`, `serial_number`,
+`location`, `manufacturer`, `product` and `interface` are semi-standardized.
 
-Match expressions include space separated search terms, each of which can be:
+To identify ports to use, `ok-serial` uses **port match expression** strings,
+which contain space-separated search terms:
 
-- `word` - unquoted words match any attribute value, case INsensitive but
+- `word` - regular words: case INsensitive match in any attribute value,
   respecting word boundaries
-- `wild*card?` - unquoted words with glob matches
-- `spaces\ and\ st\*rs` - unquoted words with backslash-escaped literals
-- `"spaces and st*rs"` - C/JS/Python-style quoted strings use case SENSITIVE,
-  non-glob matching
-- `attr:"quoted text"` - quoted strings within a specific attribute
+- `wild*word?` - words may contain `*` and `?` wildcards
+- `spaces\ and\ st\*rs` - words may contain special characters if
+  backslash-escaped
+- `"spaces and st*rs"` - C/JS/Python-style quoted strings: case SENSITIVE
+  exact phrase match in any attribute value, respecting word boundaries
+- `attr:"quoted text"` - quoted phrases can be scoped to specific attributes
   (attr name can be truncated)
-- `attr="exact match"` - as above but matching an entire attribute value
-- `~/regexp/` - regex match (using Python `re`) for any attribute
-- `attr~/regexp/` - regex match within a given attribute
-  (attr name can be truncated)
+- `attr="exact match"` - with `=`, quoted strings must match the entire value
+- `~/regexp/` - regex match (Python `re`) across all attributes
+- `attr~/regexp/` - regex match can be scoped to specific attributes
 
 Some examples:
 
-- `Pico Serial` - any port with the words `pico` AND `serial` anywhere in any
-attributes (case insensitive but respects word boundaries; `tampico` would
-NOT match)
+- `Pico Serial` - the words `pico` AND `serial` must each appear somewhere
+  (any case, respecting word boundaries)
 - `RP2040 DF625*` - any port with the word `rp2040` AND a word starting
-  with `df625` (case insensitive, respecting word boundaries)
-- `subsys:"usb"` - the `subsystem` attribute must be `usb` exactly
-- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere (case
-insensitive), and `serial_number` must begin with `DF625` (case sensitive)
+  with `df625`
+- `subsys="usb"` - `subsystem` must equal `usb` exactly (lowercase as written)
+- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere (any
+case), and `serial_number` must begin with `DF625` (uppercase as written)
 
 You can pass a match expression to `okserial` and set
 `$OK_LOGGING_LEVEL=debug` to see parsing results:
