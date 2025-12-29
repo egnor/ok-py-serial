@@ -18,14 +18,10 @@ from ok_serial._exceptions import (
     SerialOpenException,
     SerialScanException,
 )
+
 from ok_serial._locking import SerialSharingType
-
-from ok_serial._scanning import (
-    SerialPort,
-    SerialPortMatcher,
-    scan_serial_ports,
-)
-
+from ok_serial._matcher import SerialPortMatcher
+from ok_serial._scanning import SerialPort, scan_serial_ports
 from ok_serial._tracker import SerialTracker, TrackerOptions
 
 from beartype.claw import beartype_this_package as _beartype_me

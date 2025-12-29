@@ -8,6 +8,7 @@ import threading
 
 from ok_serial import _exceptions
 from ok_serial import _locking
+from ok_serial import _matcher
 from ok_serial import _scanning
 from ok_serial import _timeout_math
 
@@ -36,28 +37,28 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __init__(
         self,
         *,
-        match: str | _scanning.SerialPortMatcher | None = None,
+        match: str | _matcher.SerialPortMatcher | None = None,
         port: str | _scanning.SerialPort | None = None,
         opts: SerialOptions = SerialOptions(),
         **kwargs,
     ):
-        assert bool(match) + bool(port) == 1, "Need one of match or port"
+        assert bool(match) + bool(port) == 1, "Need one of match= or port="
         opts = dataclasses.replace(opts, **kwargs)
 
         if match:
             if isinstance(match, str):
-                match = _scanning.SerialPortMatcher(match)
-            found = _scanning.scan_serial_ports(match)
-            if len(found) == 0:
-                msg = f'No ports match "{match}"'
+                match = _matcher.SerialPortMatcher(match)
+            if not (found := _scanning.scan_serial_ports()):
+                raise _exceptions.SerialOpenException("No ports found")
+            if not (matched := [p for p in found if match.matches(p)]):
+                msg = f"No ports match {match!r}"
                 raise _exceptions.SerialOpenException(msg)
-            elif len(found) > 1:
-                found_text = "".join(f"\n  {p}" for p in found)
-                msg = f'Multiple ports match "{match}": {found_text}'
+            if len(matched) > 1:
+                matched_text = "".join(f"\n  {p}" for p in matched)
+                msg = f'Multiple ports match "{match}": {matched_text}'
                 raise _exceptions.SerialOpenException(msg)
-            else:
-                port = found[0].name
-                log.debug("Scanned %r, found %s", match, port)
+            port = matched[0].name
+            log.debug("Scanned %r, found %s", match, port)
 
         assert port
         if isinstance(port, _scanning.SerialPort):

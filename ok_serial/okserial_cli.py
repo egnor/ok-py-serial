@@ -3,7 +3,6 @@
 """CLI tool to scan serial ports and/or communicate with them"""
 
 import argparse
-import logging
 import ok_logging_setup
 import ok_serial
 
@@ -32,6 +31,12 @@ def main():
         action="store_true",
         help="Print detailed properties of each port",
     )
+    parser.add_argument(
+        "--wait",
+        "-w",
+        default=0.0,
+        help="Wait this many seconds for a matching port",
+    )
 
     args = parser.parse_args()
     ok_logging_setup.install(
@@ -39,43 +44,32 @@ def main():
     )
 
     match = " ".join(args.match)
-    matcher = ok_serial.SerialPortMatcher(match) if match else None
-    found = ok_serial.scan_serial_ports()
+    tracker = ok_serial.SerialPortTracker(match)
+    found = tracker.find_sync(timeout=args.wait)
     if not found:
         ok_logging_setup.exit("❌ No serial ports found")
-    if not matcher:
-        matching = found
-        logging.info("🔌 %d serial ports found", len(found))
-    else:
-        matching = [p for p in found if matcher.matches(p)]
-        nf, nm, m = len(found), len(matching), str(matcher)
-        if not matching:
-            ok_logging_setup.exit("🚫 %d serial ports, none match %r", nf, m)
-        e, v = ("🎯", "matches") if nm == 1 else ("🔎", "match")
-        logging.info("%s %d serial ports, %d %s %r", e, nf, nm, v, m)
 
     if args.one:
         if not args.verbose:
             args.list = True
-        if (nm := len(matching)) > 1:
+        if (nm := len(found)) > 1:
             ok_logging_setup.exit(
                 f"{nm} serial ports, only --one allowed:"
-                + "".join(f"\n  {format_oneline(p, matcher)}" for p in matching)
+                + "".join(f"\n  {format_oneline(p, match)}" for p in found)
             )
 
-    for port in matching:
+    for port in found:
         if args.verbose:
-            print(format_verbose(port, matcher), end="\n\n")
+            print(format_verbose(port, match), end="\n\n")
         elif args.list:
             print(port.name)
         else:
-            print(format_oneline(port, matcher))
+            print(format_oneline(port, match))
 
 
-def format_oneline(
-    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher | None
-):
-    hits = {k: True for k in matcher.matching_attrs(port)} if matcher else {}
+def format_oneline(port: ok_serial.SerialPort, match: str):
+    matcher = ok_serial.SerialPortMatcher(match)
+    hits = {k: True for k in matcher.matching_attrs(port)}
     sub, ser, desc = (
         f"{port.attr[k]}✅" if hits.pop(k, False) else port.attr.get(k, "")
         for k in "subsystem serial_number description".split()
