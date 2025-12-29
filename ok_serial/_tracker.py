@@ -19,35 +19,30 @@ class TrackerOptions(typing.NamedTuple):
     scan_interval: float | int = 0.5
 
 
-class SerialTracker(contextlib.AbstractContextManager):
+class SerialPortTracker(contextlib.AbstractContextManager):
     def __init__(
         self,
-        match: str | _matcher.SerialPortMatcher | None = None,
+        match: str | _matcher.SerialPortMatcher,
         *,
-        port: str | _scanning.SerialPort | None = None,
         baud: int = 0,
         topts: TrackerOptions = TrackerOptions(),
         copts: _connection.SerialOptions = _connection.SerialOptions(),
     ):
-        assert bool(match) + bool(port) == 1, "Need one of match= or port="
         if isinstance(match, str):
             match = _matcher.SerialPortMatcher(match)
-        if isinstance(port, str):
-            port = _scanning.SerialPort(name=port, attr={"device": port})
         if baud:
             copts = dataclasses.replace(copts, baud=baud)
 
         self._match = match
-        self._port = port
         self._tracker_opts = topts
         self._conn_opts = copts
 
         self._lock = threading.Lock()
-        self._found_ports: list[_scanning.SerialPort] = []
+        self._scan_results: list[_scanning.SerialPort] = []
         self._next_scan = 0.0
         self._conn: _connection.SerialConnection | None = None
 
-        log.debug("Tracking %s %s", match, topts)
+        log.debug("Tracking: %r%s", str(match), "" if match else " (any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
         with self._lock:
@@ -55,29 +50,31 @@ class SerialTracker(contextlib.AbstractContextManager):
                 self._conn.close()
 
     def __repr__(self) -> str:
-        return f"SerialTracker({self._tracker_opts!r}, {self._conn_opts!r})"
+        return (
+            f"SerialPortTracker({self._match!r}, "
+            f"topts={self._tracker_opts!r}, "
+            f"copts={self._conn_opts!r})"
+        )
 
     def find_sync(
         self, timeout: float | int | None = None
     ) -> list[_scanning.SerialPort]:
-        if self._port:
-            return [self._port]
-
-        assert self._match
         deadline = _timeout_math.to_deadline(timeout)
         while True:
             with self._lock:
                 if (wait := _timeout_math.from_deadline(self._next_scan)) <= 0:
                     wait = self._tracker_opts.scan_interval
                     self._next_scan = _timeout_math.to_deadline(wait)
-                    self._found_ports = [
-                        found
-                        for found in _scanning.scan_serial_ports()
-                        if self._match.matches(found)
-                    ]
 
-                if self._found_ports:
-                    return self._found_ports
+                    found = _scanning.scan_serial_ports()
+                    matched = [p for p in found if self._match.matches(p)]
+                    self._scan_results = matched
+
+                    nf, nm = len(found), len(matched)
+                    log.debug("%d/%d ports match %r", nm, nf, str(self._match))
+
+                if self._scan_results:
+                    return self._scan_results
 
             timeout_wait = _timeout_math.from_deadline(deadline)
             if timeout_wait < wait:
@@ -115,7 +112,7 @@ class SerialTracker(contextlib.AbstractContextManager):
                         self._conn.close()
                         self._conn = None
 
-                for port in self._found_ports:
+                for port in self._scan_results:
                     try:
                         self._conn = _connection.SerialConnection(
                             port=port, opts=self._conn_opts

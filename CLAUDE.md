@@ -34,12 +34,13 @@ uv run pytest tests/test_scanning.py::test_SerialPortMatcher_init
   - Uses dedicated reader/writer threads (`_IoThreads`) for non-blocking I/O
   - Thread-safe via `threading.Condition` monitor pattern
 
+- _matcher.py: `SerialPortMatcher` - fielded glob expressions for matching ports
+
 - **`_scanning.py`**: Port discovery
   - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports
-  - `SerialPortMatcher` - fielded glob expressions for matching ports
   - Supports `OK_SERIAL_SCAN_OVERRIDE` env var for testing with fake port data
 
-- **`_tracker.py`**: `SerialTracker` - auto-reconnecting connection manager
+- **`_tracker.py`**: `SerialPortTracker` - auto-reconnecting connection manager
   - Periodically scans for matching ports and maintains connection
   - Handles disconnect/reconnect transparently
 

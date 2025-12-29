@@ -3,6 +3,7 @@
 """CLI tool to scan serial ports and/or communicate with them"""
 
 import argparse
+import logging
 import ok_logging_setup
 import ok_serial
 
@@ -36,6 +37,7 @@ def main():
         "-w",
         default=0.0,
         help="Wait this many seconds for a matching port",
+        type=float,
     )
 
     args = parser.parse_args()
@@ -43,21 +45,36 @@ def main():
         {"OK_LOGGING_LEVEL": "warning" if args.list else "info"}
     )
 
-    match = " ".join(args.match)
+    match = ok_serial.SerialPortMatcher(" ".join(args.match))
     tracker = ok_serial.SerialPortTracker(match)
+    if match and args.wait:
+        logging.info(
+            "🔎 Scanning %.2fs for serial ports: %r", args.wait, str(match)
+        )
+    elif match:
+        logging.info("🔎 Scanning for serial ports: %r", str(match))
+    elif args.wait:
+        logging.info("🔎 Scanning %.2fs for serial ports", args.wait)
+    else:
+        logging.info("🔎 Scanning for serial ports...")
+
     found = tracker.find_sync(timeout=args.wait)
-    if not found:
-        ok_logging_setup.exit("❌ No serial ports found")
+    num = len(found)
+    if num == 0:
+        if str(match):
+            ok_logging_setup.exit(f"🚫 No serial ports match {str(match)!r}")
+        else:
+            ok_logging_setup.exit("❌ No serial ports found")
 
-    if args.one:
-        if not args.verbose:
-            args.list = True
-        if (nm := len(found)) > 1:
-            ok_logging_setup.exit(
-                f"{nm} serial ports, only --one allowed:"
-                + "".join(f"\n  {format_oneline(p, match)}" for p in found)
-            )
+    if args.one and not args.verbose:
+        args.list = True
+    if args.one and num != 1:
+        ok_logging_setup.exit(
+            f"{num} serial ports found, only --one allowed:"
+            + "".join(f"\n  {format_oneline(p, match)}" for p in found)
+        )
 
+    logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
     for port in found:
         if args.verbose:
             print(format_verbose(port, match), end="\n\n")
@@ -67,34 +84,35 @@ def main():
             print(format_oneline(port, match))
 
 
-def format_oneline(port: ok_serial.SerialPort, match: str):
-    matcher = ok_serial.SerialPortMatcher(match)
-    hits = {k: True for k in matcher.matching_attrs(port)}
+def format_oneline(
+    port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
+):
+    mark = {a: True for a in match.matching_attrs(port)}
     sub, ser, desc = (
-        f"{port.attr[k]}✅" if hits.pop(k, False) else port.attr.get(k, "")
+        f"{port.attr[k]}✅" if mark.pop(k, False) else port.attr.get(k, "")
         for k in "subsystem serial_number description".split()
     )
 
-    nhits = [k for k in list(hits) if port.attr[k] in port.name and hits.pop(k)]
-    words = [f"{port.name}✅" if nhits else port.name, sub]
+    mname = [k for k in list(mark) if port.attr[k] in port.name and mark.pop(k)]
+    words = [f"{port.name}✅" if mname else port.name, sub]
 
     try:
         vid_int, pid_int = int(port.attr["vid"], 0), int(port.attr["pid"], 0)
     except (KeyError, ValueError):
         pass
     else:
-        vp_hit = hits.pop("vid", False) + hits.pop("pid", False)
+        vp_hit = mark.pop("vid", False) + mark.pop("pid", False)
         words.append(f"{vid_int:04x}:{pid_int:04x}{'✅' if vp_hit else ''}")
 
-    words.extend((ser, desc))
-    words.extend(f"{k}={v!r}✅" for k, v in ((k, port.attr[k]) for k in hits))
+    words.extend((ser, desc and f"{desc!r}"))
+    words.extend(f"{k}={v!r}✅" for k, v in ((k, port.attr[k]) for k in mark))
     return " ".join(w for w in words if w)
 
 
 def format_verbose(
-    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher | None
+    port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    hits = matcher.matching_attrs(port) if matcher else set()
+    hits = match.matching_attrs(port)
     return f"Serial port: {port.name}" + "".join(
         f"\n✅ {k}={v!r}" if k in hits else f"\n   {k}={v!r}"
         for k, v in port.attr.items()

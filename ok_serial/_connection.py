@@ -42,10 +42,10 @@ class SerialConnection(contextlib.AbstractContextManager):
         opts: SerialOptions = SerialOptions(),
         **kwargs,
     ):
-        assert bool(match) + bool(port) == 1, "Need one of match= or port="
+        assert (match is not None) + (port is not None) == 1
         opts = dataclasses.replace(opts, **kwargs)
 
-        if match:
+        if match is not None:
             if isinstance(match, str):
                 match = _matcher.SerialPortMatcher(match)
             if not (found := _scanning.scan_serial_ports()):
@@ -60,7 +60,7 @@ class SerialConnection(contextlib.AbstractContextManager):
             port = matched[0].name
             log.debug("Scanned %r, found %s", match, port)
 
-        assert port
+        assert port is not None
         if isinstance(port, _scanning.SerialPort):
             port = port.name
 
@@ -166,7 +166,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         *,
         min: int = 1,
         max: int = 65536,
-        timeout: float | None = None,
+        timeout: float | int | None = None,
     ) -> bytes:
         deadline = _timeout_math.to_deadline(timeout)
         while True:
@@ -174,7 +174,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 if len(self._io.incoming) >= min:
                     incoming = self._io.incoming[:max]
                     del self._io.incoming[:max]
-                    return incoming
+                    return bytes(incoming)
                 elif self._io.exception:
                     raise self._io.exception
                 else:
@@ -191,7 +191,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 return out
             await future
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes | bytearray) -> None:
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
@@ -199,7 +199,9 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
-    def drain_sync(self, *, max: int = 0, timeout: float | None = None) -> bool:
+    def drain_sync(
+        self, *, max: int = 0, timeout: float | int | None = None
+    ) -> bool:
         deadline = _timeout_math.to_deadline(timeout)
         while True:
             with self._io.monitor:

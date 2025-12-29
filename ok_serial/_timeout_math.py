@@ -11,7 +11,7 @@ def to_deadline(timeout: float | int | None) -> float:
         return min(TIMEOUT_MAX, time.monotonic() + timeout)
 
 
-def from_deadline(deadline: float) -> float:
+def from_deadline(deadline: float | int) -> float:
     if deadline >= TIMEOUT_MAX:
         return TIMEOUT_MAX
     elif deadline <= 0:

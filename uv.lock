@@ -523,7 +523,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/ca/40/fd8582edf6de25eca
 
 [[package]]
 name = "ok-serial"
-version = "0.1"
+version = "0.2"
 source = { editable = "." }
 dependencies = [
     { name = "beartype" },

@@ -62,7 +62,7 @@ The `ok-serial` library uses PySerial internally but has an improved interface:
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
   (as available) are used avoid contention.
 
-- Offers a `SerialTracker` helper to wait for a device of interest to
+- Offers a `SerialPortTracker` helper to wait for a device of interest to
   appear and rescan as needed after disconnection, to gracefully handle
   pluggable devices.
 
@@ -110,27 +110,23 @@ Attribute definitions are inherited from platform and can vary, but `device`,
 To identify ports to use, `ok-serial` uses **port match expression** strings,
 which contain space-separated search terms:
 
-- `word` - regular words: case INsensitive match in any attribute value,
-  respecting word boundaries
-- `wild*word?` - words may contain `*` and `?` wildcards
-- `spaces\ and\ st\*rs` - words may contain special characters if
-  backslash-escaped
-- `"spaces and st*rs"` - C/JS/Python-style quoted strings: case SENSITIVE
-  exact phrase match in any attribute value, respecting word boundaries
-- `attr:"quoted text"` - quoted phrases can be scoped to specific attributes
-  (attr name can be truncated)
-- `attr="exact match"` - with `=`, quoted strings must match the entire value
-- `~/regexp/` - regex match (Python `re`) across all attributes
-- `attr~/regexp/` - regex match can be scoped to specific attributes
+- `word` - case INsensitive whole-word match in any attribute value
+- `wild*word?` - `*` and `?` are wildcards (any text, single character)
+- `spaces\ and\ st\*rs` - special characters can be escaped with backslash...
+- `"spaces and st*rs"` - ...or with C/JS/Python-style quoted strings
+- `attr="quoted text"` - scoped to attribute prefix, must match whole value
+- `~/regexp/` - case SENSITIVE regex match
+  ([Python `re`](https://docs.python.org/3/library/re.html))
+- `attr~/regexp/` - regex match can also be attribute scoped (partial match)
+- `attr~/^regexp$/` - use regex anchors to match the whole attribute value
 
 Some examples:
 
 - `Pico Serial` - the words `pico` AND `serial` must each appear somewhere
-  (any case, respecting word boundaries)
-- `RP2040 DF625*` - any port with the word `rp2040` AND a word starting
-  with `df625`
-- `subsys="usb"` - `subsystem` must equal `usb` exactly (lowercase as written)
-- `Adafruit serial~/^DF625.*/` - `adafruit` must appear somewhere (any
+  (any case, as a whole word)
+- `RP2040 DF625*` - the word `rp2040` AND a word starting with `df625`
+- `subsys="usb"` - `subsystem` must equal `usb` (any case but whole value)
+- `Adafruit serial~/^DF625/` - `adafruit` must appear somewhere (any
 case), and `serial_number` must begin with `DF625` (uppercase as written)
 
 You can pass a match expression to `okserial` and set
