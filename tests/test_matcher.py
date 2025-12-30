@@ -4,10 +4,10 @@ import ok_serial
 from ok_serial import SerialPort
 
 
-WB, WE = r"(?<!\w)", r"(?!\w)"
+WB, WE = r"(?<![A-Z0-9])", r"(?![A-Z0-9])"
 
 PARSE_CHECKS = [
-    (r"simple", [("", r"(?<!\w)simple(?!\w)")]),
+    (r"simple", [("", WB + r"simple" + WE)]),
     (
         " \twith whitespace\n ",
         [("", WB + r"with" + WE), ("", WB + r"whitespace" + WE)],

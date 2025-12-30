@@ -105,23 +105,21 @@ def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
                 msg = f"Bad port matcher regex: /{rx}/"
                 raise _exceptions.SerialMatcherInvalid(msg) from ex
         elif qv:
-            rx = _rx_from_quoted(qv, glob=False, full=bool(att))
-            out.append((att, re.compile(rx, re.I)))
+            out.append((att, _str_rx(qv, glob=False, full=bool(att))))
         elif num:
             value = int(num, 0)
             rx = f"(0*{value}|(0x)?0*{value:x}h?)"
-            prefix, suffix = ("^", "$") if att else (r"(?<!\w)", r"(?!\w)")
-            out.append((att, re.compile(prefix + rx + suffix)))
+            pf, sf = ("^", "$") if att else (r"(?<![A-Z0-9])", r"(?![A-Z0-9])")
+            out.append((att, re.compile(pf + rx + sf, re.I)))
         elif naked:
-            rx = _rx_from_quoted(naked, glob=True, full=bool(att))
-            out.append((att, re.compile(rx, re.I)))
+            out.append((att, _str_rx(naked, glob=True, full=bool(att))))
         else:
             assert False, f"bad term match: {tm[0]!r}"
 
     return out
 
 
-def _rx_from_quoted(quoted: str, glob: bool, full: bool) -> str:
+def _str_rx(quoted: str, glob: bool, full: bool) -> re.Pattern:
     rx = ""
     next_pos = 0
     while next_pos < len(quoted):
@@ -143,6 +141,6 @@ def _rx_from_quoted(quoted: str, glob: bool, full: bool) -> str:
         elif literal:
             rx += re.escape(literal)
 
-    prefix = "^" if full else r"(?<!\w)" if rx[:1].isalnum() else ""
-    suffix = "$" if full else r"(?!\w)" if rx[-1:].isalnum() else ""
-    return prefix + rx + suffix
+    prefix = "^" if full else r"(?<![A-Z0-9])" if rx[:1].isalnum() else ""
+    suffix = "$" if full else r"(?![A-Z0-9])" if rx[-1:].isalnum() else ""
+    return re.compile(prefix + rx + suffix, re.I)
