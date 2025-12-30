@@ -2,8 +2,8 @@ import json
 import logging
 import re
 
-from ok_serial import _exceptions
-from ok_serial import _scanning
+from ok_serial._exceptions import SerialMatcherInvalid
+from ok_serial._scanning import SerialPort
 
 log = logging.getLogger("ok_serial.matching")
 
@@ -64,7 +64,7 @@ class SerialPortMatcher:
     def __bool__(self) -> bool:
         return bool(self._patterns)
 
-    def matches(self, port: _scanning.SerialPort) -> bool:
+    def matches(self, port: SerialPort) -> bool:
         """True if this matcher selects 'port'"""
 
         return all(
@@ -72,7 +72,7 @@ class SerialPortMatcher:
             for p, r in self._patterns
         )
 
-    def matching_attrs(self, port: _scanning.SerialPort) -> set[str]:
+    def matching_attrs(self, port: SerialPort) -> set[str]:
         """The set of attribute keys on 'port' matched by this matcher"""
 
         return set(
@@ -91,7 +91,7 @@ def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
             jmatch = json.dumps(match)  # use JSON for consistent quoting
             jpre = json.dumps(match[:next_pos])
             msg = f"Bad port matcher:\n  {jmatch}\n -{'-' * (len(jpre) - 1)}^"
-            raise _exceptions.SerialMatcherInvalid(msg)
+            raise SerialMatcherInvalid(msg)
 
         next_pos = tm.end()
         vi, pi, ratt, rx, att, qv, num, naked = tm.groups(default="")
@@ -103,7 +103,7 @@ def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
                 out.append((ratt, re.compile(rx)))
             except re.error as ex:
                 msg = f"Bad port matcher regex: /{rx}/"
-                raise _exceptions.SerialMatcherInvalid(msg) from ex
+                raise SerialMatcherInvalid(msg) from ex
         elif qv:
             out.append((att, _str_rx(qv, glob=False, full=bool(att))))
         elif num:
@@ -133,7 +133,7 @@ def _str_rx(quoted: str, glob: bool, full: bool) -> re.Pattern:
                 rx += re.escape(uesc.encode().decode("unicode-escape"))
             except UnicodeDecodeError as ex:
                 msg = f"Bad port matcher string {uesc}"
-                raise _exceptions.SerialMatcherInvalid(msg) from ex
+                raise SerialMatcherInvalid(msg) from ex
         elif star:
             rx += ".*" if glob else re.escape("*")
         elif qmark:

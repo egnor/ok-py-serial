@@ -7,23 +7,42 @@ import serial
 import threading
 
 from ok_serial import _exceptions
-from ok_serial import _locking
-from ok_serial import _matcher
-from ok_serial import _scanning
-from ok_serial import _timeout_math
+from ok_serial._locking import SerialSharingType, using_fd_lock, using_lock_file
+from ok_serial._matcher import SerialPortMatcher
+from ok_serial._scanning import SerialPort, scan_serial_ports
+from ok_serial._timeout_math import from_deadline, to_deadline
 
 log = logging.getLogger("ok_serial.connection")
 data_log = logging.getLogger(log.name + ".data")
 
 
 @dataclasses.dataclass(frozen=True)
-class SerialOptions:
+class SerialConnectionOptions:
+    """
+    Options for a connection being opened by `SerialConnection`.
+    """
+
     baud: int = 115200
-    sharing: _locking.SerialSharingType = "exclusive"
+    """The [baud rate](https://en.wikipedia.org/wiki/Baud) to use."""
+    sharing: SerialSharingType = "exclusive"
+    """
+    Port access negotiation strategy:
+    - `"oblivious"`: Don't perform any locking.
+    - `"polite"`: Defer to other users, don't lock the port.
+    - `"exclusive":` Require exclusive access, lock the port.
+    - `"stomp"`: Terminate other users if possible, lock the port if possible,
+      open the port regardless. Use with care.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
-class SerialSignals:
+class SerialControlSignals:
+    """
+    [RS-232 modem control lines](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals),
+    both outgoing ("DTE to DCE") and incoming ("DCE to DTE"). These are rarely
+    used for their original purpose but are often used in off-label ways.
+    """
+
     dtr: bool
     dsr: bool
     cts: bool
@@ -34,21 +53,37 @@ class SerialSignals:
 
 
 class SerialConnection(contextlib.AbstractContextManager):
+    """An open connection to a serial port."""
+
     def __init__(
         self,
         *,
-        match: str | _matcher.SerialPortMatcher | None = None,
-        port: str | _scanning.SerialPort | None = None,
-        opts: SerialOptions = SerialOptions(),
+        match: str | SerialPortMatcher | None = None,
+        port: str | SerialPort | None = None,
+        opts: SerialConnectionOptions = SerialConnectionOptions(),
         **kwargs,
     ):
+        """
+        Opens a serial port to make it available for use. Exactly one of
+        `match` or `port` must be non-None to specify the port to open.
+        Extra keyword arguments are passed to `SerialConnectionOptions`.
+
+        - `match`: Port match expression to select which serial port to use;
+          see `ok_serial.SerialPortMatcher`. Exactly one port must match.
+        - `port`: Raw system serial device to open.
+        - `opts`: Baud rate and other port parameters.
+        - Extra keyword arguments are forwarded to `SerialConnectionOptions`,
+          so instead of `opts=SerialConnectionOptions(baud=9600)` you can
+          pass `baud=9600` directly.
+        """
+
         assert (match is not None) + (port is not None) == 1
         opts = dataclasses.replace(opts, **kwargs)
 
         if match is not None:
             if isinstance(match, str):
-                match = _matcher.SerialPortMatcher(match)
-            if not (found := _scanning.scan_serial_ports()):
+                match = SerialPortMatcher(match)
+            if not (found := scan_serial_ports()):
                 raise _exceptions.SerialOpenException("No ports found")
             if not (matched := [p for p in found if match.matches(p)]):
                 msg = f"No ports match {match!r}"
@@ -61,11 +96,11 @@ class SerialConnection(contextlib.AbstractContextManager):
             log.debug("Scanned %r, found %s", match, port)
 
         assert port is not None
-        if isinstance(port, _scanning.SerialPort):
+        if isinstance(port, SerialPort):
             port = port.name
 
         with contextlib.ExitStack() as cleanup:
-            cleanup.enter_context(_locking.using_lock_file(port, opts.sharing))
+            cleanup.enter_context(using_lock_file(port, opts.sharing))
 
             try:
                 pyserial = cleanup.enter_context(
@@ -86,7 +121,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
             if hasattr(pyserial, "fileno"):
                 fd, share = pyserial.fileno(), opts.sharing
-                cleanup.enter_context(_locking.using_fd_lock(port, fd, share))
+                cleanup.enter_context(using_fd_lock(port, fd, share))
 
             self._io = cleanup.enter_context(_IoThreads(pyserial))
             self._io.start()
@@ -105,62 +140,6 @@ class SerialConnection(contextlib.AbstractContextManager):
     def close(self) -> None:
         self._cleanup.close()
 
-    @property
-    def port_name(self) -> str:
-        return self._io.pyserial.port
-
-    @property
-    def pyserial(self) -> serial.Serial:
-        return self._io.pyserial
-
-    def fileno(self) -> int:
-        try:
-            return self._io.serial.fileno()
-        except AttributeError:
-            return -1
-
-    def set_signals(
-        self,
-        dtr: bool | None = None,
-        rts: bool | None = None,
-        send_break: bool | None = None,
-    ) -> None:
-        with self._io.monitor:
-            if self._io.exception:
-                raise self._io.exception
-            try:
-                if dtr is not None:
-                    self._io.pyserial.dtr = dtr
-                if rts is not None:
-                    self._io.pyserial.rts = rts
-                if send_break is not None:
-                    self._io.pyserial.break_condition = send_break
-            except OSError as ex:
-                msg, dev = "Can't set control signals", self._io.pyserial.port
-                self._io.exception = _exceptions.SerialIoException(msg, dev)
-                self._io.exception.__cause__ = ex
-                raise self._io.exception
-
-    def get_signals(self) -> SerialSignals:
-        with self._io.monitor:
-            if self._io.exception:
-                raise self._io.exception
-            try:
-                return SerialSignals(
-                    dtr=self._io.pyserial.dtr,
-                    dsr=self._io.pyserial.dsr,
-                    cts=self._io.pyserial.cts,
-                    rts=self._io.pyserial.rts,
-                    ri=self._io.pyserial.ri,
-                    cd=self._io.pyserial.cd,
-                    sending_break=self._io.pyserial.break_condition,
-                )
-            except OSError as ex:
-                msg, dev = "Can't get control signals", self._io.pyserial.port
-                self._io.exception = _exceptions.SerialIoException(msg, dev)
-                self._io.exception.__cause__ = ex
-                raise self._io.exception
-
     def read_sync(
         self,
         *,
@@ -168,7 +147,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         max: int = 65536,
         timeout: float | int | None = None,
     ) -> bytes:
-        deadline = _timeout_math.to_deadline(timeout)
+        deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
                 if len(self._io.incoming) >= min:
@@ -178,7 +157,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 elif self._io.exception:
                     raise self._io.exception
                 else:
-                    wait = _timeout_math.from_deadline(deadline)
+                    wait = from_deadline(deadline)
                     if wait <= 0:
                         return b""
                     self._io.monitor.wait(timeout=wait)
@@ -202,7 +181,7 @@ class SerialConnection(contextlib.AbstractContextManager):
     def drain_sync(
         self, *, max: int = 0, timeout: float | int | None = None
     ) -> bool:
-        deadline = _timeout_math.to_deadline(timeout)
+        deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
                 if self._io.exception:
@@ -210,7 +189,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 elif len(self._io.outgoing) <= max:
                     return True
                 else:
-                    wait = _timeout_math.from_deadline(deadline)
+                    wait = from_deadline(deadline)
                     if wait <= 0:
                         return False
                     self._io.monitor.wait(timeout=wait)
@@ -229,6 +208,62 @@ class SerialConnection(contextlib.AbstractContextManager):
     def outgoing_size(self) -> int:
         with self._io.monitor:
             return len(self._io.outgoing)
+
+    def set_signals(
+        self,
+        dtr: bool | None = None,
+        rts: bool | None = None,
+        send_break: bool | None = None,
+    ) -> None:
+        with self._io.monitor:
+            if self._io.exception:
+                raise self._io.exception
+            try:
+                if dtr is not None:
+                    self._io.pyserial.dtr = dtr
+                if rts is not None:
+                    self._io.pyserial.rts = rts
+                if send_break is not None:
+                    self._io.pyserial.break_condition = send_break
+            except OSError as ex:
+                msg, dev = "Can't set control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, dev)
+                self._io.exception.__cause__ = ex
+                raise self._io.exception
+
+    def get_signals(self) -> SerialControlSignals:
+        with self._io.monitor:
+            if self._io.exception:
+                raise self._io.exception
+            try:
+                return SerialControlSignals(
+                    dtr=self._io.pyserial.dtr,
+                    dsr=self._io.pyserial.dsr,
+                    cts=self._io.pyserial.cts,
+                    rts=self._io.pyserial.rts,
+                    ri=self._io.pyserial.ri,
+                    cd=self._io.pyserial.cd,
+                    sending_break=self._io.pyserial.break_condition,
+                )
+            except OSError as ex:
+                msg, dev = "Can't get control signals", self._io.pyserial.port
+                self._io.exception = _exceptions.SerialIoException(msg, dev)
+                self._io.exception.__cause__ = ex
+                raise self._io.exception
+
+    @property
+    def port_name(self) -> str:
+        return self._io.pyserial.port
+
+    @property
+    def pyserial(self) -> serial.Serial:
+        return self._io.pyserial
+
+    def fileno(self) -> int:
+        try:
+            return self._io.serial.fileno()
+        except AttributeError:
+            return -1
 
 
 class _IoThreads(contextlib.AbstractContextManager):

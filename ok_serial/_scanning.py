@@ -7,7 +7,7 @@ import pathlib
 from serial.tools import list_ports
 from serial.tools import list_ports_common
 
-from ok_serial import _exceptions
+from ok_serial._exceptions import SerialScanException
 
 log = logging.getLogger("ok_serial.scanning")
 
@@ -37,7 +37,7 @@ def scan_serial_ports() -> list[SerialPort]:
                 raise ValueError("Override data is not a dict of dicts")
         except (OSError, ValueError) as ex:
             msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov}"
-            raise _exceptions.SerialScanException(msg) from ex
+            raise SerialScanException(msg) from ex
 
         out = [SerialPort(name=p, attr=a) for p, a in ov_data.items()]
         log.debug("$OK_SERIAL_SCAN_OVERRIDE (%s): %d ports", ov, len(out))
@@ -45,7 +45,7 @@ def scan_serial_ports() -> list[SerialPort]:
         try:
             ports = list_ports.comports()
         except OSError as ex:
-            raise _exceptions.SerialScanException("Can't scan serial") from ex
+            raise SerialScanException("Can't scan serial") from ex
 
         out = [_convert_port(p) for p in ports]
 

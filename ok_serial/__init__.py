@@ -1,6 +1,6 @@
 """
-Serial port library (PySerial wrapper) with improved discovery,
-port sharing semantics, and interface.
+Serial port library (PySerial wrapper) with improved discovery
+and interface semantics.
 """
 
 from beartype.claw import beartype_this_package as _beartype_me
@@ -10,12 +10,17 @@ _beartype_me()
 
 from ok_serial._connection import (
     SerialConnection,
-    SerialOptions,
-    SerialSignals,
+    SerialConnectionOptions,
+    SerialControlSignals,
 )
 
+from ok_serial._scanning import scan_serial_ports, SerialPort
+from ok_serial._matcher import SerialPortMatcher
+from ok_serial._tracker import SerialPortTracker, TrackerOptions
+from ok_serial._locking import SerialSharingType
+
 from ok_serial._exceptions import (
-    OkSerialException,
+    SerialException,
     SerialIoClosed,
     SerialIoException,
     SerialMatcherInvalid,
@@ -24,9 +29,4 @@ from ok_serial._exceptions import (
     SerialScanException,
 )
 
-from ok_serial._locking import SerialSharingType
-from ok_serial._matcher import SerialPortMatcher
-from ok_serial._scanning import SerialPort, scan_serial_ports
-from ok_serial._tracker import SerialPortTracker, TrackerOptions
-
-__all__ = [n for n in dir() if not n.startswith("_")]
+__all__ = [n for n in globals() if not n.startswith("_")]

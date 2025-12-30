@@ -7,7 +7,7 @@ import termios
 from pathlib import Path
 from typing import Literal
 
-from ok_serial import _exceptions
+from ok_serial._exceptions import SerialOpenBusy
 
 
 SerialSharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
@@ -27,7 +27,7 @@ def using_lock_file(device: str, sharing: SerialSharingType):
             break
     else:
         message = "Serial port busy (retries exceeded)"
-        raise _exceptions.SerialOpenBusy(message, device)
+        raise SerialOpenBusy(message, device)
 
     yield
 
@@ -47,7 +47,7 @@ def using_fd_lock(device: str, fd: int, sharing: SerialSharingType):
             log.debug("Acquired flock(LOCK_EX) on %s", device)
     except BlockingIOError as ex:
         message = "Serial port busy (flock claimed)"
-        raise _exceptions.SerialOpenBusy(message, device) from ex
+        raise SerialOpenBusy(message, device) from ex
     except OSError:
         log.warning("Can't lock (flock) %s", device, exc_info=True)
 
@@ -103,7 +103,7 @@ def _try_lock_file(
         else:
             log.debug("PID %d owns %s", owner_pid, lock_path)
             message = f"Serial port busy ({lock_path}: pid={owner_pid})"
-            raise _exceptions.SerialOpenBusy(message, device)
+            raise SerialOpenBusy(message, device)
 
     try:
         write_mode = "wt" if sharing == "stomp" else "xt"

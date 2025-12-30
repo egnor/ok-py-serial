@@ -43,7 +43,7 @@ lots of gnarly system details. However, some problems keep coming up:
 The `ok-serial` library uses PySerial internally but has an improved interface:
 
 - Ports are referenced by
-  [port attribute match expressions](#identifying-serial-ports) with wildcard
+  [port attribute match expressions](#serial-port-identification) with wildcard
   support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
   (You can also use device path if desired.)
 
@@ -74,15 +74,15 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
-## Identifying serial ports
+## Serial port identification
 
-Device names like `/dev/ttyUSB3` or `COM4` aren't very useful for USB serial
-ports, so `ok-serial` identifies ports by attributes like device manufacturer
-(eg. `Adafruit`), product name (eg. `CP2102 USB to UART Bridge Controller`),
-USB vendor/product ID (eg. `239a:812d`), serial number, etc..
+To better support USB serial devices, `ok-serial` identifies ports by
+attributes like product description, USB vendor/product ID, and/or device
+serial number rather than relying on transient device names like
+`/dev/ttyACM3` or `COM4`.
 
-To see the attributes that can be used, install `ok-serial` and run
-`okserial --verbose` to list available ports in this format:
+To see port attributes, install `ok-serial`, connect your device(s) and run
+`okserial --verbose` to list available in this format:
 
 ```text
 Serial port: /dev/ttyACM3
@@ -103,18 +103,18 @@ Serial port: /dev/ttyACM3
    usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
 ```
 
-Attribute definitions are inherited from platform and can vary, but `device`,
+Attribute definitions are somewhat platform dependent, but `device`,
 `name`, `description`, `hwid`, and (for USB) `vid`, `pid`, `serial_number`,
 `location`, `manufacturer`, `product` and `interface` are semi-standardized.
 
-To identify ports to use, `ok-serial` uses **port match expression** strings,
+To select ports to use, `ok-serial` uses **port match expression** strings,
 which contain space-separated search terms:
 
 - `word` - case INsensitive whole-word match in any attribute value
 - `wild*word?` - `*` and `?` are wildcards (any text, single character)
 - `spaces\ and\ st\*rs` - special characters can be escaped with backslash...
 - `"spaces and st*rs"` - ...or with C/JS/Python-style quoted strings
-- `attr="quoted text"` - scoped to attribute prefix, must match whole value
+- `attr="specific value"` - scoped to attribute prefix, must match whole value
 - `~/regexp/` - case SENSITIVE regex match
   ([Python `re`](https://docs.python.org/3/library/re.html))
 - `attr~/regexp/` - regex match can also be attribute scoped (partial match)

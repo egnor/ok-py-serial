@@ -13,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
-version = "0.2"
+version = "0.3"
 
 [project.scripts]
 okserial = "ok_serial.okserial_cli:main"
@@ -27,6 +27,7 @@ dev = [
   "black",
   "grip",
   "mypy",
+  "pdoc",
   "pyfakefs",
   "pytest",
   "pytest-asyncio",

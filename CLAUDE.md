@@ -51,7 +51,7 @@ uv run pytest tests/test_scanning.py::test_SerialPortMatcher_init
   - `"stomp"` - kills existing owner if needed
   - Uses `/var/lock/LCK..*` lockfiles plus flock/TIOCEXCL
 
-- **`_exceptions.py`**: Exception hierarchy rooted at `OkSerialException` (extends `OSError`)
+- **`_exceptions.py`**: Exception hierarchy rooted at `SerialException` (extends `OSError`)
 
 ### Testing
 

@@ -1,17 +1,17 @@
 """Exception hierarchy for ok_serial"""
 
 
-class OkSerialException(OSError):
+class SerialException(OSError):
     def __init__(
         self,
         message: str,
-        device: str | None = None,
+        port: str | None = None,
     ):
-        super().__init__(f"{device}: {message}" if device else message)
-        self.device = device
+        super().__init__(f"{port}: {message}" if port else message)
+        self.port = port
 
 
-class SerialIoException(OkSerialException):
+class SerialIoException(SerialException):
     pass
 
 
@@ -19,7 +19,7 @@ class SerialIoClosed(SerialIoException):
     pass
 
 
-class SerialOpenException(OkSerialException):
+class SerialOpenException(SerialException):
     pass
 
 
@@ -27,7 +27,7 @@ class SerialOpenBusy(SerialOpenException):
     pass
 
 
-class SerialScanException(OkSerialException):
+class SerialScanException(SerialException):
     pass
 
 

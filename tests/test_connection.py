@@ -391,8 +391,8 @@ def test_get_signals(pty_serial, mocker):
         )
 
         signals = conn.get_signals()
-        assert isinstance(signals, ok_serial.SerialSignals)
-        assert signals == ok_serial.SerialSignals(
+        assert isinstance(signals, ok_serial.SerialControlSignals)
+        assert signals == ok_serial.SerialControlSignals(
             True, False, True, False, True, False, True
         )
 
