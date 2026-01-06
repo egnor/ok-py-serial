@@ -19,7 +19,7 @@ _TERM_RE = re.compile(
     #   "str", 'str', OR
     r"""["']((?:\\.|[^\\"])*)["']|"""
     #   number OR
-    r"""(0|[1-9][0-9]*|0x[0-9a-f]+)|"""
+    r"""(0b[0-1]+|0o[0-7]+|[0-9]+|0x[0-9a-f]+|[0-9a-f]+h)|"""
     #   naked term
     r"""((?:\\.|[^\s\\"'=~])+)"""
     # ) end of term
@@ -107,8 +107,8 @@ def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
         elif qv:
             out.append((att, _str_rx(qv, glob=False, full=bool(att))))
         elif num:
-            value = int(num, 0)
-            rx = f"(0*{value}|(0x)?0*{value:x}h?)"
+            value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
+            rx = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
             pf, sf = ("^", "$") if att else (r"(?<![A-Z0-9])", r"(?![A-Z0-9])")
             out.append((att, re.compile(pf + rx + sf, re.I)))
         elif naked:
