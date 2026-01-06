@@ -29,9 +29,9 @@ class SerialConnectionOptions:
     Port access negotiation strategy:
     - `"oblivious"`: Don't perform any locking.
     - `"polite"`: Defer to other users, don't lock the port.
-    - `"exclusive":` Require exclusive access, lock the port.
-    - `"stomp"`: Terminate other users if possible, lock the port if possible,
-      open the port regardless. Use with care.
+    - `"exclusive":` Require exclusive access, lock the port or fail.
+    - `"stomp"`: Try to kill other users, try to lock the port, open the
+      port regardless. Use with care!
     """
 
 
@@ -65,16 +65,20 @@ class SerialConnection(contextlib.AbstractContextManager):
     ):
         """
         Opens a serial port to make it available for use. Exactly one of
-        `match` or `port` must be non-None to specify the port to open.
-        Extra keyword arguments are passed to `SerialConnectionOptions`.
+        `match` or `port` must be non-None, specifying which port to open.
 
         - `match`: Port match expression to select which serial port to use;
           see `ok_serial.SerialPortMatcher`. Exactly one port must match.
         - `port`: Raw system serial device to open.
         - `opts`: Baud rate and other port parameters.
-        - Extra keyword arguments are forwarded to `SerialConnectionOptions`,
-          so instead of `opts=SerialConnectionOptions(baud=9600)` you can
+        - Extra keyword arguments are forwarded to `SerialConnectionOptions`;
+          instead of `opts=SerialConnectionOptions(baud=9600)` you can
           pass `baud=9600` directly.
+
+        Make sure to call `close` when finished with the port.
+        `SerialConnection` objects can be used as the target of a
+        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with),
+        to automatically close the port on exit from the `with` body.
         """
 
         assert (match is not None) + (port is not None) == 1
@@ -138,6 +142,13 @@ class SerialConnection(contextlib.AbstractContextManager):
         return f"SerialConnection({self._io.pyserial.port!r})"
 
     def close(self) -> None:
+        """
+        Releases the serial port connection and any associated locks.
+
+        I/O operations in progress or attempted after the connection is closed
+        throw an immediate `ok_serial.SerialIoClosed` exception.
+        """
+
         self._cleanup.close()
 
     def read_sync(
@@ -181,6 +192,19 @@ class SerialConnection(contextlib.AbstractContextManager):
     def drain_sync(
         self, *, max: int = 0, timeout: float | int | None = None
     ) -> bool:
+        """
+        Waits up to `timeout` seconds (forever for `None` ) for there
+        outgoing buffered bytes to be <= `max`.
+
+        Returns `True` if the drain condition is met, `False` on timeout.
+
+        Raises `ok_serial.SerialIoException` if the port fails or is closed.
+
+        For `max=0` and `timeout=None` (the defaults) this will wait until
+        all buffered data is written to the wire (or an error occurs).
+        If other threads are writing, this may take forever.
+        """
+
         deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
@@ -195,6 +219,15 @@ class SerialConnection(contextlib.AbstractContextManager):
                     self._io.monitor.wait(timeout=wait)
 
     async def drain_async(self, max: int = 0) -> bool:
+        """
+        Similar to `drain_sync(...)` but returns a Promise instead
+        of blocking the current thread. For a timeout limit see
+        see `asyncio.timeout()`.
+
+        The promise is rejected with `ok_serial.SerialIoException` if the
+        port fails or is closed.
+        """
+
         while True:
             future = self._io.create_future_in_loop()  # BEFORE drain_sync
             if self.drain_sync(max=max, timeout=0):
@@ -202,10 +235,22 @@ class SerialConnection(contextlib.AbstractContextManager):
             await future
 
     def incoming_size(self) -> int:
+        """
+        Returns the number of bytes waiting to read.
+
+        Does not raise exceptions even if the port failed or was closed;
+        the incoming buffer may be read as long as the object is available.
+        """
         with self._io.monitor:
             return len(self._io.incoming)
 
     def outgoing_size(self) -> int:
+        """
+        Returns the number of bytes waiting to be sent.
+
+        Does not raise exceptions even if the port failed or was closed;
+        the outgoing buffer remains in place even if actual output has stopped.
+        """
         with self._io.monitor:
             return len(self._io.outgoing)
 
@@ -215,6 +260,16 @@ class SerialConnection(contextlib.AbstractContextManager):
         rts: bool | None = None,
         send_break: bool | None = None,
     ) -> None:
+        """
+        Sets outgoing
+        [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state:
+        - dtr: True to assert Data Terminal Ready
+        - rts: True to assert Ready To Send
+        - send_break: True to send a continuous BREAK condition
+
+        Raises `ok_serial.SerialIoException` if the port failed or was closed.
+        """
+
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
@@ -232,6 +287,13 @@ class SerialConnection(contextlib.AbstractContextManager):
                 raise self._io.exception
 
     def get_signals(self) -> SerialControlSignals:
+        """
+        Returns the current
+        [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
+
+        Raises `ok_serial.SerialIoException` if the port failed or was closed.
+        """
+
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
@@ -253,13 +315,23 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     @property
     def port_name(self) -> str:
+        """
+        The port's device name, eg. `/dev/ttyACM0` or `COM3`.
+        """
         return self._io.pyserial.port
 
     @property
     def pyserial(self) -> serial.Serial:
+        """The underlying `pyserial.Serial` object, as an escape hatch."""
         return self._io.pyserial
 
     def fileno(self) -> int:
+        """
+        Returns the Unix file descriptor for the serial connection,
+        -1 if not available.
+
+        Does not raise exceptions even if the port failed or was closed.
+        """
         try:
             return self._io.serial.fileno()
         except AttributeError:
