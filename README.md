@@ -10,7 +10,7 @@ Think twice before using this library! Consider something more established:
   and "proper" [asyncio](https://docs.python.org/3/library/asyncio.html)
   support for PySerial
 - [pyserial-asyncio-fast](https://github.com/home-assistant-libs/pyserial-asyncio-fast)
-  \- a fork of pyserial-asyncio designed for more efficient writes
+  \- pyserial-asyncio fork designed for faster writes
 - [aioserial](https://github.com/mrjohannchang/aioserial.py) - alternative
   asyncio wrapper designed for ease of use
 
@@ -20,21 +20,20 @@ Since 2001, [PySerial](https://www.pyserial.com/) has been the
 workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) /
 [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter)
 library for Python. It runs most places Python does and abstracts
-lots of gnarly system details. However, some problems keep coming up:
+lots of gnarly system details. However, some issues keep coming up:
 
-- Most modern serial ports are USB, and USB serial ports get temporary
-  device names like `/dev/ttyACM3` or `COM4`. Solutions like pyserial's
+- Most modern serial ports are USB, and get temporary names like
+  `/dev/ttyACM3` or `COM4`. PySerial's
   [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep)
   or Linux's
   [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk)
   require extra clumsy steps to use.
 
-- Nonblocking or concurrent I/O with PySerial is perilous and often
+- Nonblocking or concurrent PySerial I/O is tricky and often
   [broken](https://github.com/pyserial/pyserial/issues/281)
   [entirely](https://github.com/pyserial/pyserial/issues/280).
 
-- Buffers in PySerial are small and unspecified; overruns cause lost data
-  and/or unexpected blocking.
+- PySerial's has small buffers; overruns lose data and/or block unexpectedly.
 
 - PySerial doesn't lock ports by default; even when enabled, PySerial only
   uses one advisory locking method. Bad things happen when multiple programs
@@ -45,26 +44,24 @@ The `ok-serial` library uses PySerial internally but has an improved interface:
 - Ports are referenced by
   [port attribute match expressions](#serial-port-identification) with wildcard
   support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
-  (You can also use device path if desired.)
 
 - I/O operations are thread safe and can be blocking, non-blocking,
-  timeout, or async. Blocking operations can be interrupted.
-  Semantics are well described, including concurrent access, partial
-  reads/writes, interruption, I/O errors, and other edge cases.
+  timeout-based, or async. Blocking operations can be interrupted.
+  The semantics of concurrent access, partial reads/writes, interruption,
+  I/O errors, and other edge cases are well defined.
 
 - I/O buffers are limited only by system memory; writes never block.
-  (Blocking drain operations are available to wait for output completion.)
+  (Blocking drain is available to wait for output completion.)
 
-- [Multiple port locking modes](#sharing-modes) are supported, with exclusive
-  locking as the default. _All_ of
+- Several [port locking modes](#sharing-modes) are supported, with exclusive
+  locking by default. _All_ of
   [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html),
   [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial),
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
   (as available) are used avoid contention.
 
-- Offers a `SerialPortTracker` helper to wait for a device of interest to
-  appear and rescan as needed after disconnection, to gracefully handle
-  pluggable devices.
+- `SerialPortTracker` is available to wait for a device of interest to
+  appear and rescan after disconnection, to gracefully handle pluggable devices.
 
 ## Installation
 
