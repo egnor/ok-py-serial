@@ -123,8 +123,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     except SerialOpenException as exc:
                         log.warning("Can't open %s (%s)", port, exc)
 
-            find_timeout = from_deadline(deadline)
-            if not self.find_sync(timeout=find_timeout):
+            if not self.find_sync(timeout=from_deadline(deadline)):
                 return None
 
     async def connect_async(self) -> SerialConnection:
