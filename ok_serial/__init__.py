@@ -1,6 +1,6 @@
 """
-Serial port library (PySerial wrapper) with improved discovery
-and interface semantics.
+Serial port library (PySerial wrapper) with improved port discovery
+and I/O semantics.
 """
 
 from beartype.claw import beartype_this_package as _beartype_me

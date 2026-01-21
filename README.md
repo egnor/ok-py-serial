@@ -1,11 +1,13 @@
-# ok-serial for Python &nbsp; 🔌〡〇〡〇〡🐍
+# OK serial I/O for Python &nbsp; 🔌〡〇〡〇〡🐍
 
-Python serial I/O library [based on PySerial](https://www.pyserial.com/) with
-improved discovery and interface semantics.
+`ok-serial` is a Python serial port library
+[(API reference)](https://egnor.github.io/ok-py-serial/)
+with improved port discovery and I/O semantics.
 
 Think twice before using this library! Consider something more established:
 
-- [good old PySerial](https://www.pyserial.com/) - it is _very_ well established
+- [good old PySerial](https://www.pyserial.com/) - `ok-serial` is
+  based on PySerial!
 - [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) - official
   and "proper" [asyncio](https://docs.python.org/3/library/asyncio.html)
   support for PySerial
@@ -39,7 +41,7 @@ lots of gnarly system details. However, some issues keep coming up:
   uses one advisory locking method. Bad things happen when multiple programs
   try to use the same port.
 
-The `ok-serial` library uses PySerial internally but has an improved interface:
+The `ok-serial` library uses PySerial internally but has a revised interface:
 
 - Ports are referenced by
   [attribute match expressions](#serial port-match-expressions) with wildcard
@@ -71,15 +73,62 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
+## Usage
+
+Here is a trivial example:
+
+```
+import ok_serial
+
+conn = ok_serial.SerialConnection(match="My Device", baud=115200)
+conn.write("Hello Device!")
+while (data := conn.read_sync(timeout=5)):
+    print("Data chunk:", data)
+print("...5 seconds elapsed with no data")
+```
+
+Main API pathways include:
+
+- [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports)
+  \- get all ports on the system, with descriptive attributes
+- [`SerialPortMatcher`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortMatcher)
+  \- use [port match expression strings](#serial-port-match-expressions) to
+     search for ports of interest
+- [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection)
+  \- establish a connection to a specific port and perform I/O
+- [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
+  \- scan and connect to a port with automatic error retry
+
+All potentially blocking I/O operations come in `*_sync` and `*_async`
+versions (eg.
+[`read_sync`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_sync) and
+[`read_async`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_async))
+for use with regular and
+[asyncio](https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html)
+code, respectively. The `_sync` version always includes a `timeout=...`
+argument which is `None` (forever timeout) by default. The `_async`
+version returns a
+[`Future`](https://docs.python.org/3/library/asyncio-future.html)
+that may be awaited in the usual ways.
+
+All methods in this library are thread-safe. Multiple threads may
+interact with any `ok-serial` object concurrently with logical results.
+Any error or closure on a connection causes all pending I/O operations
+to immediately raise an exception.
+
+See [the full API reference docs](https://egnor.github.io/ok-py-serial/)
+for interface details.
+
 ## Serial port attributes
 
-In addition to system device names, serial ports have attributes such as
-description text, USB vendor/product ID, serial number and the like. In 
-`okserial` these are captured in string key/value tables.
+Serial ports can have attributes such as description text, USB vendor/product
+ID, serial number and the like. In `okserial` these are captured in string
+key/value tables.
 
 The specific attribute keys
 [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo)
 and are platform/device dependent but usually include:
+
 - `device` - system device name, eg. `/dev/ttyUSB1` or `COM3`
 - `description` - human readable text, eg. `Arduino Uno`
 - `manufacturer` - USB device manufacturer name, eg. `
@@ -153,7 +202,10 @@ Serial port: /dev/ttyACM3
 
 ## Sharing modes
 
-When opening a port, `ok-serial` offers a choice of four sharing modes:
+When opening a port,
+[`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.__init__)
+offers a choice of
+[four sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
 
 - `oblivious` - no locking is done and advisory locks are ignored. If
   multiple programs open the port, they will all send and receive data
