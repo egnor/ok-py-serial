@@ -19,7 +19,7 @@ data_log = logging.getLogger(log.name + ".data")
 @dataclasses.dataclass(frozen=True)
 class SerialConnectionOptions:
     """
-    Options for a connection being opened by `SerialConnection`.
+    Optional parameters for `SerialConnection`.
     """
 
     baud: int = 115200
@@ -39,8 +39,7 @@ class SerialConnectionOptions:
 class SerialControlSignals:
     """
     [RS-232 modem control lines](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals),
-    both outgoing ("DTE to DCE") and incoming ("DCE to DTE"). These are rarely
-    used for their original purpose but are often used in off-label ways.
+    outgoing ("DTE to DCE") and incoming ("DCE to DTE").
     """
 
     dtr: bool
@@ -64,21 +63,29 @@ class SerialConnection(contextlib.AbstractContextManager):
         **kwargs,
     ):
         """
-        Opens a serial port to make it available for use. Exactly one of
-        `match` or `port` must be non-None, specifying which port to open.
+        Opens a serial port to make it available for use.
+        - `match` can be a [port match expression](https://github.com/egnor/ok-py-serial#serial-port-match-expressions) matching exactly one port...
+          - OR `port` must name a raw system serial device to open.
+        - `opts` can define baud rate and other port parameters...
+          - OR other keywords are forwarded to `SerialConnectionOptions`
 
-        - `match`: Port match expression to select which serial port to use;
-          see `ok_serial.SerialPortMatcher`. Exactly one port must match.
-        - `port`: Raw system serial device to open.
-        - `opts`: Baud rate and other port parameters.
-        - Extra keyword arguments are forwarded to `SerialConnectionOptions`;
-          instead of `opts=SerialConnectionOptions(baud=9600)` you can
-          pass `baud=9600` directly.
-
-        Make sure to call `close` when finished with the port.
-        `SerialConnection` objects can be used as the target of a
-        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with),
+        Call `close` to release the port; use
+        `SerialConnection` as the target of a
+        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with)
         to automatically close the port on exit from the `with` body.
+
+        Example:
+        ```
+        with SerialConnection(match="vid_pid=0403:6001", baud=115200, sharing="polite") as p:
+            ... interact with `p` ...
+            # automatically closed on exit from block
+        ```
+
+        Raises:
+        - `SerialOpenException`: I/O error opening the specified port
+        - `SerialOpenBusy`: The port is already in use
+        - `SerialScanException`: System error scanning ports to find `match`
+        - `SerialMatcherInvalid`: Bad format of `match` string
         """
 
         assert (match is not None) + (port is not None) == 1
@@ -145,8 +152,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
         Releases the serial port connection and any associated locks.
 
-        I/O operations in progress or attempted after the connection is closed
-        throw an immediate `ok_serial.SerialIoClosed` exception.
+        Any I/O operations in progress or attempted after closure will
+        raise an immediate `SerialIoClosed` exception.
         """
 
         self._cleanup.close()
@@ -158,6 +165,24 @@ class SerialConnection(contextlib.AbstractContextManager):
         max: int = 65536,
         timeout: float | int | None = None,
     ) -> bytes:
+        """
+        Waits up to `timeout` seconds (forever for `None`) or until at least
+        `min` bytes are in the incoming serial buffer (or an error occurs),
+        then removes and returns up to `max` bytes from that buffer.
+
+        For `min=1`, `max=65535` and `timeout=None` (the defaults) this will
+        wait until any data is available then return up to 64K per call.
+
+        If an error occurs or the port is closed, any remaining buffered data
+        is returned (even if less than `min`), or an exception is raised.
+        Fewer than `min` bytes may be returned after timeout or error, but
+        no more than `max` bytes are ever returned.
+
+        Raises:
+        - `SerialIoException`: port I/O failed and the buffer is empty
+        - `SerialIoClosed`: the port was closed and the buffer is empty
+        """
+
         deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
@@ -174,6 +199,13 @@ class SerialConnection(contextlib.AbstractContextManager):
                     self._io.monitor.wait(timeout=wait)
 
     async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
+        """
+        Similar to `read_sync` but returns a Promise instead of blocking the
+        current thread for data. To apply a timeout, see `asyncio.timeout`.
+
+        The promise is rejected if the port fails or is closed,
+        with the same exceptions as raised by `read_sync`.
+        """
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
             out = self.read_sync(min=min, max=max, timeout=0)
@@ -182,6 +214,17 @@ class SerialConnection(contextlib.AbstractContextManager):
             await future
 
     def write(self, data: bytes | bytearray) -> None:
+        """
+        Adds data to the outgoing serial buffer to be sent immediately.
+        Never blocks; the buffer can grow indefinitely large.
+        (See `outgoing_size` and `drain_sync`/`drain_async` to monitor and
+        manage buffer size.)
+
+        Raises:
+        - `SerialIoException`: port I/O failed
+        - `SerialIoClosed`: the port was closed
+        """
+
         with self._io.monitor:
             if self._io.exception:
                 raise self._io.exception
@@ -193,16 +236,19 @@ class SerialConnection(contextlib.AbstractContextManager):
         self, *, max: int = 0, timeout: float | int | None = None
     ) -> bool:
         """
-        Waits up to `timeout` seconds (forever for `None` ) for there
-        outgoing buffered bytes to be <= `max`.
-
-        Returns `True` if the drain condition is met, `False` on timeout.
-
-        Raises `ok_serial.SerialIoException` if the port fails or is closed.
+        Waits up to `timeout` seconds (forever for `None`) or until
+        fewer than `max` bytes remain in the outgoing serial buffer
+        (or an error occurs).
 
         For `max=0` and `timeout=None` (the defaults) this will wait until
-        all buffered data is written to the wire (or an error occurs).
-        If other threads are writing, this may take forever.
+        all buffered data is written to the wire or an error occurs.
+        (This could take a long time if other threads keep writing.)
+
+        Returns `True` if the drain condition was met, `False` on timeout.
+
+        Raises:
+        - `SerialIoException`: port I/O failed
+        - `SerialIoClosed`: the port was closed
         """
 
         deadline = to_deadline(timeout)
@@ -220,12 +266,12 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def drain_async(self, max: int = 0) -> bool:
         """
-        Similar to `drain_sync(...)` but returns a Promise instead
-        of blocking the current thread. For a timeout limit see
-        see `asyncio.timeout()`.
+        Similar to `drain_sync` but returns a Promise instead
+        of blocking the current thread. To apply a timeout, see
+        `asyncio.timeout`.
 
-        The promise is rejected with `ok_serial.SerialIoException` if the
-        port fails or is closed.
+        The promise is rejected if the port fails or is closed,
+        with the same exceptions as raised by `drain_sync`.
         """
 
         while True:
@@ -238,8 +284,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
         Returns the number of bytes waiting to read.
 
-        Does not raise exceptions even if the port failed or was closed;
-        the incoming buffer may be read as long as the object is available.
+        Does not raise exceptions (even if the port failed or was closed).
         """
         with self._io.monitor:
             return len(self._io.incoming)
@@ -248,8 +293,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
         Returns the number of bytes waiting to be sent.
 
-        Does not raise exceptions even if the port failed or was closed;
-        the outgoing buffer remains in place even if actual output has stopped.
+        Does not raise exceptions (even if the port failed or was closed).
         """
         with self._io.monitor:
             return len(self._io.outgoing)
@@ -267,7 +311,9 @@ class SerialConnection(contextlib.AbstractContextManager):
         - rts: True to assert Ready To Send
         - send_break: True to send a continuous BREAK condition
 
-        Raises `ok_serial.SerialIoException` if the port failed or was closed.
+        Raises:
+        - `SerialIoException`: port I/O failed
+        - `SerialIoClosed`: the port was closed
         """
 
         with self._io.monitor:
@@ -291,7 +337,9 @@ class SerialConnection(contextlib.AbstractContextManager):
         Returns the current
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
 
-        Raises `ok_serial.SerialIoException` if the port failed or was closed.
+        Raises:
+        - `SerialIoException`: port I/O failed
+        - `SerialIoClosed`: the port was closed
         """
 
         with self._io.monitor:
@@ -322,7 +370,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     @property
     def pyserial(self) -> serial.Serial:
-        """The underlying `pyserial.Serial` object, as an escape hatch."""
+        """The underlying `pyserial.Serial` object (API escape hatch)."""
         return self._io.pyserial
 
     def fileno(self) -> int:
@@ -330,7 +378,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         Returns the Unix file descriptor for the serial connection,
         -1 if not available.
 
-        Does not raise exceptions even if the port failed or was closed.
+        Does not raise exceptions (even if the port failed or was closed).
         """
         try:
             return self._io.serial.fileno()

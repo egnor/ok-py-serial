@@ -42,7 +42,7 @@ lots of gnarly system details. However, some issues keep coming up:
 The `ok-serial` library uses PySerial internally but has an improved interface:
 
 - Ports are referenced by
-  [port attribute match expressions](#serial-port-identification) with wildcard
+  [attribute match expressions](#serial port-match-expressions) with wildcard
   support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
 
 - I/O operations are thread safe and can be blocking, non-blocking,
@@ -71,40 +71,50 @@ pip install ok-serial
 
 (or `uv add ok-serial`, etc.)
 
-## Serial port identification
+## Serial port attributes
 
-To better support USB serial devices, `ok-serial` identifies ports by
-attributes like product description, USB vendor/product ID, and/or device
-serial number rather than relying on transient device names like
-`/dev/ttyACM3` or `COM4`.
+In addition to system device names, serial ports have attributes such as
+description text, USB vendor/product ID, serial number and the like. In 
+`okserial` these are captured in string key/value tables.
 
-To see port attributes, install `ok-serial`, connect your device(s) and run
-`okserial --verbose` to list available in this format:
+The specific attribute keys
+[come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo)
+and are platform/device dependent but usually include:
+- `device` - system device name, eg. `/dev/ttyUSB1` or `COM3`
+- `description` - human readable text, eg. `Arduino Uno`
+- `manufacturer` - USB device manufacturer name, eg. `
+- `vid_pid` - USB vendor and product ID, eg. `0403:6001`
+- `serial_number` - USB device serial, eg. `DF62585783553434`
+- `location` - system bus attachment path, eg. `3-2.1:1.0`
+
+To see all the attributes, install `ok-serial`, connect your device(s) and
+run `okserial --verbose`:
 
 ```text
 Serial port: /dev/ttyACM3
-   device: '/dev/ttyACM3'
-   name: 'ttyACM3'
-   description: 'Feather RP2040 RFM - Pico Serial'
-   hwid: 'USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-   vid: '9114'
-   pid: '33069'
-   serial_number: 'DF62585783553434'
-   location: '3-2.1:1.0'
-   manufacturer: 'Adafruit'
-   product: 'Feather RP2040 RFM'
-   interface: 'Pico Serial'
-   usb_device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-   device_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-   subsystem: 'usb'
-   usb_interface_path: '/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   device='/dev/ttyACM3'
+   name='ttyACM3'
+   description='Feather RP2040 RFM - Pico Serial'
+   hwid='USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
+   vid='9114'
+   pid='33069'
+   serial_number='DF62585783553434'
+   location='3-2.1:1.0'
+   manufacturer='Adafruit'
+   product='Feather RP2040 RFM'
+   interface='Pico Serial'
+   usb_device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
+   device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   subsystem='usb'
+   usb_interface_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   vid_pid='239A:812D'
+
+...
 ```
 
-Attribute definitions are somewhat platform dependent, but `device`,
-`name`, `description`, `hwid`, and (for USB) `vid`, `pid`, `serial_number`,
-`location`, `manufacturer`, `product` and `interface` are semi-standardized.
+## Serial port match expressions
 
-To select ports to use, `ok-serial` uses **port match expression** strings,
+To select ports, `ok-serial` uses **port match expression** strings,
 which contain space-separated search terms:
 
 - `word` - case INsensitive whole-word match in any attribute value
@@ -138,20 +148,7 @@ You can pass a match expression to `okserial` and set
 🎯 36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
 Serial port: /dev/ttyACM3
    device='/dev/ttyACM3'
-   name='ttyACM3'
-   description='Feather RP2040 RFM - Pico Serial'
-   hwid='USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-   vid='9114'
-   pid='33069'
-✅ serial_number='DF62585783553434'
-   location='3-2.1:1.0'
-✅ manufacturer='Adafruit'
-   product='Feather RP2040 RFM'
-   interface='Pico Serial'
-   usb_device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-   device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-   subsystem='usb'
-   usb_interface_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
+   ...
 ```
 
 ## Sharing modes

@@ -37,6 +37,7 @@ def test_scan_ports(mocker):
                 "hwid": "HwId",
                 "vid": "111",
                 "pid": "222",
+                "vid_pid": "006f:00de",
                 "serial_number": "Serial",
                 "manufacturer": "Manufacturer",
                 "product": "Product",

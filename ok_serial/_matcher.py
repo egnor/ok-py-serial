@@ -10,8 +10,6 @@ log = logging.getLogger("ok_serial.matching")
 _TERM_RE = re.compile(
     # beginning of term
     r"\s*(?<!\S)(?:"
-    # vid:pid OR
-    r"""([0-9A-F]{4}):([0-9A-F]{4})(?!\S)|"""
     # ( optional attr THEN ~/regex/ ) OR
     r"""(?:([A-Z_]*)~/((?:\\.|[^\\/])*)/)|"""
     # optional attr= THEN (
@@ -38,10 +36,13 @@ _ESCAPE_RE = re.compile(
 
 
 class SerialPortMatcher:
-    """A parsed expression for matching against SerialPort results"""
+    """A parsed expression for identifying serial ports of interest."""
 
     def __init__(self, match: str):
-        """Parses string 'match' as fielded globs matching port attributes"""
+        """Parses a
+        [serial port match expression](https://github.com/egnor/ok-py-serial#serial-port-match-expressions)
+        in preparation to identify matching `SerialPort` objects.
+        """
 
         self._input = match
         self._patterns = _patterns_from_str(match)
@@ -65,7 +66,7 @@ class SerialPortMatcher:
         return bool(self._patterns)
 
     def matches(self, port: SerialPort) -> bool:
-        """True if this matcher selects 'port'"""
+        """Returns True if the given 'port' matches the parsed expression."""
 
         return all(
             any(k.startswith(p) and r.search(v) for k, v in port.attr.items())
@@ -73,7 +74,10 @@ class SerialPortMatcher:
         )
 
     def matching_attrs(self, port: SerialPort) -> set[str]:
-        """The set of attribute keys on 'port' matched by this matcher"""
+        """
+        Returns the set of attribute keys matched by this expression,
+        typically for display highlighting purposes.
+        """
 
         return set(
             k
@@ -94,11 +98,8 @@ def _patterns_from_str(match: str) -> list[tuple[str, re.Pattern]]:
             raise SerialMatcherInvalid(msg)
 
         next_pos = tm.end()
-        vi, pi, ratt, rx, att, qv, num, naked = tm.groups(default="")
-        if vi and pi:
-            out.append(("vid", re.compile(f"^{int(vi, 16)}$")))
-            out.append(("pid", re.compile(f"^{int(pi, 16)}$")))
-        elif rx:
+        ratt, rx, att, qv, num, naked = tm.groups(default="")
+        if rx:
             try:
                 out.append((ratt, re.compile(rx)))
             except re.error as ex:

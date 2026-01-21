@@ -14,9 +14,15 @@ log = logging.getLogger("ok_serial.scanning")
 
 @dataclasses.dataclass(frozen=True)
 class SerialPort:
-    """What we know about a potentially available serial port on the system"""
+    """Metadata about a serial port found on the system"""
 
+    """The OS device identifier, eg. `/dev/ttyUSB3`, 'COM4', etc."""
     name: str
+
+    """
+    Descriptive port attributes, see
+    [serial port attributes](https://github.com/egnor/py-ok-serial#serial-port-attributes) for a list.
+    """
     attr: dict[str, str]
 
     def __str__(self):
@@ -24,7 +30,17 @@ class SerialPort:
 
 
 def scan_serial_ports() -> list[SerialPort]:
-    """Returns a list of serial ports found on the current system"""
+    """
+    Returns a list of serial ports currently attached to the system.
+
+    For testing and encapsulation, if the environment variable
+    `$OK_SERIAL_SCAN_OVERRIDE` is the pathname of a JSON file in
+    `{"port-name": {"attr": "value", ...}, ...}` format, that port listing
+    is returned instead of actual system scan results.
+
+    Raises:
+    - `SerialScanException`: System error scanning ports
+    """
 
     if ov := os.getenv("OK_SERIAL_SCAN_OVERRIDE"):
         try:
@@ -57,4 +73,6 @@ def scan_serial_ports() -> list[SerialPort]:
 def _convert_port(p: list_ports_common.ListPortInfo) -> SerialPort:
     _NA = (None, "", "n/a")
     attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
+    if p.vid and p.pid:
+        attr["vid_pid"] = f"{p.vid:04x}:{p.pid:04x}"
     return SerialPort(name=p.device, attr=attr)
