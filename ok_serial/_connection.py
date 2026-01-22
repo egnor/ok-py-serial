@@ -255,14 +255,14 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     def incoming_size(self) -> int:
         """
-        The number of bytes waiting to be read.
+        Returns the number of bytes waiting to be read.
         """
         with self._io.monitor:
             return len(self._io.incoming)
 
     def outgoing_size(self) -> int:
         """
-        The number of bytes waiting to be sent.
+        Returns the number of bytes waiting to be sent.
         """
         with self._io.monitor:
             return len(self._io.outgoing)
@@ -304,7 +304,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     def get_signals(self) -> SerialControlSignals:
         """
-        The current
+        Returns the current
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
 
         Raises:
