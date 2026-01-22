@@ -6,15 +6,16 @@ with improved port discovery and I/O semantics.
 
 Think twice before using this library! Consider something more established:
 
-- [good old PySerial](https://www.pyserial.com/) - `ok-serial` is
-  based on PySerial!
-- [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) - official
-  and "proper" [asyncio](https://docs.python.org/3/library/asyncio.html)
+- [good old PySerial](https://www.pyserial.com/)
+  \- the implementation under `ok-serial`, well established and widely used
+- [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio)
+  \- official and "proper"
+  [asyncio](https://docs.python.org/3/library/asyncio.html)
   support for PySerial
 - [pyserial-asyncio-fast](https://github.com/home-assistant-libs/pyserial-asyncio-fast)
   \- pyserial-asyncio fork designed for faster writes
-- [aioserial](https://github.com/mrjohannchang/aioserial.py) - alternative
-  asyncio wrapper designed for ease of use
+- [aioserial](https://github.com/mrjohannchang/aioserial.py)
+  \- alternative asyncio wrapper designed for ease of use
 
 ## Purpose
 
@@ -35,7 +36,7 @@ lots of gnarly system details. However, some issues keep coming up:
   [broken](https://github.com/pyserial/pyserial/issues/281)
   [entirely](https://github.com/pyserial/pyserial/issues/280).
 
-- PySerial's has small buffers; overruns lose data and/or block unexpectedly.
+- PySerial has small buffers; overruns lose data and/or block unexpectedly.
 
 - PySerial doesn't lock ports by default; even when enabled, PySerial only
   uses one advisory locking method. Bad things happen when multiple programs
@@ -44,7 +45,7 @@ lots of gnarly system details. However, some issues keep coming up:
 The `ok-serial` library uses PySerial internally but has a revised interface:
 
 - Ports are referenced by
-  [attribute match expressions](#serial port-match-expressions) with wildcard
+  [port match expressions](#serial-port-match-expressions) with wildcard
   support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
 
 - I/O operations are thread safe and can be blocking, non-blocking,
@@ -53,7 +54,7 @@ The `ok-serial` library uses PySerial internally but has a revised interface:
   I/O errors, and other edge cases are well defined.
 
 - I/O buffers are limited only by system memory; writes never block.
-  (Blocking drain is available to wait for output completion.)
+  (A blocking drain is available.)
 
 - Several [port locking modes](#sharing-modes) are supported, with exclusive
   locking by default. _All_ of
@@ -62,8 +63,9 @@ The `ok-serial` library uses PySerial internally but has a revised interface:
   and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html)
   (as available) are used avoid contention.
 
-- `SerialPortTracker` is available to wait for a device of interest to
-  appear and rescan after disconnection, to gracefully handle pluggable devices.
+- [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
+  is an automatic reconnection helper for graceful handling of pluggable
+  devices.
 
 ## Installation
 
@@ -87,7 +89,7 @@ while (data := conn.read_sync(rx=b".*?\n", timeout=5)):
 print("...5 seconds elapsed with no line")
 ```
 
-(Note that `match="MyDevice"` uses a
+(Note that `"MyDevice"` is a
 [port match expression](#serial-port-match-expressions).)
 
 API elements worth knowing include:
@@ -102,7 +104,7 @@ API elements worth knowing include:
 - [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
   \- scan and connect to a port with automatic error retry
 
-All potentially blocking I/O operations come in `*_sync` and `*_async`
+I/O-wait operations come in `*_sync` and `*_async`
 versions (eg.
 [`read_sync`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_sync) and
 [`read_async`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_async))
@@ -112,12 +114,10 @@ code, respectively. The `_sync` version always includes a `timeout=...`
 argument which is `None` (forever timeout) by default. The `_async`
 version returns a
 [`Future`](https://docs.python.org/3/library/asyncio-future.html)
-that may be awaited in the usual ways.
+you can `await`.
 
-All methods in this library are thread-safe. Multiple threads may
-interact with any `ok-serial` object concurrently with logical results.
-Any error or closure on a connection causes all pending I/O operations
-to immediately raise an exception.
+All library methods are thread-safe and thread-sane. Any error or closure on a
+connection causes all pending operations to immediately raise an exception.
 
 See [the full API reference docs](https://egnor.github.io/ok-py-serial/)
 for interface details.
@@ -125,10 +125,10 @@ for interface details.
 ## Serial port attributes
 
 Serial ports can have attributes such as description text, USB vendor/product
-ID, serial number and the like. In `okserial` these are captured in string
-key/value tables.
+ID, serial number and the like. These are captured as key/value pairs in
+[`SerialPort.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPort.attr).
 
-The specific attribute keys
+Specific attribute keys
 [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo)
 and are platform/device dependent but usually include:
 
@@ -139,7 +139,7 @@ and are platform/device dependent but usually include:
 - `serial_number` - USB device serial, eg. `DF62585783553434`
 - `location` - system bus attachment path, eg. `3-2.1:1.0`
 
-To see all the attributes, install `ok-serial`, connect your device(s) and
+To see all the attributes, install `ok-serial`, connect some device(s) and
 run `okserial --verbose`:
 
 ```text
