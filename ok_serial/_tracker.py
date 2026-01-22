@@ -134,8 +134,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     async def find_async(self) -> list[SerialPort]:
         """
-        Similar to `find_sync` but returns a Promise instead of blocking the
-        current thread. To apply a timeout, see `asyncio.timeout`.
+        Similar to `find_sync` but returns a
+        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
+        instead of blocking the current thread.
         """
 
         while True:
@@ -200,8 +201,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     async def connect_async(self) -> SerialConnection:
         """
-        Similar to `connect_sync` but returns a Promise instead of blocking the
-        current thread. To apply a timeout, see `asyncio.timeout`.
+        Similar to `connect_sync` but returns a
+        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
+        instead of blocking the current thread.
         """
 
         while True:

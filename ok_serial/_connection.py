@@ -162,8 +162,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         timeout: float | int | None = None,
     ) -> bytes:
         """
-        Waits up to `timeout` seconds (forever for `None`) for incoming data,
-        then returns all buffered data (b"" on timeout).
+        Waits up to `timeout` seconds (forever for `None`) for data,
+        then returns all of it (b"" on timeout).
 
         Raises:
         - `SerialIoException`: port I/O failed and there is no matching data
@@ -186,8 +186,9 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def read_async(self) -> bytes:
         """
-        Similar to `read_sync` but returns a Promise instead of blocking the
-        current thread for data. To apply a timeout, see `asyncio.timeout`.
+        Similar to `read_sync` but returns a
+        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
+        instead of blocking the current thread.
         """
 
         while True:
@@ -242,9 +243,9 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def drain_async(self) -> bool:
         """
-        Similar to `drain_sync` but returns a Promise instead
-        of blocking the current thread. To apply a timeout, see
-        `asyncio.timeout`.
+        Similar to `drain_sync` but returns a
+        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
+        instead of blocking the current thread.
         """
 
         while True:
