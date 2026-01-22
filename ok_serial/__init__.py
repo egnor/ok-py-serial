@@ -1,6 +1,9 @@
 """
-Serial port library (PySerial wrapper) with improved port discovery
+A Python serial port library
+(based on [PySerial](https://www.pyserial.com/))
+with improved port discovery
 and I/O semantics.
+[(Usage guide)](https://github.com/egnor/ok-py-serial#readme)
 """
 
 from beartype.claw import beartype_this_package as _beartype_me
