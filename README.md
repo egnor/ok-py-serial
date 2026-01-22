@@ -103,29 +103,39 @@ API elements worth knowing include:
 - [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
   \- scan and connect to a port with automatic error retry
 
-I/O-wait operations come in `*_sync` and `*_async`
-versions (eg.
-[`read_sync`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_sync) and
-[`read_async`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_async))
-for use with regular and
-[asyncio](https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html)
-code, respectively. The `_sync` version always includes a `timeout=...`
-argument which is `None` (forever timeout) by default. The `_async`
-version returns a
-[`Future`](https://docs.python.org/3/library/asyncio-future.html)
-you can `await`.
+Methods come in different flavors of blocking behavior:
 
-All library methods are thread-safe and thread-sane. Any error or closure on a
-connection causes all pending operations to immediately raise an exception.
+- `*_sync` methods (eg.
+  [`read_sync`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_sync))
+  block, accept `timeout=...`, and can raise
+  [exceptions](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialIoException)
+- `*_async` methods (eg.
+  [`read_async`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_async))
+  return a
+  [`Future`](https://docs.python.org/3/library/asyncio-future.html)
+  the caller can
+  [`await`](https://docs.python.org/3/reference/expressions.html#await)
+  (see [asyncio](https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html))
+  - Use
+    [`asyncio.timeout`](https://docs.python.org/3/library/asyncio-task.html#timeouts)
+    to add a timeout
+  - Errors are reported via the `Future` (`await` will raise)
+- Other methods (neither `*_sync` nor `*_async`) are non-blocking.
 
-See [the full API reference docs](https://egnor.github.io/ok-py-serial/)
+Methods and functions of any flavor are thread-safe and thread-sane, and
+any error or closure on a connection interrupts all pending operations
+on that connection.
+
+See the [full API reference docs](https://egnor.github.io/ok-py-serial/)
 for interface details.
 
 ## Serial port attributes
 
 Serial ports can have attributes such as description text, USB vendor/product
 ID, serial number and the like. These are captured as key/value pairs in
-[`SerialPort.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPort.attr).
+[`SerialPort.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPort.attr)
+as returned by
+[`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports).
 
 Specific attribute keys
 [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo)

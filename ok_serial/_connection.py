@@ -193,8 +193,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
-            out = self.read_sync(timeout=0)
-            if out:
+            if out := self.read_sync(timeout=0):
                 return out
             await future
 
