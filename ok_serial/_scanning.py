@@ -16,14 +16,14 @@ log = logging.getLogger("ok_serial.scanning")
 class SerialPort:
     """Metadata about a serial port found on the system"""
 
-    """The OS device identifier, eg. `/dev/ttyUSB3`, 'COM4', etc."""
     name: str
+    """The OS device identifier, eg. `/dev/ttyUSB3`, 'COM4', etc."""
 
+    attr: dict[str, str]
     """
     Descriptive port attributes, see
     [serial port attributes](https://github.com/egnor/py-ok-serial#serial-port-attributes) for a list.
     """
-    attr: dict[str, str]
 
     def __str__(self):
         return self.name

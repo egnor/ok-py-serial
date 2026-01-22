@@ -2,13 +2,12 @@
 
 
 class SerialException(OSError):
-    """Base class for system errors encountered in `okserial` operations."""
+    """Exception base class for `okserial` I/O errors."""
 
-    def __init__(
-        self,
-        message: str,
-        port: str | None = None,
-    ):
+    port: str | None
+    """The device name of the serial port involved in the error."""
+
+    def __init__(self, message: str, port: str | None = None):
         super().__init__(f"{port}: {message}" if port else message)
         self.port = port
 

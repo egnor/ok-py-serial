@@ -75,27 +75,30 @@ pip install ok-serial
 
 ## Usage
 
-Here is a trivial example:
+Here is a minimal example:
 
 ```
 import ok_serial
 
-conn = ok_serial.SerialConnection(match="My Device", baud=115200)
+conn = ok_serial.SerialConnection(match="MyDevice", baud=115200)
 conn.write("Hello Device!")
-while (data := conn.read_sync(timeout=5)):
-    print("Data chunk:", data)
-print("...5 seconds elapsed with no data")
+while (data := conn.read_sync(rx=b".*?\n", timeout=5)):
+    print("Received line:", data.strip())
+print("...5 seconds elapsed with no line")
 ```
 
-Main API pathways include:
+(Note that `match="MyDevice"` uses a
+[port match expression](#serial-port-match-expressions).)
 
+API elements worth knowing include:
+
+- [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection)
+  \- establish a connection to a specific port and perform I/O
 - [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports)
   \- get all ports on the system, with descriptive attributes
 - [`SerialPortMatcher`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortMatcher)
   \- use [port match expression strings](#serial-port-match-expressions) to
-     search for ports of interest
-- [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection)
-  \- establish a connection to a specific port and perform I/O
+     identify ports of interest
 - [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
   \- scan and connect to a port with automatic error retry
 
@@ -163,8 +166,8 @@ Serial port: /dev/ttyACM3
 
 ## Serial port match expressions
 
-To select ports, `ok-serial` uses **port match expression** strings,
-which contain space-separated search terms:
+Instead of plain device names, `ok-serial` can use **port match expressions**
+to find ports. Match expressions are made of space-separated search terms:
 
 - `word` - case INsensitive whole-word match in any attribute value
 - `wild*word?` - `*` and `?` are wildcards (any text, single character)

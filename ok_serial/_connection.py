@@ -3,6 +3,7 @@ import contextlib
 import dataclasses
 import errno
 import logging
+import re
 import serial
 import threading
 
@@ -18,9 +19,7 @@ data_log = logging.getLogger(log.name + ".data")
 
 @dataclasses.dataclass(frozen=True)
 class SerialConnectionOptions:
-    """
-    Optional parameters for `SerialConnection`.
-    """
+    """Optional parameters for `SerialConnection`."""
 
     baud: int = 115200
     """The [baud rate](https://en.wikipedia.org/wiki/Baud) to use."""
@@ -161,64 +160,62 @@ class SerialConnection(contextlib.AbstractContextManager):
     def read_sync(
         self,
         *,
-        min: int = 1,
-        max: int = 65536,
+        rx: bytes | re.Pattern[bytes] = re.compile(b".+", re.DOTALL),
         timeout: float | int | None = None,
     ) -> bytes:
         """
-        Waits up to `timeout` seconds (forever for `None`) or until at least
-        `min` bytes are in the incoming serial buffer (or an error occurs),
-        then removes and returns up to `max` bytes from that buffer.
+        Waits up to `timeout` seconds (forever for `None`) until the
+        incoming buffer matches `rx`, then extracts matching bytes
+        (returns b"" on timeout).
 
-        For `min=1`, `max=65535` and `timeout=None` (the defaults) this will
-        wait until any data is available then return up to 64K per call.
+        By default (`rx=b'.+', timeout=None`) this extracts the whole buffer
+        once any data is received.
 
-        If an error occurs or the port is closed, any remaining buffered data
-        is returned (even if less than `min`), or an exception is raised.
-        Fewer than `min` bytes may be returned after timeout or error, but
-        no more than `max` bytes are ever returned.
+        (Note, if `rx` is a byte string, it will be compiled with `re.DOTALL`,
+        so `.` will match any byte. If `rx` is precompiled, the caller sets
+        the flags; without `re.DOTALL`, `.` does not match `\\n`.)
 
         Raises:
-        - `SerialIoException`: port I/O failed and the buffer is empty
-        - `SerialIoClosed`: the port was closed and the buffer is empty
+        - `SerialIoException`: port I/O failed and there is no matching data
+        - `SerialIoClosed`: the port was closed and there is no matching data
         """
 
+        rx = re.compile(rx, re.DOTALL) if isinstance(rx, bytes) else rx
         deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
-                if len(self._io.incoming) >= min:
-                    incoming = self._io.incoming[:max]
-                    del self._io.incoming[:max]
-                    return bytes(incoming)
-                elif self._io.exception:
+                if match := rx.match(self._io.incoming):
+                    del self._io.incoming[: len(output := match.group())]
+                    return output
+                if self._io.exception:
                     raise self._io.exception
-                else:
-                    wait = from_deadline(deadline)
-                    if wait <= 0:
-                        return b""
-                    self._io.monitor.wait(timeout=wait)
+                if (wait := from_deadline(deadline)) <= 0:
+                    return b""
+                self._io.monitor.wait(timeout=wait)
 
-    async def read_async(self, *, min: int = 1, max: int = 65536) -> bytes:
+    async def read_async(
+        self, *, rx: bytes | re.Pattern[bytes] = re.compile(b".+", re.DOTALL)
+    ) -> bytes:
         """
         Similar to `read_sync` but returns a Promise instead of blocking the
         current thread for data. To apply a timeout, see `asyncio.timeout`.
-
-        The promise is rejected if the port fails or is closed,
-        with the same exceptions as raised by `read_sync`.
         """
+
+        rx = re.compile(rx, re.DOTALL) if isinstance(rx, bytes) else rx
+        empty_ok = rx.match(b"") is not None
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
-            out = self.read_sync(min=min, max=max, timeout=0)
-            if out or min <= 0:
+            out = self.read_sync(rx=rx, timeout=0)
+            if out or empty_ok:
                 return out
             await future
 
     def write(self, data: bytes | bytearray) -> None:
         """
-        Adds data to the outgoing serial buffer to be sent immediately.
-        Never blocks; the buffer can grow indefinitely large.
-        (See `outgoing_size` and `drain_sync`/`drain_async` to monitor and
-        manage buffer size.)
+        Adds data to the outgoing buffer to be sent immediately.
+        Never blocks; the buffer can grow indefinitely.
+        (Use `outgoing_size` and `drain_sync`/`drain_async` to manage
+        buffer size.)
 
         Raises:
         - `SerialIoException`: port I/O failed
@@ -236,13 +233,11 @@ class SerialConnection(contextlib.AbstractContextManager):
         self, *, max: int = 0, timeout: float | int | None = None
     ) -> bool:
         """
-        Waits up to `timeout` seconds (forever for `None`) or until
-        fewer than `max` bytes remain in the outgoing serial buffer
-        (or an error occurs).
+        Waits up to `timeout` seconds (forever for `None`) until
+        fewer than `max` bytes remain in the outgoing buffer.
 
-        For `max=0` and `timeout=None` (the defaults) this will wait until
-        all buffered data is written to the wire or an error occurs.
-        (This could take a long time if other threads keep writing.)
+        By default (`max=0, timeout=None`) this waits until
+        all data is written to the wire.
 
         Returns `True` if the drain condition was met, `False` on timeout.
 
@@ -269,9 +264,6 @@ class SerialConnection(contextlib.AbstractContextManager):
         Similar to `drain_sync` but returns a Promise instead
         of blocking the current thread. To apply a timeout, see
         `asyncio.timeout`.
-
-        The promise is rejected if the port fails or is closed,
-        with the same exceptions as raised by `drain_sync`.
         """
 
         while True:
@@ -282,18 +274,14 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     def incoming_size(self) -> int:
         """
-        Returns the number of bytes waiting to read.
-
-        Does not raise exceptions (even if the port failed or was closed).
+        The number of bytes waiting to be read.
         """
         with self._io.monitor:
             return len(self._io.incoming)
 
     def outgoing_size(self) -> int:
         """
-        Returns the number of bytes waiting to be sent.
-
-        Does not raise exceptions (even if the port failed or was closed).
+        The number of bytes waiting to be sent.
         """
         with self._io.monitor:
             return len(self._io.outgoing)
@@ -306,10 +294,11 @@ class SerialConnection(contextlib.AbstractContextManager):
     ) -> None:
         """
         Sets outgoing
-        [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state:
-        - dtr: True to assert Data Terminal Ready
-        - rts: True to assert Ready To Send
-        - send_break: True to send a continuous BREAK condition
+        [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals)
+        state (use `None` for no change):
+        - `dtr`: assert Data Terminal Ready
+        - `rts`: assert Ready To Send
+        - `send_break`: send a continuous BREAK condition
 
         Raises:
         - `SerialIoException`: port I/O failed
@@ -334,7 +323,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     def get_signals(self) -> SerialControlSignals:
         """
-        Returns the current
+        The current
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
 
         Raises:
@@ -370,15 +359,17 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     @property
     def pyserial(self) -> serial.Serial:
-        """The underlying `pyserial.Serial` object (API escape hatch)."""
+        """
+        The underlying
+        [`pyserial.Serial`](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial)
+        object (API escape hatch).
+        """
         return self._io.pyserial
 
     def fileno(self) -> int:
         """
-        Returns the Unix file descriptor for the serial connection,
-        -1 if not available.
-
-        Does not raise exceptions (even if the port failed or was closed).
+        The [Unix FD](https://en.wikipedia.org/wiki/File_descriptor)
+        for the serial connection, -1 if not available.
         """
         try:
             return self._io.serial.fileno()

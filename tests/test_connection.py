@@ -21,7 +21,7 @@ def test_basic_connection(pty_serial):
         assert ispeed == termios.B57600
 
         pty_serial.control.write(b"TO SERIAL")
-        assert conn.read_sync(min=9, timeout=10) == b"TO SERIAL"
+        assert conn.read_sync(timeout=10) == b"TO SERIAL"
 
         conn.write(b"FROM SERIAL")
         conn.drain_sync()
@@ -47,18 +47,18 @@ async def test_async_read_basic(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         # Exact size read
         pty_serial.control.write(b"ASYNC TEST")
-        data = await conn.read_async(min=10, max=10)
+        data = await conn.read_async(rx=b".{10}")
         assert data == b"ASYNC TEST"
 
         # Partial read (max larger than available)
         pty_serial.control.write(b"HELLO")
-        data = await conn.read_async(min=5, max=100)
+        data = await conn.read_async(rx=b".{5,}")
         assert data == b"HELLO"
 
 
 async def test_async_read_min_zero(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        data = await conn.read_async(min=0, max=100)
+        data = await conn.read_async(rx=b".*")
         assert data == b""
 
 
@@ -72,7 +72,7 @@ async def test_async_read_waits_for_min(pty_serial):
             pty_serial.control.write(b"PART2")
 
         write_task = asyncio.create_task(delayed_write())
-        data = await conn.read_async(min=10, max=100)
+        data = await conn.read_async(rx=b".{10,}")
         assert data == b"PART1PART2"
         await write_task
 
@@ -97,7 +97,7 @@ async def test_async_read_and_write_concurrent(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
 
         async def reader():
-            return await conn.read_async(min=5, max=100)
+            return await conn.read_async(rx=b".{5,}")
 
         async def writer():
             conn.write(b"WRITE")
@@ -119,7 +119,7 @@ async def test_async_read_and_write_concurrent(pty_serial):
 def test_read_sync_timeout_empty_buffer(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         start = time.monotonic()
-        data = conn.read_sync(min=1, timeout=0.1)
+        data = conn.read_sync(timeout=0.1)
         elapsed = time.monotonic() - start
         assert data == b""
         assert 0.05 <= elapsed <= 0.5
@@ -130,7 +130,7 @@ def test_read_sync_zero_or_negative_timeout(pty_serial, timeout):
     """Test that zero or negative timeout returns immediately with no data."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         start = time.monotonic()
-        data = conn.read_sync(min=1, timeout=timeout)
+        data = conn.read_sync(timeout=timeout)
         elapsed = time.monotonic() - start
         assert data == b""
         assert elapsed < 0.1
@@ -139,11 +139,9 @@ def test_read_sync_zero_or_negative_timeout(pty_serial, timeout):
 def test_read_sync_partial_data_timeout(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         pty_serial.control.write(b"ABC")
-        # Wait for data using min=0 read (no sleep needed)
-        conn.read_sync(min=0, max=0, timeout=0.1)
 
-        # Now request more than available
-        data = conn.read_sync(min=10, timeout=0.1)
+        # Request more than available
+        data = conn.read_sync(rx=b".{10,}", timeout=0.1)
         assert data == b""
         assert conn.incoming_size() == 3
 
@@ -191,14 +189,13 @@ def test_incoming_size_tracks_buffer(pty_serial):
     """Test incoming_size tracks data correctly."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         assert conn.incoming_size() == 0
+        # wait for data to arrive
         pty_serial.control.write(b"12345")
-
-        # Use read to wait for data to arrive (with min=0 to not block forever)
         while conn.incoming_size() < 5:
-            conn.read_sync(min=0, max=0, timeout=0.1)
+            time.sleep(0.1)
 
         assert conn.incoming_size() == 5
-        conn.read_sync(min=2, max=2, timeout=1.0)
+        conn.read_sync(rx=b"..", timeout=1.0)
         assert conn.incoming_size() == 3
 
 
@@ -210,41 +207,33 @@ def test_incoming_size_tracks_buffer(pty_serial):
 def test_read_sync_max_limits_output(pty_serial):
     """Test that max parameter limits the amount of data returned."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        pty_serial.control.write(b"ABCDEFGHIJ")
-
         # Wait for all 10 bytes to arrive
+        pty_serial.control.write(b"ABCDEFGHIJ")
         while conn.incoming_size() < 10:
-            conn.read_sync(min=0, max=0, timeout=0.1)
+            time.sleep(0.1)
 
-        # Now read with max=5 - should return exactly 5 bytes
-        data = conn.read_sync(min=1, max=5, timeout=1.0)
+        # Now read max 5 bytes - should return exactly 5 bytes
+        data = conn.read_sync(rx=b".{1,5}", timeout=1.0)
         assert data == b"ABCDE"
         assert conn.incoming_size() == 5
-
-
-def test_read_sync_min_equals_max(pty_serial):
-    """Test reading exact number of bytes when min equals max."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        pty_serial.control.write(b"EXACTLY10!")
-        data = conn.read_sync(min=10, max=10, timeout=1.0)
-        assert data == b"EXACTLY10!"
 
 
 def test_read_sync_min_zero_returns_available(pty_serial):
     """Test that min=0 returns whatever is available."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        pty_serial.control.write(b"AVAILABLE")
         # First wait for data to arrive
+        pty_serial.control.write(b"AVAILABLE")
         while conn.incoming_size() < 9:
-            conn.read_sync(min=0, max=0, timeout=0.1)
-        data = conn.read_sync(min=0, max=100, timeout=0)
+            time.sleep(0.1)
+
+        data = conn.read_sync(rx=b".*", timeout=0)
         assert data == b"AVAILABLE"
 
 
 def test_read_sync_min_zero_empty_buffer(pty_serial):
     """Test that min=0 with empty buffer returns empty bytes."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        data = conn.read_sync(min=0, max=100, timeout=0)
+        data = conn.read_sync(rx=b".*", timeout=0)
         assert data == b""
 
 
@@ -259,7 +248,7 @@ def test_operations_after_close_raise(pty_serial):
     conn.close()
 
     with pytest.raises(ok_serial.SerialIoClosed):
-        conn.read_sync(min=1, timeout=1.0)
+        conn.read_sync(timeout=1.0)
 
     with pytest.raises(ok_serial.SerialIoClosed):
         conn.write(b"test")
@@ -274,7 +263,7 @@ async def test_async_operations_after_close_raise(pty_serial):
     conn.close()
 
     with pytest.raises(ok_serial.SerialIoClosed):
-        await conn.read_async(min=1)
+        await conn.read_async()
 
     with pytest.raises(ok_serial.SerialIoClosed):
         await conn.drain_async()
@@ -287,7 +276,7 @@ def test_context_manager_closes_on_exit(pty_serial):
         conn.drain_sync(timeout=1.0)
 
     with pytest.raises(ok_serial.SerialIoClosed):
-        conn.read_sync(min=1, timeout=0.1)
+        conn.read_sync(timeout=0.1)
 
 
 def test_multiple_close_is_safe(pty_serial):
@@ -311,7 +300,7 @@ def test_concurrent_reads_and_writes(pty_serial):
 
         def reader():
             try:
-                results["read"] = conn.read_sync(min=5, timeout=5.0)
+                results["read"] = conn.read_sync(rx=b".{5,}", timeout=5.0)
             except Exception as e:
                 errors.append(e)
 
@@ -368,8 +357,7 @@ async def test_large_async_read(pty_serial):
 
         received = b""
         while len(received) < 512:
-            chunk = await conn.read_async(min=1, max=512 - len(received))
-            received += chunk
+            received += await conn.read_async()
         assert received == data
 
 

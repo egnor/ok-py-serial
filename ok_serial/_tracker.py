@@ -4,7 +4,6 @@ import dataclasses
 import logging
 import threading
 import time
-import typing
 
 from ok_serial._connection import SerialConnection, SerialConnectionOptions
 from ok_serial._exceptions import (
@@ -19,7 +18,10 @@ from ok_serial._timeout_math import from_deadline, to_deadline
 log = logging.getLogger("ok_serial.tracker")
 
 
-class TrackerOptions(typing.NamedTuple):
+@dataclasses.dataclass(frozen=True)
+class TrackerOptions:
+    """Optional parameters for `SerialPortTracker`."""
+
     scan_interval: float | int = 0.5
 
 
@@ -40,15 +42,15 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         copts: SerialConnectionOptions = SerialConnectionOptions(),
     ):
         """
-        Sets up to manage a serial port connection.
+        Prepare to manage a serial port connection.
         - `match` must be a [port match expression](https://github.com/egnor/ok-py-serial#serial-port-match-expressions) matching the port of interest
         - `topts` can define parameters for tracking (eg. re-scan interval)
         - `copts` can define parameters for connecting (eg. baud rate)
           - OR `baud` can set the baud rate (as a shortcut)
 
         Actual port scans and connections only happen after `find_*` or
-        `connect_*` methods are called. Call `close` to close any open
-        connection; use `SerailPortTracker` as the target of a
+        `connect_*` methods are called. Call `close` to end any open
+        connection; use `SerialPortTracker` as the target of a
         [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with)
         to automatically close the port on exit from the `with` body.
 
@@ -86,8 +88,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         """
         Closes any active serial port connection. Any I/O operations on the
         existing connection will raise an immediate `SerialIoClosed` exception.
-        A subsequent call to `connect_sync` or `connect_async` will attempt to
-        establish a new connection.
+        Any subsequent call to `connect_sync` or `connect_async` will establish
+        a new connection.
         """
 
         with self._lock:
@@ -96,8 +98,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     def find_sync(self, timeout: float | int | None = None) -> list[SerialPort]:
         """
-        Waits up to `timeout` seconds (forever for `None`) for serial port(s)
-        to appear matching this tracker's requirements, rescanning periodically
+        Waits up to `timeout` seconds (forever for `None`) until serial port(s)
+        appear matching this tracker's requirements. Rescans periodically
         while waiting (see `TrackerOptions.scan_interval`).
 
         Returns a list of matching `SerialPort` objects, or `[]` on timeout.
@@ -152,25 +154,22 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         If a connection is established and healthy, returns it immediately.
 
         Otherwise, waits up to `timeout` seconds (forever for `None`) for
-        serial port(s) to appear matching this tracker's requirements.
-        Attempts a connection when they do. If the connection succeeds,
-        it is remembered and returned, otherwise scanning resumes.
+        serial port(s) to appear matching this tracker's requirements, then
+        attempts a new connection. If the connection succeeds, it is remembered
+        and returned, otherwise scanning resumes.
 
         If multiple ports match the requirements, connections are attempted
-        to each of them in turn, and the first success (if any) is returned.
+        to each of them in turn, and the first success (if any) is
+        remembered and returned.
 
-        If the returned connection ever raises an exception or is closed,
-        it is considered unhealthy, and the next call to this method will
-        re-scan and re-comnnect to get a new connection.
-
-        Returns the connection if successful, `None` on timeout.
+        Returns `None` on timeout.
 
         Raises:
         - `SerialScanException`: System error scanning ports
         """
 
         deadline = to_deadline(timeout)
-        ports = []
+        ports: list[SerialPort] = []
         while True:
             with self._lock:
                 if self._conn:
