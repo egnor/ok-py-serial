@@ -47,57 +47,29 @@ async def test_async_read_basic(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         # Exact size read
         pty_serial.control.write(b"ASYNC TEST")
-        data = await conn.read_async(rx=b".{10}")
+        data = await conn.read_async()
         assert data == b"ASYNC TEST"
 
         # Partial read (max larger than available)
         pty_serial.control.write(b"HELLO")
-        data = await conn.read_async(rx=b".{5,}")
+        data = await conn.read_async()
         assert data == b"HELLO"
-
-
-async def test_async_read_min_zero(pty_serial):
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        data = await conn.read_async(rx=b".*")
-        assert data == b""
-
-
-async def test_async_read_waits_for_min(pty_serial):
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-
-        async def delayed_write():
-            await asyncio.sleep(0.02)
-            pty_serial.control.write(b"PART1")
-            await asyncio.sleep(0.02)
-            pty_serial.control.write(b"PART2")
-
-        write_task = asyncio.create_task(delayed_write())
-        data = await conn.read_async(rx=b".{10,}")
-        assert data == b"PART1PART2"
-        await write_task
 
 
 async def test_async_drain(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         # Basic drain to completion
         conn.write(b"DRAIN TEST")
-        result = await conn.drain_async(max=0)
+        result = await conn.drain_async()
         assert result is True
         assert pty_serial.control.read(256) == b"DRAIN TEST"
-
-        # Drain with max threshold
-        conn.write(b"0123456789")
-        result = await conn.drain_async(max=5)
-        assert result is True
-        await conn.drain_async(max=0)
-        assert pty_serial.control.read(256) == b"0123456789"
 
 
 async def test_async_read_and_write_concurrent(pty_serial):
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
 
         async def reader():
-            return await conn.read_async(rx=b".{5,}")
+            return await conn.read_async()
 
         async def writer():
             conn.write(b"WRITE")
@@ -136,16 +108,6 @@ def test_read_sync_zero_or_negative_timeout(pty_serial, timeout):
         assert elapsed < 0.1
 
 
-def test_read_sync_partial_data_timeout(pty_serial):
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        pty_serial.control.write(b"ABC")
-
-        # Request more than available
-        data = conn.read_sync(rx=b".{10,}", timeout=0.1)
-        assert data == b""
-        assert conn.incoming_size() == 3
-
-
 #
 # Output buffer behavior
 #
@@ -155,7 +117,7 @@ def test_drain_sync_completes(pty_serial):
     """Test drain_sync completes when buffer empties."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         conn.write(b"SMALL")
-        result = conn.drain_sync(max=0, timeout=5.0)
+        result = conn.drain_sync(timeout=5.0)
         assert result is True
         assert pty_serial.control.read(256) == b"SMALL"
 
@@ -164,16 +126,8 @@ def test_drain_sync_zero_timeout(pty_serial):
     """Test drain_sync with zero timeout returns immediately."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
         conn.write(b"TEST DATA")
-        result = conn.drain_sync(max=0, timeout=0)
+        result = conn.drain_sync(timeout=0)
         assert isinstance(result, bool)
-
-
-def test_drain_sync_with_max_threshold(pty_serial):
-    """Test drain_sync succeeds when buffer drops to max threshold."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        conn.write(b"0123456789")
-        result = conn.drain_sync(max=5, timeout=5.0)
-        assert result is True
 
 
 def test_outgoing_size_after_drain(pty_serial):
@@ -183,58 +137,6 @@ def test_outgoing_size_after_drain(pty_serial):
         conn.write(b"1234567890")
         conn.drain_sync(timeout=5.0)
         assert conn.outgoing_size() == 0
-
-
-def test_incoming_size_tracks_buffer(pty_serial):
-    """Test incoming_size tracks data correctly."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        assert conn.incoming_size() == 0
-        # wait for data to arrive
-        pty_serial.control.write(b"12345")
-        while conn.incoming_size() < 5:
-            time.sleep(0.1)
-
-        assert conn.incoming_size() == 5
-        conn.read_sync(rx=b"..", timeout=1.0)
-        assert conn.incoming_size() == 3
-
-
-#
-# min/max parameter edge cases
-#
-
-
-def test_read_sync_max_limits_output(pty_serial):
-    """Test that max parameter limits the amount of data returned."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        # Wait for all 10 bytes to arrive
-        pty_serial.control.write(b"ABCDEFGHIJ")
-        while conn.incoming_size() < 10:
-            time.sleep(0.1)
-
-        # Now read max 5 bytes - should return exactly 5 bytes
-        data = conn.read_sync(rx=b".{1,5}", timeout=1.0)
-        assert data == b"ABCDE"
-        assert conn.incoming_size() == 5
-
-
-def test_read_sync_min_zero_returns_available(pty_serial):
-    """Test that min=0 returns whatever is available."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        # First wait for data to arrive
-        pty_serial.control.write(b"AVAILABLE")
-        while conn.incoming_size() < 9:
-            time.sleep(0.1)
-
-        data = conn.read_sync(rx=b".*", timeout=0)
-        assert data == b"AVAILABLE"
-
-
-def test_read_sync_min_zero_empty_buffer(pty_serial):
-    """Test that min=0 with empty buffer returns empty bytes."""
-    with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        data = conn.read_sync(rx=b".*", timeout=0)
-        assert data == b""
 
 
 #
@@ -300,7 +202,7 @@ def test_concurrent_reads_and_writes(pty_serial):
 
         def reader():
             try:
-                results["read"] = conn.read_sync(rx=b".{5,}", timeout=5.0)
+                results["read"] = conn.read_sync(timeout=5.0)
             except Exception as e:
                 errors.append(e)
 

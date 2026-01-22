@@ -84,9 +84,9 @@ import ok_serial
 
 conn = ok_serial.SerialConnection(match="MyDevice", baud=115200)
 conn.write("Hello Device!")
-while (data := conn.read_sync(rx=b".*?\n", timeout=5)):
-    print("Received line:", data.strip())
-print("...5 seconds elapsed with no line")
+while (data := conn.read_sync(timeout=5)):
+    print("Received data:", data)
+print("...5 seconds elapsed with no data")
 ```
 
 (Note that `"MyDevice"` is a

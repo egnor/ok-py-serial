@@ -3,7 +3,6 @@ import contextlib
 import dataclasses
 import errno
 import logging
-import re
 import serial
 import threading
 
@@ -160,53 +159,41 @@ class SerialConnection(contextlib.AbstractContextManager):
     def read_sync(
         self,
         *,
-        rx: bytes | re.Pattern[bytes] = re.compile(b".+", re.DOTALL),
         timeout: float | int | None = None,
     ) -> bytes:
         """
-        Waits up to `timeout` seconds (forever for `None`) until the
-        incoming buffer matches `rx`, then extracts matching bytes
-        (returns b"" on timeout).
-
-        By default (`rx=b'.+', timeout=None`) this extracts the whole buffer
-        once any data is received.
-
-        (Note, if `rx` is a byte string, it will be compiled with `re.DOTALL`,
-        so `.` will match any byte. If `rx` is precompiled, the caller sets
-        the flags; without `re.DOTALL`, `.` does not match `\\n`.)
+        Waits up to `timeout` seconds (forever for `None`) for incoming data,
+        then returns all buffered data (b"" on timeout).
 
         Raises:
         - `SerialIoException`: port I/O failed and there is no matching data
         - `SerialIoClosed`: the port was closed and there is no matching data
         """
 
-        rx = re.compile(rx, re.DOTALL) if isinstance(rx, bytes) else rx
         deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
-                if match := rx.match(self._io.incoming):
-                    del self._io.incoming[: len(output := match.group())]
+                if self._io.incoming:
+                    output = bytes(self._io.incoming)
+                    self._io.incoming.clear()
                     return output
-                if self._io.exception:
+                elif self._io.exception:
                     raise self._io.exception
-                if (wait := from_deadline(deadline)) <= 0:
+                elif (wait := from_deadline(deadline)) <= 0:
                     return b""
-                self._io.monitor.wait(timeout=wait)
+                else:
+                    self._io.monitor.wait(timeout=wait)
 
-    async def read_async(
-        self, *, rx: bytes | re.Pattern[bytes] = re.compile(b".+", re.DOTALL)
-    ) -> bytes:
+    async def read_async(self) -> bytes:
         """
         Similar to `read_sync` but returns a Promise instead of blocking the
         current thread for data. To apply a timeout, see `asyncio.timeout`.
         """
 
-        rx = re.compile(rx, re.DOTALL) if isinstance(rx, bytes) else rx
-        empty_ok = rx.match(b"") is not None
         while True:
             future = self._io.create_future_in_loop()  # BEFORE read_sync
-            out = self.read_sync(rx=rx, timeout=0)
-            if out or empty_ok:
+            out = self.read_sync(timeout=0)
+            if out:
                 return out
             await future
 
@@ -229,17 +216,12 @@ class SerialConnection(contextlib.AbstractContextManager):
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
-    def drain_sync(
-        self, *, max: int = 0, timeout: float | int | None = None
-    ) -> bool:
+    def drain_sync(self, *, timeout: float | int | None = None) -> bool:
         """
         Waits up to `timeout` seconds (forever for `None`) until
-        fewer than `max` bytes remain in the outgoing buffer.
+        the outgoing buffer is empty (all data transmitted).
 
-        By default (`max=0, timeout=None`) this waits until
-        all data is written to the wire.
-
-        Returns `True` if the drain condition was met, `False` on timeout.
+        Returns `True` if the drain completed, `False` on timeout.
 
         Raises:
         - `SerialIoException`: port I/O failed
@@ -251,15 +233,14 @@ class SerialConnection(contextlib.AbstractContextManager):
             with self._io.monitor:
                 if self._io.exception:
                     raise self._io.exception
-                elif len(self._io.outgoing) <= max:
+                elif not self._io.outgoing:
                     return True
+                elif (wait := from_deadline(deadline)) <= 0:
+                    return False
                 else:
-                    wait = from_deadline(deadline)
-                    if wait <= 0:
-                        return False
                     self._io.monitor.wait(timeout=wait)
 
-    async def drain_async(self, max: int = 0) -> bool:
+    async def drain_async(self) -> bool:
         """
         Similar to `drain_sync` but returns a Promise instead
         of blocking the current thread. To apply a timeout, see
@@ -268,7 +249,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         while True:
             future = self._io.create_future_in_loop()  # BEFORE drain_sync
-            if self.drain_sync(max=max, timeout=0):
+            if self.drain_sync(timeout=0):
                 return True
             await future
 
