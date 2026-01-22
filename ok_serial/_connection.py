@@ -219,7 +219,7 @@ class SerialConnection(contextlib.AbstractContextManager):
     def drain_sync(self, *, timeout: float | int | None = None) -> bool:
         """
         Waits up to `timeout` seconds (forever for `None`) until
-        the outgoing buffer is empty (all data transmitted).
+        all buffered data is transmitted.
 
         Returns `True` if the drain completed, `False` on timeout.
 

@@ -1,8 +1,7 @@
 # OK serial I/O for Python &nbsp; 🔌〡〇〡〇〡🐍
 
-`ok-serial` is a Python serial port library
-[(API reference)](https://egnor.github.io/ok-py-serial/)
-with improved port discovery and I/O semantics.
+`ok-serial` is a Python serial port library with improved port discovery
+and I/O semantics. [(API reference)](https://egnor.github.io/ok-py-serial/)
 
 Think twice before using this library! Consider something more established:
 
