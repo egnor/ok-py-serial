@@ -49,14 +49,14 @@ def main():
     tracker = ok_serial.SerialPortTracker(match)
     if match and args.wait:
         logging.info(
-            "🔎 Scanning %.2fs for serial ports: %r", args.wait, str(match)
+            "🔎 Finding serial ports (%.2fs timeout): %r", args.wait, str(match)
         )
     elif match:
-        logging.info("🔎 Scanning for serial ports: %r", str(match))
+        logging.info("🔎 Finding serial ports: %r", str(match))
     elif args.wait:
-        logging.info("🔎 Scanning %.2fs for serial ports", args.wait)
+        logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
     else:
-        logging.info("🔎 Scanning for serial ports...")
+        logging.info("🔎 Finding serial ports...")
 
     found = tracker.find_sync(timeout=args.wait)
     num = len(found)
@@ -88,23 +88,15 @@ def format_oneline(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
     mark = {a: True for a in match.matching_attrs(port)}
-    sub, ser, desc = (
+    vidpid, sub, ser, desc = (
         f"{port.attr[k]}✅" if mark.pop(k, False) else port.attr.get(k, "")
-        for k in "subsystem serial_number description".split()
+        for k in "vid_pid subsystem serial_number description".split()
     )
 
     mname = [k for k in list(mark) if port.attr[k] in port.name and mark.pop(k)]
-    words = [f"{port.name}✅" if mname else port.name, sub]
+    words = [f"{port.name}✅" if mname else port.name, sub, vidpid, ser]
 
-    try:
-        vid_int, pid_int = int(port.attr["vid"], 0), int(port.attr["pid"], 0)
-    except (KeyError, ValueError):
-        pass
-    else:
-        vp_hit = mark.pop("vid", False) + mark.pop("pid", False)
-        words.append(f"{vid_int:04x}:{pid_int:04x}{'✅' if vp_hit else ''}")
-
-    words.extend((ser, desc and f"{desc!r}"))
+    words.append(desc and f"{desc!r}")
     words.extend(f"{k}={v!r}✅" for k, v in ((k, port.attr[k]) for k in mark))
     return " ".join(w for w in words if w)
 
