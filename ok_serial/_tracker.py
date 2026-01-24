@@ -68,7 +68,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._conn_opts = copts
 
         self._lock = threading.Lock()
-        self._scan_results: list[SerialPort] = []
+        self._scan_keys: set[str] = {}
+        self._scan_matched: list[SerialPort] = []
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
 
@@ -113,17 +114,20 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             with self._lock:
                 if (wait := from_deadline(self._next_scan)) <= 0:
                     wait = self._tracker_opts.scan_interval
-                    self._next_scan = to_deadline(wait)
-
                     found = scan_serial_ports()
-                    matched = [p for p in found if self._match.matches(p)]
-                    self._scan_results = matched
+                    for p in found if self._next_scan else []:  # not first scan
+                        if p.key() not in self._scan_keys:
+                            p.attr["appeared"] = "new"
 
+                    matched = [p for p in found if self._match.matches(p)]
+                    self._next_scan = to_deadline(wait)
+                    self._scan_keys = set(p.key() for p in found)
+                    self._scan_matched = matched
                     nf, nm = len(found), len(matched)
                     log.debug("%d/%d ports match %r", nm, nf, str(self._match))
 
-                if self._scan_results:
-                    return self._scan_results
+                if self._scan_matched:
+                    return self._scan_matched
 
             timeout_wait = from_deadline(deadline)
             if timeout_wait < wait:
@@ -194,7 +198,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         return self._conn
                     except SerialOpenException as exc:
                         log.warning("Can't open %s (%s)", port, exc)
-                        self._scan_results = []  # force re-scan on error
+                        self._scan_matched = []  # force re-scan on error
 
             if not (ports := self.find_sync(timeout=from_deadline(deadline))):
                 return None

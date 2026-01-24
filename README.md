@@ -17,6 +17,8 @@ Think twice before using this library! Consider something more established:
   \- pyserial-asyncio fork designed for faster writes
 - [aioserial](https://github.com/mrjohannchang/aioserial.py)
   \- alternative asyncio wrapper designed for ease of use
+- bonus recommendation: [tio](https://github.com/tio/tio)
+  \- not a library, not Python, but a great serial terminal utility
 
 ## Purpose
 

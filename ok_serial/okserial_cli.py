@@ -3,6 +3,7 @@
 """CLI tool to scan serial ports and/or communicate with them"""
 
 import argparse
+import datetime
 import logging
 import ok_logging_setup
 import ok_serial
@@ -105,10 +106,32 @@ def format_verbose(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
     hits = match.matching_attrs(port)
-    return f"Serial port: {port.name}" + "".join(
+    age = format_age(port)
+    return f"Serial port: {port.name}{age and f' ({age})'}" + "".join(
         f"\n✅ {k}={v!r}" if k in hits else f"\n   {k}={v!r}"
         for k, v in port.attr.items()
     )
+
+
+def format_age(port: ok_serial.SerialPort):
+    try:
+        dt = datetime.datetime.fromisoformat(port.attr.get("time", ""))
+    except ValueError:
+        return ""
+    return format_timedelta(datetime.datetime.now() - dt)
+
+
+def format_timedelta(td: datetime.timedelta):
+    if td.days < 0:
+        return f"-({format_timedelta(-td)})"
+    elif td.days > 0:
+        return f"{td.days}d {td.seconds // 3600}h {(td.seconds % 3600) // 60}m"
+    elif td.seconds >= 3600:
+        return f"{td.seconds // 3600}h {(td.seconds % 3600) // 60}m"
+    elif td.seconds >= 60:
+        return f"{td.seconds // 60}m {td.seconds % 60}s"
+    else:
+        return f"{td.seconds + td.microseconds * 1e-6:.2f}s"
 
 
 if __name__ == "__main__":

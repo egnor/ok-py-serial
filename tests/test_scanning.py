@@ -14,7 +14,7 @@ def test_scan_ports(mocker):
 
     bare_port = list_ports_common.ListPortInfo("/dev/zz")
 
-    full_port = list_ports_common.ListPortInfo("/dev/full")
+    full_port = list_ports_common.ListPortInfo("/dev/zzfull")
     full_port.description = "Description"
     full_port.hwid = "HwId"
     full_port.vid = 111
@@ -28,11 +28,12 @@ def test_scan_ports(mocker):
     list_ports.comports.return_value = [bare_port, full_port]
 
     assert ok_serial.scan_serial_ports() == [
+        SerialPort(name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
         SerialPort(
-            name="/dev/full",
+            name="/dev/zzfull",
             attr={
-                "device": "/dev/full",
-                "name": "full",
+                "device": "/dev/zzfull",
+                "name": "zzfull",
                 "description": "Description",
                 "hwid": "HwId",
                 "vid": "111",
@@ -45,7 +46,6 @@ def test_scan_ports(mocker):
                 "location": "Location",
             },
         ),
-        SerialPort(name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
     ]
 
 
