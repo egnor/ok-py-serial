@@ -16,20 +16,20 @@ def main():
     parser = argparse.ArgumentParser(description="Fuss with serial ports.")
     parser.add_argument("match", nargs="*", help="Properties to search for")
     parser.add_argument(
-        "--list",
-        "-l",
+        "--one",
+        "-1",
+        action="store_true",
+        help="Fail unless exactly one port matches (implies -d unless -v)",
+    )
+    parser.add_argument(
+        "--print-name",
+        "-n",
         action="store_true",
         help="Print a simple list of device names",
     )
     parser.add_argument(
-        "--one",
-        "-1",
-        action="store_true",
-        help="Fail unless exactly one port matches (implies -l unless -v)",
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
+        "--print-detail",
+        "-d",
         action="store_true",
         help="Print detailed properties of each port",
     )
@@ -43,7 +43,7 @@ def main():
 
     args = parser.parse_args()
     ok_logging_setup.install(
-        {"OK_LOGGING_LEVEL": "warning" if args.list else "info"}
+        {"OK_LOGGING_LEVEL": "warning" if args.print_name else "info"}
     )
 
     match = ok_serial.SerialPortMatcher(" ".join(args.match))
@@ -67,8 +67,8 @@ def main():
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
-    if args.one and not args.verbose:
-        args.list = True
+    if args.one and not args.print_detail:
+        args.print_name = True
     if args.one and num != 1:
         ok_logging_setup.exit(
             f"{num} serial ports found, only --one allowed:"
@@ -77,9 +77,9 @@ def main():
 
     logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
     for port in found:
-        if args.verbose:
-            print(format_verbose(port, match), end="\n\n")
-        elif args.list:
+        if args.print_detail:
+            print(format_detail(port, match), end="\n\n")
+        elif args.print_name:
             print(port.name)
         else:
             print(format_oneline(port, match))
@@ -88,7 +88,7 @@ def main():
 def format_oneline(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    mark = {a: True for a in match.matching_attrs(port)}
+    mark = {a: True for a in match.hits(port)}
     vidpid, sub, ser, desc = (
         f"{port.attr[k]}✅" if mark.pop(k, False) else port.attr.get(k, "")
         for k in "vid_pid subsystem serial_number description".split()
@@ -102,10 +102,10 @@ def format_oneline(
     return " ".join(w for w in words if w)
 
 
-def format_verbose(
+def format_detail(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    hits = match.matching_attrs(port)
+    hits = match.hits(port)
     age = format_age(port)
     return f"Serial port: {port.name}{age and f' ({age})'}" + "".join(
         f"\n✅ {k}={v!r}" if k in hits else f"\n   {k}={v!r}"
@@ -121,17 +121,16 @@ def format_age(port: ok_serial.SerialPort):
     return format_timedelta(datetime.datetime.now() - dt)
 
 
-def format_timedelta(td: datetime.timedelta):
-    if td.days < 0:
-        return f"-({format_timedelta(-td)})"
-    elif td.days > 0:
-        return f"{td.days}d {td.seconds // 3600}h {(td.seconds % 3600) // 60}m"
-    elif td.seconds >= 3600:
-        return f"{td.seconds // 3600}h {(td.seconds % 3600) // 60}m"
-    elif td.seconds >= 60:
-        return f"{td.seconds // 60}m {td.seconds % 60}s"
+def format_timedelta(d: datetime.timedelta):
+    if d.days < 0:
+        return f"-({format_timedelta(-d)})"
+    h, m, s = d.seconds // 3600, (d.seconds % 3600) // 60, d.seconds % 60
+    if d.days:
+        return f"{d.days}d {h:02}:{m:02}:{s:02}s"
+    elif m:
+        return f"{h}:{m:02}:{s:02}s"
     else:
-        return f"{td.seconds + td.microseconds * 1e-6:.2f}s"
+        return f"{d.seconds + d.microseconds * 1e-6:.2f}s"
 
 
 if __name__ == "__main__":

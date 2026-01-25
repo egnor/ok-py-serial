@@ -68,7 +68,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._conn_opts = copts
 
         self._lock = threading.Lock()
-        self._scan_keys: set[str] = {}
+        self._scan_keys: set[str] = set()
         self._scan_matched: list[SerialPort] = []
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
@@ -119,7 +119,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         if p.key() not in self._scan_keys:
                             p.attr["appeared"] = "new"
 
-                    matched = [p for p in found if self._match.matches(p)]
+                    matched = self._match.filter(found)
                     self._next_scan = to_deadline(wait)
                     self._scan_keys = set(p.key() for p in found)
                     self._scan_matched = matched

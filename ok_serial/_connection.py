@@ -94,7 +94,7 @@ class SerialConnection(contextlib.AbstractContextManager):
                 match = SerialPortMatcher(match)
             if not (found := scan_serial_ports()):
                 raise _exceptions.SerialOpenException("No ports found")
-            if not (matched := [p for p in found if match.matches(p)]):
+            if not (matched := match.filter(found)):
                 msg = f"No ports match {match!r}"
                 raise _exceptions.SerialOpenException(msg)
             if len(matched) > 1:

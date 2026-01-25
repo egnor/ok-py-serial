@@ -55,17 +55,36 @@ def scan_serial_ports() -> list[SerialPort]:
         log.debug("Read $OK_SERIAL_SCAN_OVERRIDE %s", ov_path)
     else:
         try:
-            ports = list_ports.comports()
+            pyserial_ports = list_ports.comports()
         except OSError as ex:
             raise SerialScanException("Can't scan serial") from ex
-        out = [_port_from_pyserial(p) for p in ports]
+        out = []
+        for pyserial_port in pyserial_ports:
+            if port := _port_from_pyserial(pyserial_port):
+                out.append(port)
 
     out.sort(key=natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P))
     log.debug("Found %d ports", len(out))
     return out
 
 
-def _port_from_pyserial(p: list_ports_common.ListPortInfo) -> SerialPort:
+def _port_from_pyserial(p: list_ports_common.ListPortInfo) -> SerialPort | None:
+    # filter out bogus serial8250 entries on Linux (ttyS0~ttyS31)
+    # https://stackoverflow.com/questions/2530096/how-to-find-all-serial-devices-ttys-ttyusb-on-linux-without-opening-them/12301542#12301542
+    # https://askubuntu.com/questions/1520139/pyserial-lists-incorrect-serialports-on-ubuntu-24-04
+    # https://forum.lazarus.freepascal.org/index.php/topic,69437.0.html
+    if "serial8250" in getattr(p, "device_path", ""):
+        fd = -1
+        try:
+            fd = os.open(p.device, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+            if not os.isatty(fd):
+                return None
+        except OSError:
+            return None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
     _NA = (None, "", "n/a")
     attr = {k.lower(): str(v) for k, v in vars(p).items() if v not in _NA}
 
@@ -78,7 +97,7 @@ def _port_from_pyserial(p: list_ports_common.ListPortInfo) -> SerialPort:
         pass
     else:
         dt = datetime.datetime.fromtimestamp(st.st_mtime_ns * 1e-9)
-        attr["time"] = dt.isoformat()
+        attr["time"] = dt.isoformat(timespec="milliseconds")
 
     return SerialPort(name=p.device, attr=attr)
 
