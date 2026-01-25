@@ -16,10 +16,16 @@ def main():
     parser = argparse.ArgumentParser(description="Fuss with serial ports.")
     parser.add_argument("match", nargs="*", help="Properties to search for")
     parser.add_argument(
+        "--list",
+        "-l",
+        action="store_true",
+        help="Print a one-line description of each port",
+    )
+    parser.add_argument(
         "--name",
         "-n",
         action="store_true",
-        help="Print a simple list of device names",
+        help="Print a simple list of port device names",
     )
     parser.add_argument(
         "--one",
@@ -46,14 +52,20 @@ def main():
         {"OK_LOGGING_LEVEL": "warning" if args.name else "info"}
     )
 
-    match = ok_serial.SerialPortMatcher(" ".join(args.match))
-    tracker = ok_serial.SerialPortTracker(match)
-    if match and args.wait:
+    if args.one and not (args.list or args.verbose):
+        args.name = True
+    if not (args.list or args.name or args.verbose):
+        args.list = True
+
+    match_args = " ".join(args.match)
+    matcher = ok_serial.SerialPortMatcher(match_args)
+    tracker = ok_serial.SerialPortTracker(matcher)
+    if match_args and args.wait:
         logging.info(
-            "🔎 Finding serial ports (%.2fs timeout): %r", args.wait, str(match)
+            "🔎 Finding serial ports (%.2fs timeout): %r", args.wait, match_args
         )
-    elif match:
-        logging.info("🔎 Finding serial ports: %r", str(match))
+    elif match_args:
+        logging.info("🔎 Finding serial ports: %r", match_args)
     elif args.wait:
         logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
     else:
@@ -62,33 +74,34 @@ def main():
     found = tracker.find_sync(timeout=args.wait)
     num = len(found)
     if num == 0:
-        if str(match):
-            ok_logging_setup.exit(f"🚫 No serial ports match {str(match)!r}")
+        if match_args:
+            ok_logging_setup.exit(f"🚫 No serial ports match {match_args!r}")
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
-    if args.one and not args.verbose:
-        args.name = True
     if args.one and num != 1:
         ok_logging_setup.exit(
             f"{num} serial ports found, only --one allowed:"
-            + "".join(f"\n  {format_oneline(p, match)}" for p in found)
+            + "".join(f"\n  {format_oneline(p, matcher)}" for p in found)
         )
 
     logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
-    for port in found:
-        if args.verbose:
-            print(format_detail(port, match), end="\n\n")
-        elif args.name:
+
+    if args.list:
+        for port in found:
+            print(format_oneline(port, matcher))
+    elif args.name:
+        for port in found:
             print(port.name)
-        else:
-            print(format_oneline(port, match))
+    if args.verbose:
+        for port in found:
+            print(format_detail(port, matcher), end="\n\n")
 
 
 def format_oneline(
-    port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
+    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
 ):
-    hit = match.hits(port)
+    hit = matcher.hits(port)
     hit -= {"name"} if "device" in hit else set()
 
     out = ""
@@ -105,9 +118,9 @@ def format_oneline(
 
 
 def format_detail(
-    port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
+    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
 ):
-    hit = match.hits(port)
+    hit = matcher.hits(port)
     return f"Serial port: {port.name} {format_age(port)}".strip() + "".join(
         f"\n✅ {k}={v!r}" if k in hit else f"\n   {k}={v!r}"
         for k, v in port.attr.items()
