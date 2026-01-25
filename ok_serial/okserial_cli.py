@@ -16,20 +16,20 @@ def main():
     parser = argparse.ArgumentParser(description="Fuss with serial ports.")
     parser.add_argument("match", nargs="*", help="Properties to search for")
     parser.add_argument(
-        "--one",
-        "-1",
-        action="store_true",
-        help="Fail unless exactly one port matches (implies -d unless -v)",
-    )
-    parser.add_argument(
-        "--print-name",
+        "--name",
         "-n",
         action="store_true",
         help="Print a simple list of device names",
     )
     parser.add_argument(
-        "--print-detail",
-        "-d",
+        "--one",
+        "-1",
+        action="store_true",
+        help="Fail unless exactly one port matches (implies -n unless -v)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
         action="store_true",
         help="Print detailed properties of each port",
     )
@@ -43,7 +43,7 @@ def main():
 
     args = parser.parse_args()
     ok_logging_setup.install(
-        {"OK_LOGGING_LEVEL": "warning" if args.print_name else "info"}
+        {"OK_LOGGING_LEVEL": "warning" if args.name else "info"}
     )
 
     match = ok_serial.SerialPortMatcher(" ".join(args.match))
@@ -67,8 +67,8 @@ def main():
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
-    if args.one and not args.print_detail:
-        args.print_name = True
+    if args.one and not args.verbose:
+        args.name = True
     if args.one and num != 1:
         ok_logging_setup.exit(
             f"{num} serial ports found, only --one allowed:"
@@ -77,9 +77,9 @@ def main():
 
     logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
     for port in found:
-        if args.print_detail:
+        if args.verbose:
             print(format_detail(port, match), end="\n\n")
-        elif args.print_name:
+        elif args.name:
             print(port.name)
         else:
             print(format_oneline(port, match))
@@ -88,18 +88,20 @@ def main():
 def format_oneline(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    mark = {a: True for a in match.hits(port)}
-    vidpid, sub, ser, desc = (
-        f"{port.attr[k]}✅" if mark.pop(k, False) else port.attr.get(k, "")
-        for k in "vid_pid subsystem serial_number description".split()
-    )
+    hits = match.hits(port)
+    hits -= {"name"} if "device" in hits else set()
 
-    mname = [k for k in list(mark) if port.attr[k] in port.name and mark.pop(k)]
-    words = [f"{port.name}✅" if mname else port.name, sub, vidpid, ser]
+    words = []
+    for key in "device vid_pid subsystem serial_number description".split():
+        if value := port.attr.get(key):
+            value = repr(value) if " " in value else value
+            words.append(value + ("✅" if key in hits else ""))
+            hits.discard(key)
 
-    words.append(desc and f"{desc!r}")
-    words.extend(f"{k}={v!r}✅" for k, v in ((k, port.attr[k]) for k in mark))
-    return " ".join(w for w in words if w)
+    for key, value in port.attr.items():
+        words.extend([value + "✅"] if value and key in hits else [])
+
+    return " ".join(words)
 
 
 def format_detail(
