@@ -10,22 +10,30 @@ log = logging.getLogger("ok_serial.matching")
 
 
 @dataclasses.dataclass(frozen=True)
-class _MatchRule:
+class _Rule:
     prefix: str
     rx: re.Pattern
-    inv: bool
 
     def __str__(self) -> str:
         quoted = self.rx.pattern.replace("/", r"\/")
-        return f"{self.prefix}{'!' if self.inv else ''}~/{quoted}/"
+        return f"{self.prefix}~/{quoted}/"
 
     def matches(self, k: str, v: str) -> bool:
-        relevant = not self.inv and k.startswith(self.prefix)
-        return relevant and bool(self.rx.search(v))
+        return k.startswith(self.prefix) and bool(self.rx.search(v))
 
-    def forbids(self, k: str, v: str) -> bool:
-        relevant = self.inv and k.startswith(self.prefix)
-        return relevant and bool(self.rx.search(v))
+
+@dataclasses.dataclass(frozen=True)
+class _Rules:
+    pos: list[_Rule]
+    neg: list[_Rule]
+
+    def __str__(self) -> str:
+        return "\n".join(
+            [
+                *[str(p) for p in self.pos],
+                *[str(n).replace("~", "!~", 1) for n in self.neg],
+            ]
+        )
 
 
 _TERM_RE = re.compile(
@@ -71,14 +79,14 @@ class SerialPortMatcher:
         if not match:
             log.debug("Parsed '' (any port)")
         elif log.isEnabledFor(logging.DEBUG):
-            rules = "".join(f"\n  {r}" for r in self._rules)
+            rules = "".join(f"\n  {r}" for r in str(self._rules).splitlines())
             log.debug("Parsed %s:%s", repr(match), rules)
 
     def __repr__(self) -> str:
         return f"SerialPortMatcher({self._input!r})"
 
     def __str__(self) -> str:
-        return self._input
+        return str(self._rules)
 
     def __bool__(self) -> bool:
         return bool(self._rules)
@@ -90,9 +98,12 @@ class SerialPortMatcher:
             p
             for p in ports
             if all(
-                any(rule.matches(k, v) for k, v in p.attr.items())
-                and not any(rule.forbids(k, v) for k, v in p.attr.items())
-                for rule in self._rules
+                any(pos.matches(k, v) for k, v in p.attr.items())
+                for pos in self._rules.pos
+            )
+            and not any(
+                any(neg.matches(k, v) for k, v in p.attr.items())
+                for neg in self._rules.neg
             )
         ]
 
@@ -105,12 +116,12 @@ class SerialPortMatcher:
         return set(
             k
             for k, v in port.attr.items()
-            if any(rule.matches(k, v) for rule in self._rules)
+            if any(pos.matches(k, v) for pos in self._rules.pos)
         )
 
 
-def _rules_from_str(match: str) -> list[_MatchRule]:
-    out: list[_MatchRule] = []
+def _rules_from_str(match: str) -> _Rules:
+    out = _Rules(pos=[], neg=[])
     next_pos = 0
     while next_pos < len(match):
         tm = _TERM_RE.match(match, pos=next_pos)
@@ -122,26 +133,26 @@ def _rules_from_str(match: str) -> list[_MatchRule]:
 
         next_pos, groups = tm.end(), tm.groups(default="")
         rx_att, rx_ex, rx_text, att, eq_ex, bare_ex, qstr, num, naked = groups
-        inv = bool(rx_ex or eq_ex or bare_ex)
+        out_list = out.neg if bool(rx_ex or eq_ex or bare_ex) else out.pos
         if rx_text:
             try:
                 rx = re.compile(rx_text)
-                out.append(_MatchRule(prefix=rx_att, rx=rx, inv=inv))
+                out_list.append(_Rule(prefix=rx_att, rx=rx))
             except re.error as ex:
                 msg = f"Bad port matcher regex: /{rx_text}/"
                 raise SerialMatcherInvalid(msg) from ex
         elif qstr:
             rx = _str_rx(qstr, glob=True, full=bool(att))
-            out.append(_MatchRule(prefix=att, rx=rx, inv=inv))
+            out_list.append(_Rule(prefix=att, rx=rx))
         elif num:
             value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
             rx_text = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
             pf, sf = ("^", "$") if att else (r"(?<![A-Z0-9])", r"(?![A-Z0-9])")
             rx = re.compile(pf + rx_text + sf, re.I)
-            out.append(_MatchRule(prefix=att, rx=rx, inv=inv))
+            out_list.append(_Rule(prefix=att, rx=rx))
         elif naked:
             rx = _str_rx(naked, glob=True, full=bool(att))
-            out.append(_MatchRule(prefix=att, rx=rx, inv=inv))
+            out_list.append(_Rule(prefix=att, rx=rx))
         else:
             assert False, f"bad term match: {tm[0]!r}"
 

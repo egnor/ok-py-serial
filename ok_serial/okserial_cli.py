@@ -88,29 +88,28 @@ def main():
 def format_oneline(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    hits = match.hits(port)
-    hits -= {"name"} if "device" in hits else set()
+    hit = match.hits(port)
+    hit -= {"name"} if "device" in hit else set()
 
-    words = []
-    for key in "device vid_pid subsystem serial_number description".split():
-        if value := port.attr.get(key):
-            value = repr(value) if " " in value else value
-            words.append(value + ("✅" if key in hits else ""))
-            hits.discard(key)
+    out = ""
+    port.attr["age"] = format_age(port)
+    for k in "device age vid_pid subsystem serial_number description".split():
+        if v := port.attr.get(k, ""):
+            out += (repr(v) if " " in v else v) + ("✅ " if k in hit else " ")
+            hit.discard(k)
 
-    for key, value in port.attr.items():
-        words.extend([value + "✅"] if value and key in hits else [])
+    for k, v in port.attr.items():
+        out += f"{k}={v!r}✅ " if k in hit else ""
 
-    return " ".join(words)
+    return out.strip()
 
 
 def format_detail(
     port: ok_serial.SerialPort, match: ok_serial.SerialPortMatcher
 ):
-    hits = match.hits(port)
-    age = format_age(port)
-    return f"Serial port: {port.name}{age and f' ({age})'}" + "".join(
-        f"\n✅ {k}={v!r}" if k in hits else f"\n   {k}={v!r}"
+    hit = match.hits(port)
+    return f"Serial port: {port.name} {format_age(port)}".strip() + "".join(
+        f"\n✅ {k}={v!r}" if k in hit else f"\n   {k}={v!r}"
         for k, v in port.attr.items()
     )
 
@@ -125,14 +124,16 @@ def format_age(port: ok_serial.SerialPort):
 
 def format_timedelta(d: datetime.timedelta):
     if d.days < 0:
-        return f"-({format_timedelta(-d)})"
+        return f"-{format_timedelta(-d)}"
     h, m, s = d.seconds // 3600, (d.seconds % 3600) // 60, d.seconds % 60
     if d.days:
-        return f"{d.days}d {h:02}:{m:02}:{s:02}s"
+        return f"({d.days}d {h:02}:{m:02}:{s:02}s)"
+    elif h:
+        return f"({h}:{m:02}:{s:02}s)"
     elif m:
-        return f"{h}:{m:02}:{s:02}s"
+        return f"({m}:{s:02}s)"
     else:
-        return f"{d.seconds + d.microseconds * 1e-6:.2f}s"
+        return f"({d.seconds + d.microseconds * 1e-6:.2f}s)"
 
 
 if __name__ == "__main__":

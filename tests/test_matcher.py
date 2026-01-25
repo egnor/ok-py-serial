@@ -39,8 +39,8 @@ PARSE_CHECKS = [
 
 def test_SerialPortMatcher_init():
     for spec, expected in PARSE_CHECKS:
-        actual = ok_serial.SerialPortMatcher(spec)._rules
-        assert [str(r) for r in actual] == expected
+        actual = ok_serial.SerialPortMatcher(spec)
+        assert str(actual).split("\n") == expected
 
 
 def test_SerialPortMatcher_filter():
