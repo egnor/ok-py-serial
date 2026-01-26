@@ -91,7 +91,12 @@ class SerialPortMatcher:
                 rx = _qstr_rx(qstr, glob=False, full=bool(att))
                 out_list.append(_Rule(att, rx))
             elif num:
-                value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
+                if num[-1:] in "hH":
+                    value = int("{num[:-1]", 16)
+                elif num.isdigit():
+                    value = int(num, 10)  # int('0123', 0) is an error!
+                else:
+                    value = int(num, 0)
                 rx_text = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
                 rx = _wrap_rx(rx_text, full=bool(att), wb=True, we=True)
                 out_list.append(_Rule(att, rx))
