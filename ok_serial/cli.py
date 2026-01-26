@@ -7,6 +7,7 @@ import datetime
 import logging
 import ok_logging_setup
 import ok_serial
+import ok_serial.terminal
 import re
 
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
@@ -14,93 +15,91 @@ ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fuss with serial ports.")
-    parser.add_argument("match", nargs="*", help="Properties to search for")
-    parser.add_argument(
-        "--list",
-        "-l",
-        action="store_true",
-        help="Print a one-line description of each port",
-    )
-    parser.add_argument(
-        "--name",
-        "-n",
-        action="store_true",
-        help="Print a simple list of port device names",
-    )
-    parser.add_argument(
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(title="actions", dest="command")
+    list_parser = subparsers.add_parser("list", help="List known serial ports")
+    list_parser.add_argument("port", nargs="*", help="port match expression")
+    list_parser.add_argument(
         "--one",
         "-1",
         action="store_true",
-        help="Fail unless exactly one port matches (implies -n unless -v)",
+        help="require exactly one port (implies -n unless -v)",
     )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Print detailed properties of each port",
+    list_parser.add_argument(
+        "--wait", "-w", default=0.0, help="seconds to scan", type=float
     )
-    parser.add_argument(
-        "--wait",
-        "-w",
-        default=0.0,
-        help="Wait this many seconds for a matching port",
-        type=float,
+    list_style_group = list_parser.add_mutually_exclusive_group()
+    list_style_group.add_argument(
+        "--name", "-n", action="store_true", help="print device file only"
+    )
+    list_style_group.add_argument(
+        "--verbose", "-v", action="store_true", help="print detailed properties"
+    )
+
+    term_parser = subparsers.add_parser("term", help="Terminal emulator")
+    term_parser.add_argument("port", nargs="+", help="port match expression")
+    term_parser.add_argument("baud", type=int, help="baud rate")
+    term_parser.add_argument(
+        "--wait", "-w", default=0.0, help="seconds to scan", type=float
     )
 
     args = parser.parse_args()
-    ok_logging_setup.install(
-        {"OK_LOGGING_LEVEL": "warning" if args.name else "info"}
-    )
-
-    if args.one and not (args.list or args.verbose):
+    if not args.command:
+        args = parser.parse_args(["list"])
+    if args.command == "list" and args.one and not args.verbose:
         args.name = True
-    if not (args.list or args.name or args.verbose):
-        args.list = True
 
-    matcher = ok_serial.SerialPortMatcher(" ".join(args.match))
-    tracker = ok_serial.SerialPortTracker(matcher)
-    if matcher and args.wait:
-        logging.info(
-            "🔎 Finding serial ports (%.2fs timeout): %r",
-            args.wait,
-            str(matcher),
-        )
-    elif matcher:
-        logging.info("🔎 Finding serial ports: %r", str(matcher))
-    elif args.wait:
-        logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
-    else:
-        logging.info("🔎 Finding serial ports...")
+    level = "warning" if args.command == "list" and args.name else "info"
+    ok_logging_setup.install({"OK_LOGGING_LEVEL": level})
 
-    found = tracker.find_sync(timeout=args.wait)
-    num = len(found)
-    if num == 0:
-        if matcher:
-            ok_logging_setup.exit(f"🚫 No serial ports match {str(matcher)!r}")
+    if args.command in ("list", "term"):
+        expr = " ".join(args.port)
+        tracker = ok_serial.SerialPortTracker(match=expr)
+        if expr and args.wait:
+            logging.info(
+                "🔎 Finding serial ports (%.2fs timeout): %r",
+                args.wait,
+                expr,
+            )
+        elif expr:
+            logging.info("🔎 Finding serial ports: %r", expr)
+        elif args.wait:
+            logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
         else:
-            ok_logging_setup.exit("❌ No serial ports found")
+            logging.info("🔎 Finding serial ports...")
 
-    if args.one and num != 1:
-        ok_logging_setup.exit(
-            f"{num} serial ports found, only --one allowed:"
-            + "".join(f"\n  {format_oneline(p, matcher)}" for p in found)
-        )
+        found = tracker.find_sync(timeout=args.wait)
+        num = len(found)
+        if num == 0:
+            if expr:
+                ok_logging_setup.exit(f"🚫 No serial ports match {expr!r}")
+            else:
+                ok_logging_setup.exit("❌ No serial ports found")
 
-    logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
+        logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
 
-    if args.list:
-        for port in found:
-            print(format_oneline(port, matcher))
-    elif args.name:
-        for port in found:
-            print(port.name)
-    if args.verbose:
-        for port in found:
-            print(format_detail(port, matcher), end="\n\n")
+    if args.command == "list":
+        matcher = tracker.matcher
+        if args.one and num != 1:
+            ok_logging_setup.exit(
+                f"{num} serial ports found, only --one allowed:"
+                + "".join(f"\n  {format_line(p, matcher)}" for p in found)
+            )
+        if args.name:
+            for port in found:
+                print(port.name)
+        elif args.verbose:
+            for port in found:
+                print(format_detail(port, matcher), end="\n\n")
+        else:
+            for port in found:
+                print(format_line(port, matcher))
+
+    if args.command == "term":
+        ok_serial.terminal.main(tracker=tracker, baud=args.baud, wait=args.wait)
 
 
-def format_oneline(
+def format_line(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
 ):
     main_keys = "device tid subsystem vid_pid description serial_number".split()

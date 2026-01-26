@@ -218,3 +218,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             wait = from_deadline(next_scan)
             log.debug("Next scan in %.2fs", wait)
             await asyncio.sleep(wait)
+
+    @property
+    def matcher(self) -> SerialPortMatcher:
+        """The `SerialPortMatcher` used by this tracker."""
+        return self._match
