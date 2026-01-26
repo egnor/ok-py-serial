@@ -106,12 +106,16 @@ def format_oneline(
     hit -= {"name"} if "device" in hit else set()
 
     out = ""
-    for k in "device vid_pid subsystem serial_number description".split():
+    keys = "device tid age subsystem vid_pid description serial_number"
+    for k in keys.split():
+        if k == "age" and (age := format_age(port)):
+            out += age + " "
         if v := port.attr.get(k, ""):
-            out += (repr(v) if " " in v else v) + ("✅ " if k in hit else " ")
+            v = repr(v) if " " in v else v
+            v = f"[{v}]" if k == "tid" else v
+            v += "✅ " if k in hit else " "
+            out += v
             hit.discard(k)
-        if k == "device":
-            out += format_age(port) + " "
 
     for k, v in port.attr.items():
         out += f"{k}={v!r}✅ " if k in hit else ""
