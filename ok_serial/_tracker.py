@@ -73,7 +73,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
 
-        log.debug("Tracking: %r%s", str(match), "" if match else " (any port)")
+        log.debug("Tracking: %s", repr(str(match)) if match else "(any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()

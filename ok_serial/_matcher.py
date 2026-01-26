@@ -10,30 +10,23 @@ log = logging.getLogger("ok_serial.matching")
 
 
 @dataclasses.dataclass(frozen=True)
-class _Rule:
-    prefix: str
-    rx: re.Pattern
-
-    def __str__(self) -> str:
-        quoted = self.rx.pattern.replace("/", r"\/")
-        return f"{self.prefix}~/{quoted}/"
-
-    def matches(self, k: str, v: str) -> bool:
-        return k.startswith(self.prefix) and bool(self.rx.search(v))
-
-
-@dataclasses.dataclass(frozen=True)
 class _Rules:
-    pos: list[_Rule]
-    neg: list[_Rule]
+    pos: list[tuple[str, re.Pattern]]
+    neg: list[tuple[str, re.Pattern]]
+    use_latest: bool = False
 
     def __str__(self) -> str:
         return "\n".join(
-            [
-                *[str(p) for p in self.pos],
-                *[str(n).replace("~", "!~", 1) for n in self.neg],
-            ]
+            (["latest"] if self.use_latest else [])
+            + [ap + "~/" + rx.pattern + "/" for ap, rx in self.pos]
+            + [ap + "!~/" + rx.pattern + "/" for ap, rx in self.neg]
         )
+
+    def pos_match(self, k: str, v: str) -> bool:
+        return any(k.startswith(ap) and rx.search(v) for ap, rx in self.pos)
+
+    def neg_match(self, k: str, v: str) -> bool:
+        return any(k.startswith(ap) and rx.search(v) for ap, rx in self.neg)
 
 
 _TERM_RE = re.compile(
@@ -53,6 +46,9 @@ _TERM_RE = re.compile(
     r"))(?!\S)\s*",
     re.I,
 )
+
+# naked term to indicate port uptime preference
+_LATEST_RE = re.compile("^latest|newest$", re.I)
 
 _ESCAPE_RE = re.compile(
     # unicode-escape OR
@@ -86,26 +82,28 @@ class SerialPortMatcher:
         return f"SerialPortMatcher({self._input!r})"
 
     def __str__(self) -> str:
-        return str(self._rules)
+        return self._input
 
     def __bool__(self) -> bool:
-        return bool(self._rules)
+        return bool(
+            self._rules.use_latest or self._rules.pos or self._rules.neg
+        )
 
     def filter(self, ports: list[SerialPort]) -> list[SerialPort]:
         """Filters a list of ports according to match criteria."""
 
-        return [
-            p
-            for p in ports
-            if all(
-                any(pos.matches(k, v) for k, v in p.attr.items())
-                for pos in self._rules.pos
-            )
-            and not any(
-                any(neg.matches(k, v) for k, v in p.attr.items())
-                for neg in self._rules.neg
-            )
-        ]
+        matches = []
+        for p in ports:
+            if not any(self._rules.neg_match(k, v) for k, v in p.attr.items()):
+                if any(self._rules.pos_match(k, v) for k, v in p.attr.items()):
+                    matches.append(p)
+
+        if self._rules.use_latest:
+            matches = [m for m in matches if "time" in p.attr]
+            matches.sort(reverse=True, key=lambda m: m.attr["time"])
+            return matches[:1]
+
+        return matches
 
     def hits(self, port: SerialPort) -> set[str]:
         """
@@ -113,11 +111,8 @@ class SerialPortMatcher:
         typically for display highlighting purposes.
         """
 
-        return set(
-            k
-            for k, v in port.attr.items()
-            if any(pos.matches(k, v) for pos in self._rules.pos)
-        )
+        attr = port.attr
+        return set(k for k, v in attr.items() if self._rules.pos_match(k, v))
 
 
 def _rules_from_str(match: str) -> _Rules:
@@ -136,23 +131,21 @@ def _rules_from_str(match: str) -> _Rules:
         out_list = out.neg if bool(rx_ex or eq_ex or bare_ex) else out.pos
         if rx_text:
             try:
-                rx = re.compile(rx_text)
-                out_list.append(_Rule(prefix=rx_att, rx=rx))
+                out_list.append((rx_att, re.compile(rx_text)))
             except re.error as ex:
                 msg = f"Bad port matcher regex: /{rx_text}/"
                 raise SerialMatcherInvalid(msg) from ex
         elif qstr:
-            rx = _str_rx(qstr, glob=True, full=bool(att))
-            out_list.append(_Rule(prefix=att, rx=rx))
+            out_list.append((att, _str_rx(qstr, glob=True, full=bool(att))))
         elif num:
             value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
             rx_text = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
             pf, sf = ("^", "$") if att else (r"(?<![A-Z0-9])", r"(?![A-Z0-9])")
-            rx = re.compile(pf + rx_text + sf, re.I)
-            out_list.append(_Rule(prefix=att, rx=rx))
+            out_list.append((att, re.compile(pf + rx_text + sf, re.I)))
+        elif _LATEST_RE.match(naked) and not att and out_list is out.pos:
+            out = dataclasses.replace(out, use_latest=True)
         elif naked:
-            rx = _str_rx(naked, glob=True, full=bool(att))
-            out_list.append(_Rule(prefix=att, rx=rx))
+            out_list.append((att, _str_rx(naked, glob=True, full=bool(att))))
         else:
             assert False, f"bad term match: {tm[0]!r}"
 

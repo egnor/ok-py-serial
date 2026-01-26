@@ -57,15 +57,16 @@ def main():
     if not (args.list or args.name or args.verbose):
         args.list = True
 
-    match_args = " ".join(args.match)
-    matcher = ok_serial.SerialPortMatcher(match_args)
+    matcher = ok_serial.SerialPortMatcher(" ".join(args.match))
     tracker = ok_serial.SerialPortTracker(matcher)
-    if match_args and args.wait:
+    if matcher and args.wait:
         logging.info(
-            "🔎 Finding serial ports (%.2fs timeout): %r", args.wait, match_args
+            "🔎 Finding serial ports (%.2fs timeout): %r",
+            args.wait,
+            str(matcher),
         )
-    elif match_args:
-        logging.info("🔎 Finding serial ports: %r", match_args)
+    elif matcher:
+        logging.info("🔎 Finding serial ports: %r", str(matcher))
     elif args.wait:
         logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
     else:
@@ -74,8 +75,8 @@ def main():
     found = tracker.find_sync(timeout=args.wait)
     num = len(found)
     if num == 0:
-        if match_args:
-            ok_logging_setup.exit(f"🚫 No serial ports match {match_args!r}")
+        if matcher:
+            ok_logging_setup.exit(f"🚫 No serial ports match {str(matcher)!r}")
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
@@ -105,11 +106,12 @@ def format_oneline(
     hit -= {"name"} if "device" in hit else set()
 
     out = ""
-    port.attr["age"] = format_age(port)
-    for k in "device age vid_pid subsystem serial_number description".split():
+    for k in "device vid_pid subsystem serial_number description".split():
         if v := port.attr.get(k, ""):
             out += (repr(v) if " " in v else v) + ("✅ " if k in hit else " ")
             hit.discard(k)
+        if k == "device":
+            out += format_age(port) + " "
 
     for k, v in port.attr.items():
         out += f"{k}={v!r}✅ " if k in hit else ""

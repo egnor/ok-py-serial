@@ -40,7 +40,7 @@ PARSE_CHECKS = [
 def test_SerialPortMatcher_init():
     for spec, expected in PARSE_CHECKS:
         actual = ok_serial.SerialPortMatcher(spec)
-        assert str(actual).split("\n") == expected
+        assert str(actual._rules).split("\n") == expected
 
 
 def test_SerialPortMatcher_filter():
@@ -53,10 +53,8 @@ def test_SerialPortMatcher_filter():
         SerialPort(name="z6", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
     ]
 
-    matcher = ok_serial.SerialPortMatcher("*mid* a* *b")
+    matcher = ok_serial.SerialPortMatcher("*mid* a* !*b")
     output = matcher.filter(input)
     assert output == [
-        SerialPort(name="z1", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
-        SerialPort(name="z2", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
-        SerialPort(name="z3", attr={"a": "Amid", "b": "xxB"}),
+        SerialPort(name="z5", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
     ]
