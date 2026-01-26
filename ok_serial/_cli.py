@@ -124,10 +124,10 @@ def format_detail(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
 ) -> str:
     label = f"Port: {format_value(port, matcher, 'device')}"
-    if age := format_age(port):
-        label += f" {age}"
     if tid := format_value(port, matcher, "tid"):
         label += f" {tid}"
+    if age := format_age(port):
+        label += f" {age}"
     return label + "".join(
         f"\n  {k}={format_value(port, matcher, k)}" for k in port.attr
     )
