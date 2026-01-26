@@ -117,7 +117,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     found = scan_serial_ports()
                     for p in found if self._next_scan else []:  # not first scan
                         if p.key() not in self._scan_keys:
-                            p.attr["appeared"] = "new"
+                            p.attr["tracking"] = "new"
 
                     matched = self._match.filter(found)
                     self._next_scan = to_deadline(wait)

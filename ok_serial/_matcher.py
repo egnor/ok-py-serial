@@ -10,23 +10,16 @@ log = logging.getLogger("ok_serial.matching")
 
 
 @dataclasses.dataclass(frozen=True)
-class _Rules:
-    pos: list[tuple[str, re.Pattern]]
-    neg: list[tuple[str, re.Pattern]]
-    use_latest: bool = False
+class _Rule:
+    prefix: str
+    rx: re.Pattern
 
     def __str__(self) -> str:
-        return "\n".join(
-            (["latest"] if self.use_latest else [])
-            + [ap + "~/" + rx.pattern + "/" for ap, rx in self.pos]
-            + [ap + "!~/" + rx.pattern + "/" for ap, rx in self.neg]
-        )
+        quoted = self.rx.pattern.replace("/", r"\/")
+        return f"{self.prefix}~/{quoted}/"
 
-    def pos_match(self, k: str, v: str) -> bool:
-        return any(k.startswith(ap) and rx.search(v) for ap, rx in self.pos)
-
-    def neg_match(self, k: str, v: str) -> bool:
-        return any(k.startswith(ap) and rx.search(v) for ap, rx in self.neg)
+    def match(self, k: str, v: str) -> bool:
+        return bool(k.startswith(self.prefix) and self.rx.search(v))
 
 
 _TERM_RE = re.compile(
@@ -48,7 +41,8 @@ _TERM_RE = re.compile(
 )
 
 # naked term to indicate port uptime preference
-_LATEST_RE = re.compile("^latest|newest$", re.I)
+_OLDEST_RE = re.compile("^earliest|oldest$", re.I)
+_NEWEST_RE = re.compile("^latest|newest$", re.I)
 
 _ESCAPE_RE = re.compile(
     # unicode-escape OR
@@ -70,12 +64,54 @@ class SerialPortMatcher:
         """
 
         self._input = match
-        self._rules = _rules_from_str(match)
+        self._pos: list[_Rule] = []
+        self._neg: list[_Rule] = []
+        self._oldest = False
+        self._newest = False
 
-        if not match:
-            log.debug("Parsed '' (any port)")
+        next_pos = 0
+        while next_pos < len(match):
+            tm = _TERM_RE.match(match, pos=next_pos)
+            if not (tm and tm[0]):
+                jmatch = json.dumps(match)  # use JSON for consistent quoting
+                jpre = json.dumps(match[:next_pos])
+                msg = f"Bad port expr:\n  {jmatch}\n -{'-' * (len(jpre) - 1)}^"
+                raise SerialMatcherInvalid(msg)
+
+            next_pos, groups = tm.end(), tm.groups(default="")
+            rx_att, rx_ex, rx_text, att, eq_ex, ex, qstr, num, naked = groups
+            out_list = self._neg if bool(rx_ex or eq_ex or ex) else self._pos
+            if rx_text:
+                try:
+                    out_list.append(_Rule(rx_att, re.compile(rx_text)))
+                except re.error as ex:
+                    msg = f"Bad port regex: /{rx_text}/"
+                    raise SerialMatcherInvalid(msg) from ex
+            elif qstr:
+                rx = _qstr_rx(qstr, glob=False, full=bool(att))
+                out_list.append(_Rule(att, rx))
+            elif num:
+                value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
+                rx_text = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
+                rx = _wrap_rx(rx_text, full=bool(att), wb=True, we=True)
+                out_list.append(_Rule(att, rx))
+            elif _OLDEST_RE.match(naked) and not att and out_list is self._pos:
+                self._oldest = True
+            elif _NEWEST_RE.match(naked) and not att and out_list is self._pos:
+                self._newest = True
+            elif naked:
+                rx = _qstr_rx(naked, glob=True, full=bool(att))
+                out_list.append(_Rule(att, rx))
+            else:
+                assert False, f"bad term match: {tm[0]!r}"
+
+        if self._oldest and self._newest:
+            msg = f"oldest & newest: {match!r}"
+            raise SerialMatcherInvalid(msg)
+        elif not self:
+            log.debug("Parsed %s (any port)", repr(match))
         elif log.isEnabledFor(logging.DEBUG):
-            rules = "".join(f"\n  {r}" for r in str(self._rules).splitlines())
+            rules = "".join(f"\n  {r}" for r in self.patterns())
             log.debug("Parsed %s:%s", repr(match), rules)
 
     def __repr__(self) -> str:
@@ -85,23 +121,31 @@ class SerialPortMatcher:
         return self._input
 
     def __bool__(self) -> bool:
-        return bool(
-            self._rules.use_latest or self._rules.pos or self._rules.neg
-        )
+        return bool(self._oldest or self._newest or self._pos or self._neg)
+
+    def patterns(self) -> list[str]:
+        return [
+            *(["oldest"] if self._oldest else []),
+            *(["newest"] if self._newest else []),
+            *[str(r).replace("~/", "!~/", 1) for r in self._neg],
+            *[str(r) for r in self._pos],
+        ]
 
     def filter(self, ports: list[SerialPort]) -> list[SerialPort]:
         """Filters a list of ports according to match criteria."""
 
         matches = []
         for p in ports:
-            if not any(self._rules.neg_match(k, v) for k, v in p.attr.items()):
-                if any(self._rules.pos_match(k, v) for k, v in p.attr.items()):
-                    matches.append(p)
+            attrs = list(p.attr.items())
+            pos = all(any(r.match(k, v) for k, v in attrs) for r in self._pos)
+            neg = any(r.match(k, v) for k, v in attrs for r in self._neg)
+            if pos and not neg:
+                matches.append(p)
 
-        if self._rules.use_latest:
-            matches = [m for m in matches if "time" in p.attr]
-            matches.sort(reverse=True, key=lambda m: m.attr["time"])
-            return matches[:1]
+        if self._oldest or self._newest:
+            timed = [m for m in matches if "time" in p.attr]
+            timed.sort(key=lambda m: m.attr["time"])
+            return timed[:1] if self._oldest else timed[-1:]
 
         return matches
 
@@ -111,50 +155,15 @@ class SerialPortMatcher:
         typically for display highlighting purposes.
         """
 
-        attr = port.attr
-        return set(k for k, v in attr.items() if self._rules.pos_match(k, v))
+        return set(
+            k
+            for k, v in port.attr.items()
+            if any(r.match(k, v) for r in self._pos)
+        )
 
 
-def _rules_from_str(match: str) -> _Rules:
-    out = _Rules(pos=[], neg=[])
-    next_pos = 0
-    while next_pos < len(match):
-        tm = _TERM_RE.match(match, pos=next_pos)
-        if not (tm and tm[0]):
-            jmatch = json.dumps(match)  # use JSON for consistent quoting
-            jpre = json.dumps(match[:next_pos])
-            msg = f"Bad port matcher:\n  {jmatch}\n -{'-' * (len(jpre) - 1)}^"
-            raise SerialMatcherInvalid(msg)
-
-        next_pos, groups = tm.end(), tm.groups(default="")
-        rx_att, rx_ex, rx_text, att, eq_ex, bare_ex, qstr, num, naked = groups
-        out_list = out.neg if bool(rx_ex or eq_ex or bare_ex) else out.pos
-        if rx_text:
-            try:
-                out_list.append((rx_att, re.compile(rx_text)))
-            except re.error as ex:
-                msg = f"Bad port matcher regex: /{rx_text}/"
-                raise SerialMatcherInvalid(msg) from ex
-        elif qstr:
-            out_list.append((att, _str_rx(qstr, glob=True, full=bool(att))))
-        elif num:
-            value = int(f"0x{num[:-1]}" if num[-1:] in "hH" else num, 0)
-            rx_text = f"({num}|0*{value}|(0x)?0*{value:x}h?)"
-            pf, sf = ("^", "$") if att else (r"(?<![A-Z0-9])", r"(?![A-Z0-9])")
-            out_list.append((att, re.compile(pf + rx_text + sf, re.I)))
-        elif _LATEST_RE.match(naked) and not att and out_list is out.pos:
-            out = dataclasses.replace(out, use_latest=True)
-        elif naked:
-            out_list.append((att, _str_rx(naked, glob=True, full=bool(att))))
-        else:
-            assert False, f"bad term match: {tm[0]!r}"
-
-    return out
-
-
-def _str_rx(quoted: str, glob: bool, full: bool) -> re.Pattern:
-    rx = ""
-    next_pos = 0
+def _qstr_rx(quoted="", *, glob=False, full=False) -> re.Pattern:
+    rx, next_pos = "", 0
     while next_pos < len(quoted):
         em = _ESCAPE_RE.match(quoted, pos=next_pos)
         assert em and em[0], "bad escape match: {quoted!r}"
@@ -174,6 +183,10 @@ def _str_rx(quoted: str, glob: bool, full: bool) -> re.Pattern:
         elif literal:
             rx += re.escape(literal)
 
-    prefix = "^" if full else r"(?<![A-Z0-9])" if rx[:1].isalnum() else ""
-    suffix = "$" if full else r"(?![A-Z0-9])" if rx[-1:].isalnum() else ""
+    return _wrap_rx(rx, full=full, wb=rx[:1].isalnum(), we=rx[-1:].isalnum())
+
+
+def _wrap_rx(rx: str, *, full=False, wb=False, we=False):
+    prefix = "^" if full else r"(?<![A-Z0-9])" if wb else ""
+    suffix = "$" if full else r"(?![A-Z0-9])" if we else ""
     return re.compile(prefix + rx + suffix, re.I)

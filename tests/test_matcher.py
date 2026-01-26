@@ -18,15 +18,15 @@ PARSE_CHECKS = [
     ("field='don\\'t panic'", ["field~/^don't\\ panic$/"]),
     ("field!='do panic'", ["field!~/^do\\ panic$/"]),
     (r'a=" quoted: \"string\" "', [r'a~/^\ quoted:\ "string"\ $/']),
-    (r'a=avalue b!="bvalue"', ["a~/^avalue$/", "b!~/^bvalue$/"]),
+    (r'a=avalue b!="bvalue"', ["b!~/^bvalue$/", "a~/^avalue$/"]),
     (
         """val a='av' etc b!="bv" !etc""",
         [
+            "b!~/^bv$/",
+            f"!~/{WB}etc{WE}/",
             f"~/{WB}val{WE}/",
             "a~/^av$/",
             f"~/{WB}etc{WE}/",
-            "b!~/^bv$/",
-            f"!~/{WB}etc{WE}/",
         ],
     ),
     ("0", [f"~/{WB}(0|0*0|(0x)?0*0h?){WE}/"]),
@@ -40,7 +40,7 @@ PARSE_CHECKS = [
 def test_SerialPortMatcher_init():
     for spec, expected in PARSE_CHECKS:
         actual = ok_serial.SerialPortMatcher(spec)
-        assert str(actual._rules).split("\n") == expected
+        assert actual.patterns() == expected
 
 
 def test_SerialPortMatcher_filter():
@@ -52,6 +52,10 @@ def test_SerialPortMatcher_filter():
         SerialPort(name="z5", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
         SerialPort(name="z6", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
     ]
+
+    matcher = ok_serial.SerialPortMatcher("")
+    output = matcher.filter(input)
+    assert output == input
 
     matcher = ok_serial.SerialPortMatcher("*mid* a* !*b")
     output = matcher.filter(input)
