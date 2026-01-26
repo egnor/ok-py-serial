@@ -40,10 +40,6 @@ _TERM_RE = re.compile(
     re.I,
 )
 
-# naked term to indicate port uptime preference
-_OLDEST_RE = re.compile("^earliest|oldest$", re.I)
-_NEWEST_RE = re.compile("^latest|newest$", re.I)
-
 _ESCAPE_RE = re.compile(
     # unicode-escape OR
     r"(\\[a-zA-Z0-9\\n][^\\*?]*)|"
@@ -52,6 +48,10 @@ _ESCAPE_RE = re.compile(
     # literal
     r"\\?(.[^\\*?]*)"
 )
+
+# naked term to indicate port uptime preference
+_OLDEST_RE = re.compile("^earliest|oldest$", re.I)
+_NEWEST_RE = re.compile("^latest|newest$", re.I)
 
 
 class SerialPortMatcher:
@@ -137,7 +137,7 @@ class SerialPortMatcher:
         ]
 
     def filter(self, ports: list[SerialPort]) -> list[SerialPort]:
-        """Filters a list of ports according to match criteria."""
+        """Filters a list of ports according to the match criteria."""
 
         matches = []
         for p in ports:
@@ -154,17 +154,12 @@ class SerialPortMatcher:
 
         return matches
 
-    def hits(self, port: SerialPort) -> set[str]:
-        """
-        Returns the set of attribute keys matched by this expression,
-        typically for display highlighting purposes.
-        """
+    def attr_hit(self, port: SerialPort, key: str) -> bool:
+        """True if the attribute given by 'key' is a positive match."""
 
-        return set(
-            k
-            for k, v in port.attr.items()
-            if any(r.match(k, v) for r in self._pos)
-        )
+        if v := port.attr.get(key, ""):
+            return any(r.match(key, v) for r in self._pos)
+        return False
 
 
 def _qstr_rx(quoted="", *, glob=False, full=False) -> re.Pattern:

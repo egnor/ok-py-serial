@@ -7,6 +7,7 @@ import datetime
 import logging
 import ok_logging_setup
 import ok_serial
+import re
 
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
 ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
@@ -102,38 +103,46 @@ def main():
 def format_oneline(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
 ):
-    hit = matcher.hits(port)
-    hit -= {"name"} if "device" in hit else set()
+    main_keys = "device tid subsystem vid_pid description serial_number".split()
+    words = []
+    for k in main_keys:
+        if v := format_value(port, matcher, k):
+            words.append(v)
 
-    out = ""
-    keys = "device tid age subsystem vid_pid description serial_number"
-    for k in keys.split():
-        if k == "age" and (age := format_age(port)):
-            out += age + " "
-        if v := port.attr.get(k, ""):
-            v = repr(v) if " " in v else v
-            v = f"[{v}]" if k == "tid" else v
-            v += "✅ " if k in hit else " "
-            out += v
-            hit.discard(k)
+    if age := format_age(port):
+        words.append(age)
 
     for k, v in port.attr.items():
-        out += f"{k}={v!r}✅ " if k in hit else ""
+        if matcher.attr_hit(port, k) and k not in main_keys:
+            if not (k == "name" and matcher.attr_hit(port, "device")):
+                words.append(f"{k}={format_value(port, matcher, k)}")
 
-    return out.strip()
+    return " ".join(words)
 
 
 def format_detail(
     port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
-):
-    hit = matcher.hits(port)
-    return f"Serial port: {port.name} {format_age(port)}".strip() + "".join(
-        f"\n✅ {k}={v!r}" if k in hit else f"\n   {k}={v!r}"
-        for k, v in port.attr.items()
+) -> str:
+    label = f"Port: {format_value(port, matcher, 'device')}"
+    if age := format_age(port):
+        label += f" {age}"
+    if tid := format_value(port, matcher, "tid"):
+        label += f" {tid}"
+    return label + "".join(
+        f"\n  {k}={format_value(port, matcher, k)}" for k in port.attr
     )
 
 
-def format_age(port: ok_serial.SerialPort):
+def format_value(
+    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher, k: str
+) -> str:
+    if v := port.attr.get(k, ""):
+        v = repr(v) if re.search(r"""[\s!"'*=?\\]""", v) else v
+        return v + ("✅" if matcher.attr_hit(port, k) else "")
+    return ""
+
+
+def format_age(port: ok_serial.SerialPort) -> str:
     try:
         dt = datetime.datetime.fromisoformat(port.attr.get("time", ""))
     except ValueError:
@@ -141,18 +150,18 @@ def format_age(port: ok_serial.SerialPort):
     return format_timedelta(datetime.datetime.now() - dt)
 
 
-def format_timedelta(d: datetime.timedelta):
+def format_timedelta(d: datetime.timedelta) -> str:
     if d.days < 0:
         return f"-{format_timedelta(-d)}"
     h, m, s = d.seconds // 3600, (d.seconds % 3600) // 60, d.seconds % 60
     if d.days:
-        return f"({d.days}d {h:02}:{m:02}:{s:02}s)"
+        return f"{d.days}d+{h:02}:{m:02}:{s:02}s"
     elif h:
-        return f"({h}:{m:02}:{s:02}s)"
+        return f"{h}:{m:02}:{s:02}s"
     elif m:
-        return f"({m}:{s:02}s)"
+        return f"{m}:{s:02}s"
     else:
-        return f"({d.seconds + d.microseconds * 1e-6:.2f}s)"
+        return f"{d.seconds + d.microseconds * 1e-6:.2f}s"
 
 
 if __name__ == "__main__":
