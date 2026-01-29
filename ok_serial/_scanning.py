@@ -32,9 +32,6 @@ class SerialPort:
     def __str__(self):
         return self.name
 
-    def key(self) -> str:
-        return f"{self.name}@{self.attr.get('time', '')}"
-
 
 def scan_serial_ports() -> list[SerialPort]:
     """

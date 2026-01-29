@@ -23,6 +23,7 @@ class TrackerOptions:
     """Optional parameters for `SerialPortTracker`."""
 
     scan_interval: float | int = 0.5
+    """Seconds between port re-scans when waiting for a match."""
 
 
 class SerialPortTracker(contextlib.AbstractContextManager):
@@ -70,6 +71,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._lock = threading.Lock()
         self._scan_keys: set[str] = set()
         self._scan_matched: list[SerialPort] = []
+        self._scan_deadline = 0.0
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
 
@@ -87,10 +89,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     def close(self) -> None:
         """
-        Closes any active serial port connection. Any I/O operations on the
-        existing connection will raise an immediate `SerialIoClosed` exception.
-        Any subsequent call to `connect_sync` or `connect_async` will establish
-        a new connection.
+        Closes any open connection with `SerialConnection.close`. A subsequent
+        call to `connect_sync`/`connect_async` will establish a new connection.
         """
 
         with self._lock:
@@ -100,14 +100,17 @@ class SerialPortTracker(contextlib.AbstractContextManager):
     def find_sync(self, timeout: float | int | None = None) -> list[SerialPort]:
         """
         Waits up to `timeout` seconds (forever for `None`) until serial port(s)
-        appear matching this tracker's requirements. Rescans periodically
-        while waiting (see `TrackerOptions.scan_interval`).
+        exist matching this tracker's requirements. Rescans periodically while
+        waiting (see `TrackerOptions.scan_interval`).
 
         Returns a list of matching `SerialPort` objects, or `[]` on timeout.
 
         Raises:
         - `SerialScanException`: System error scanning ports
         """
+
+        def key(p: SerialPort) -> str:
+            return p.name + "@" + p.attr.get("time", "")
 
         deadline = to_deadline(timeout)
         while True:
@@ -116,12 +119,12 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     wait = self._tracker_opts.scan_interval
                     found = scan_serial_ports()
                     for p in found if self._next_scan else []:  # not first scan
-                        if p.key() not in self._scan_keys:
+                        if key(p) not in self._scan_keys:
                             p.attr["tracking"] = "new"
 
                     matched = self._match.filter(found)
                     self._next_scan = to_deadline(wait)
-                    self._scan_keys = set(p.key() for p in found)
+                    self._scan_keys = set(key(p) for p in found)
                     self._scan_matched = matched
                     nf, nm = len(found), len(matched)
                     log.debug("%d/%d ports match %r", nm, nf, str(self._match))
@@ -164,8 +167,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         and returned, otherwise scanning resumes.
 
         If multiple ports match the requirements, connections are attempted
-        to each of them in turn, and the first success (if any) is
-        remembered and returned.
+        to each, and the first success (if any) is remembered and returned.
 
         Returns `None` on timeout.
 
@@ -190,6 +192,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         self._conn.close()
                         self._conn = None
 
+                ports.sort(key=lambda p: p.attr.get("time", ""), reverse=True)
                 for port in ports:
                     try:
                         self._conn = SerialConnection(

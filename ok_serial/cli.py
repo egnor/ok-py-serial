@@ -2,7 +2,7 @@
 
 """CLI tool to scan serial ports and/or communicate with them"""
 
-import argparse
+import click
 import datetime
 import logging
 import ok_logging_setup
@@ -10,93 +10,78 @@ import ok_serial
 import ok_serial.terminal
 import re
 
+ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
 ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
 
+@click.group()
 def main():
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(title="actions", dest="command")
-    list_parser = subparsers.add_parser("list", help="List known serial ports")
-    list_parser.add_argument("port", nargs="*", help="port match expression")
-    list_parser.add_argument(
-        "--one",
-        "-1",
-        action="store_true",
-        help="require exactly one port (implies -n unless -v)",
-    )
-    list_parser.add_argument(
-        "--wait", "-w", default=0.0, help="seconds to scan", type=float
-    )
-    list_style_group = list_parser.add_mutually_exclusive_group()
-    list_style_group.add_argument(
-        "--name", "-n", action="store_true", help="print device file only"
-    )
-    list_style_group.add_argument(
-        "--verbose", "-v", action="store_true", help="print detailed properties"
-    )
+    pass
 
-    term_parser = subparsers.add_parser("term", help="Terminal emulator")
-    term_parser.add_argument("port", nargs="+", help="port match expression")
-    term_parser.add_argument("baud", type=int, help="baud rate")
-    term_parser.add_argument(
-        "--wait", "-w", default=0.0, help="seconds to scan", type=float
-    )
 
-    args = parser.parse_args()
-    if not args.command:
-        args = parser.parse_args(["list"])
-    if args.command == "list" and args.one and not args.verbose:
-        args.name = True
+@main.command()
+@click.argument("match", nargs=-1)
+@click.option("-1", "--one", is_flag=True)
+@click.option("-n", "--print-name", is_flag=True)
+@click.option("-v", "--print-verbose", is_flag=True)
+@click.option("-w", "--wait-time", default=0.0)
+def list_command(
+    match: tuple[str, ...],
+    one: bool = False,
+    print_name: bool = False,
+    print_verbose: bool = False,
+    wait_time: float = 0.0,
+):
+    tracker = ok_serial.SerialPortTracker(match=" ".join(match))
+    if (expr := str(tracker.matcher)) and wait_time:
+        logging.info(
+            "🔎 Finding serial ports (%.2fs timeout): %r",
+            wait_time,
+            str(tracker.matcher),
+        )
+    elif expr:
+        logging.info("🔎 Finding serial ports: %r", expr)
+    elif wait_time:
+        logging.info("🔎 Finding serial ports (%.2fs timeout)", wait_time)
+    else:
+        logging.info("🔎 Finding serial ports...")
 
-    level = "warning" if args.command == "list" and args.name else "info"
-    ok_logging_setup.install({"OK_LOGGING_LEVEL": level})
-
-    if args.command in ("list", "term"):
-        expr = " ".join(args.port)
-        tracker = ok_serial.SerialPortTracker(match=expr)
-        if expr and args.wait:
-            logging.info(
-                "🔎 Finding serial ports (%.2fs timeout): %r",
-                args.wait,
-                expr,
-            )
-        elif expr:
-            logging.info("🔎 Finding serial ports: %r", expr)
-        elif args.wait:
-            logging.info("🔎 Finding serial ports (%.2fs timeout)", args.wait)
+    found = tracker.find_sync(timeout=wait_time)
+    num = len(found)
+    if num == 0:
+        if expr := str(tracker.matcher):
+            ok_logging_setup.exit(f"🚫 No serial ports match {expr!r}")
         else:
-            logging.info("🔎 Finding serial ports...")
+            ok_logging_setup.exit("❌ No serial ports found")
 
-        found = tracker.find_sync(timeout=args.wait)
-        num = len(found)
-        if num == 0:
-            if expr:
-                ok_logging_setup.exit(f"🚫 No serial ports match {expr!r}")
-            else:
-                ok_logging_setup.exit("❌ No serial ports found")
+    logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
 
-        logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
+    matcher = tracker.matcher
+    if one and num != 1:
+        ok_logging_setup.exit(
+            f"{num} serial ports found, only --one allowed:"
+            + "".join(f"\n  {format_line(p, matcher)}" for p in found)
+        )
+    if print_name:
+        for port in found:
+            click.echo(port.name)
+    elif print_verbose:
+        for port in found:
+            click.echo(format_detail(port, matcher) + "\n")
+    else:
+        for port in found:
+            click.echo(format_line(port, matcher))
 
-    if args.command == "list":
-        matcher = tracker.matcher
-        if args.one and num != 1:
-            ok_logging_setup.exit(
-                f"{num} serial ports found, only --one allowed:"
-                + "".join(f"\n  {format_line(p, matcher)}" for p in found)
-            )
-        if args.name:
-            for port in found:
-                print(port.name)
-        elif args.verbose:
-            for port in found:
-                print(format_detail(port, matcher), end="\n\n")
-        else:
-            for port in found:
-                print(format_line(port, matcher))
 
-    if args.command == "term":
-        ok_serial.terminal.main(tracker=tracker, baud=args.baud, wait=args.wait)
+@main.command()
+@click.argument("match", nargs=-1)
+@click.argument("baud", type=int)
+@click.option("-w", "--wait-time", default=0.0)
+def term_command(match: tuple[str, ...], baud: int, wait_time: float = 0):
+    ok_serial.terminal.run_terminal(
+        match=" ".join(match), baud=baud, wait_time=wait_time
+    )
 
 
 def format_line(
