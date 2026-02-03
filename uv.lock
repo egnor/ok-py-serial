@@ -570,12 +570,16 @@ version = "0.3"
 source = { editable = "." }
 dependencies = [
     { name = "beartype" },
-    { name = "blessed" },
-    { name = "click" },
     { name = "natsort" },
-    { name = "ok-logging-setup" },
     { name = "pyserial" },
     { name = "types-pyserial" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "blessed" },
+    { name = "click" },
+    { name = "ok-logging-setup" },
 ]
 
 [package.dev-dependencies]
@@ -594,13 +598,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beartype", specifier = ">=0.22.9" },
-    { name = "blessed", specifier = ">=1.27.0" },
-    { name = "click", specifier = ">=8.3.1" },
+    { name = "blessed", marker = "extra == 'cli'", specifier = ">=1.27.0" },
+    { name = "click", marker = "extra == 'cli'", specifier = ">=8.3.1" },
     { name = "natsort", specifier = ">=8.4.0" },
-    { name = "ok-logging-setup", specifier = ">=0.11" },
+    { name = "ok-logging-setup", marker = "extra == 'cli'", specifier = ">=0.11" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "types-pyserial", specifier = ">=3.5.0.20251001" },
 ]
+provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [

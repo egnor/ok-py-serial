@@ -1,5 +1,11 @@
-import blessed
 import ok_serial
+import sys
+
+try:
+    import blessed
+except ModuleNotFoundError:
+    print("\n⚠️ Try: pip install 'ok-serial[cli]'\n", file=sys.stderr)
+    raise
 
 
 def run_terminal(match: str, baud: int, wait_time: float):

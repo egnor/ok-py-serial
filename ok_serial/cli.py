@@ -2,13 +2,20 @@
 
 """CLI tool to scan serial ports and/or communicate with them"""
 
-import click
 import datetime
 import logging
-import ok_logging_setup
+import re
+import sys
+
+try:
+    import click
+    import ok_logging_setup
+except ModuleNotFoundError:
+    print("\n⚠️ Try: pip install 'ok-serial[cli]'\n", file=sys.stderr)
+    raise
+
 import ok_serial
 import ok_serial.terminal
-import re
 
 ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
 ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
