@@ -173,7 +173,6 @@ Serial port: /dev/ttyACM3
    subsystem='usb'
    usb_interface_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
    vid_pid='239A:812D'
-
 ...
 ```
 
@@ -184,13 +183,14 @@ to find ports. Match expressions are made of space-separated search terms:
 
 - `word` - case INsensitive whole-word match in any attribute value
 - `wild*word?` - `*` and `?` are wildcards (any text, single character)
-- `spaces\ and\ st\*rs` - special characters can be escaped with backslash...
-- `"spaces and st*rs"` - ...or with C/JS/Python-style quoted strings
+- `1234`, `0xabcd` - hex or decimal values match hex or decimal equivalents
+- `spaces\ and\ st\*rs\?` - special characters can be escaped with backslash...
+- `"spaces and st*rs?"` - ...or with C/JS/Python-style quoted strings
 - `attr="specific value"` - scoped to attribute prefix, must match whole value
 - `~/regexp/` - case SENSITIVE regex match
   ([Python `re`](https://docs.python.org/3/library/re.html))
-- `attr~/regexp/` - regex match can also be attribute scoped (partial match)
-- `attr~/^regexp$/` - use regex anchors to match the whole attribute value
+- `attr~/regexp/` - attribute-scoped partial regex match
+- `attr~/^regexp$/` - attribute-scoped whole-value regex match
 
 Some examples:
 
@@ -223,22 +223,20 @@ When opening a port,
 offers a choice of
 [four sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
 
-- `oblivious` - no locking is done and advisory locks are ignored. If
-  multiple programs open the port, they will all send and receive data
-  to the same device. This mode is not recommended.
-- `polite` - locking is checked at open, and if the port is in use the
-  open fails. Once opened, no locks are held except for a shared lock
-  to discourage other `polite` users from opening the port. If a
+- `oblivious` (not recommended) - no locking is done and locks are ignored.
+  Multiple users may end up sending and receiving data on the same port.
+- `polite` - open fails if the port is locked. Once opened, no locks
+  are held except for a shared lock to ward off other `polite` users. If a
   less polite program opens the port later there will be conflict.
   (In the future, this mode will attempt to notice such conflicts
   and close out the port, deferring to the less-polite program.)
-- `exclusive` (the default mode) - locking is checked at open, and if the
-  port is in use the open fails. Once opened, several means of locking
-  are employed to prevent or discourage others from opening the port.
-- `stomp` (use with care!) - locking is checked at open, and if the port
-  is in use, _the program using the port is killed_ if possible.
-  The port is opened regardless and all available locks are taken.
+- `exclusive` (the default) - open fails if the port is locked
+  by a non-`polite` user. Once opened, locking protocols are used to prevent
+  or discourage others from opening the port.
+- `stomp` (use with care!) - _any other program using the port is killed_,
+  if possible; regardless, locks are acquired, if possible; regardless,
+  the port is opened, if possible.
 
-The implementation of these modes is limited by OS capabilities, process
-permissions, and the historical conventions of port usage coordination.
+Sharing mode implementation is limited by OS capabilities, process permissions,
+and historical conventions of port usage coordination.
 Best efforts are taken but your mileage may vary.
