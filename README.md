@@ -201,11 +201,11 @@ Some examples:
 - `Adafruit serial~/^DF625/` - `adafruit` must appear somewhere (any
 case), and `serial_number` must begin with `DF625` (uppercase as written)
 
-You can pass a match expression to `okserial` and set
-`$OK_LOGGING_LEVEL=debug` to see parsing results:
+You can use `okserial list` with `$OK_LOGGING_LEVEL=debug`
+to see parsing results:
 
 ```text
-% OK_LOGGING_LEVEL=debug okserial -v 'Adafruit serial~/^DF625.*/'
+% OK_LOGGING_LEVEL=debug okserial list -v 'Adafruit serial~/^DF625.*/'
 🕸  ok_serial.scanning: Parsed 'Adafruit serial~/^DF625.*/':
   *~/(?<!\w)(Adafruit)(?!\w)/
   serial~/^DF625.*/
