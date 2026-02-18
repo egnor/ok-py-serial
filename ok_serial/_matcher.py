@@ -15,8 +15,7 @@ class _Rule:
     rx: re.Pattern
 
     def __str__(self) -> str:
-        quoted = self.rx.pattern.replace("/", r"\/")
-        return f"{self.prefix}~/{quoted}/"
+        return self.prefix + "~/" + self.rx.pattern.replace("/", r"\/") + "/"
 
     def match(self, k: str, v: str) -> bool:
         return bool(k.startswith(self.prefix) and self.rx.search(v))
