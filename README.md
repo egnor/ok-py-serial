@@ -191,6 +191,8 @@ to find ports. Match expressions are made of space-separated search terms:
   ([Python `re`](https://docs.python.org/3/library/re.html))
 - `attr~/regexp/` - attribute-scoped partial regex match
 - `attr~/^regexp$/` - attribute-scoped whole-value regex match
+- `newest` - the shortest-uptime port among those matching other terms
+- `oldest` - the longest-uptime port among those matching other terms
 
 Some examples:
 
