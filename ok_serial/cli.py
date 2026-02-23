@@ -28,19 +28,21 @@ def main():
 
 
 @main.command()
-@click.argument("match", nargs=-1)
+@click.argument("port", nargs=-1)
 @click.option("-1", "--one", is_flag=True)
 @click.option("-n", "--print-name", is_flag=True)
 @click.option("-v", "--print-verbose", is_flag=True)
 @click.option("-w", "--wait-time", default=0.0)
 def list_command(
-    match: tuple[str, ...],
+    port: tuple[str, ...],
     one: bool = False,
     print_name: bool = False,
     print_verbose: bool = False,
     wait_time: float = 0.0,
 ):
-    tracker = ok_serial.SerialPortTracker(match=" ".join(match))
+    """Print a list of available serial ports"""
+
+    tracker = ok_serial.SerialPortTracker(match=" ".join(port))
     if (expr := str(tracker.matcher)) and wait_time:
         logging.info(
             "🔎 Finding serial ports (%.2fs timeout): %r",
@@ -71,14 +73,14 @@ def list_command(
             + "".join(f"\n  {format_line(p, matcher)}" for p in found)
         )
     if print_name:
-        for port in found:
-            click.echo(port.name)
+        for p in found:
+            click.echo(p.name)
     elif print_verbose:
-        for port in found:
-            click.echo(format_detail(port, matcher) + "\n")
+        for p in found:
+            click.echo(format_detail(p, matcher) + "\n")
     else:
-        for port in found:
-            click.echo(format_line(port, matcher))
+        for p in found:
+            click.echo(format_line(p, matcher))
 
 
 @main.command()
@@ -86,6 +88,8 @@ def list_command(
 @click.argument("baud", type=int)
 @click.option("-w", "--wait-time", default=0.0)
 def term_command(match: tuple[str, ...], baud: int, wait_time: float = 0):
+    """Start an interactive terminal on a serial port"""
+
     ok_serial.terminal.run_terminal(
         match=" ".join(match), baud=baud, wait_time=wait_time
     )
