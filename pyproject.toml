@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
-version = "0.3"
+version = "0.3.1"
 
 [project.optional-dependencies]
 cli = ["blessed>=1.27.0", "click>=8.3.1", "ok-logging-setup>=0.11"]
