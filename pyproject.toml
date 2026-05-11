@@ -26,8 +26,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-  "black",
-  "grip",
   "mypy",
   "pdoc",
   "pyfakefs",
@@ -37,9 +35,6 @@ dev = [
   "ruff",
 ]
 
-[tool.black]
-line-length = 80
-
 [tool.mypy]
 exclude_gitignore = true
 files = "."
@@ -48,6 +43,9 @@ files = "."
 asyncio_mode = "auto"
 log_level = "CRITICAL"
 strict = true
+
+[tool.ruff]
+line-length = 80
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]

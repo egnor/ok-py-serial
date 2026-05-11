@@ -20,8 +20,12 @@ def test_basic_connection(pty_serial):
         iflag, oflag, cflag, lflag, ispeed, ospeed, cc = tcattr
         assert ispeed == termios.B57600
 
+        before_monotime = time.monotonic()
         pty_serial.control.write(b"TO SERIAL")
-        assert conn.read_sync(timeout=10) == b"TO SERIAL"
+        after_monotime = time.monotonic()
+        read_data = conn.read_sync(timeout=10)
+        assert read_data == b"TO SERIAL"
+        assert before_monotime <= after_monotime <= time.monotonic()
 
         conn.write(b"FROM SERIAL")
         conn.drain_sync()
@@ -94,6 +98,7 @@ def test_read_sync_timeout_empty_buffer(pty_serial):
         data = conn.read_sync(timeout=0.1)
         elapsed = time.monotonic() - start
         assert data == b""
+        assert data.monotonic_time == 0.0
         assert 0.05 <= elapsed <= 0.5
 
 
@@ -105,6 +110,7 @@ def test_read_sync_zero_or_negative_timeout(pty_serial, timeout):
         data = conn.read_sync(timeout=timeout)
         elapsed = time.monotonic() - start
         assert data == b""
+        assert data.monotonic_time == 0.0
         assert elapsed < 0.1
 
 

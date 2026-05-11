@@ -5,6 +5,7 @@ import errno
 import logging
 import serial
 import threading
+import time
 
 from ok_serial import _exceptions
 from ok_serial._locking import SerialSharingType, using_fd_lock, using_lock_file
@@ -47,6 +48,20 @@ class SerialControlSignals:
     ri: bool
     cd: bool
     sending_break: bool
+
+
+class TimestampBytes(bytes):
+    """Bytes received from a serial port, plus a monotonic-time stamp."""
+
+    monotonic_time: float
+
+    def __new__(cls, data: bytes | bytearray, time: float) -> "TimestampBytes":
+        self = super().__new__(cls, data)
+        self.monotonic_time = time
+        return self
+
+    def __repr__(self) -> str:
+        return f"{bytes(self)!r}@t={self.monotonic_time:.3f}"
 
 
 class SerialConnection(contextlib.AbstractContextManager):
@@ -160,7 +175,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         self,
         *,
         timeout: float | int | None = None,
-    ) -> bytes:
+    ) -> TimestampBytes:
         """
         Waits up to `timeout` seconds (forever for `None`) for data,
         then returns all of it (b"" on timeout).
@@ -174,17 +189,19 @@ class SerialConnection(contextlib.AbstractContextManager):
         while True:
             with self._io.monitor:
                 if self._io.incoming:
-                    output = bytes(self._io.incoming)
+                    monotime = self._io.incoming_monotime
+                    out = TimestampBytes(self._io.incoming, monotime)
                     self._io.incoming.clear()
-                    return output
+                    self._io.incoming_monotime = 0.0
+                    return out
                 elif self._io.exception:
                     raise self._io.exception
                 elif (wait := from_deadline(deadline)) <= 0:
-                    return b""
+                    return TimestampBytes(b"", 0.0)
                 else:
                     self._io.monitor.wait(timeout=wait)
 
-    async def read_async(self) -> bytes:
+    async def read_async(self) -> TimestampBytes:
         """
         Similar to `read_sync` but returns a
         [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
@@ -363,8 +380,9 @@ class _IoThreads(contextlib.AbstractContextManager):
         self.threads: list[threading.Thread] = []
         self.pyserial = pyserial
         self.monitor = threading.Condition()
-        self.incoming = bytearray()
         self.outgoing = bytearray()
+        self.incoming = bytearray()
+        self.incoming_monotime = 0.0
         self.exception: None | _exceptions.SerialIoException = None
         self.async_futures: list[asyncio.Future[None]] = []
         self.async_loop: asyncio.AbstractEventLoop | None
@@ -409,6 +427,7 @@ class _IoThreads(contextlib.AbstractContextManager):
             try:
                 # Block for at least one byte, then grab all available
                 incoming = self.pyserial.read(size=1)
+                monotonic_time = time.monotonic()
                 if incoming:
                     waiting = self.pyserial.in_waiting
                     if waiting > 0:
@@ -421,13 +440,13 @@ class _IoThreads(contextlib.AbstractContextManager):
 
             with self.monitor:
                 if incoming:
-                    data_log.debug(
-                        "Read %db buf=%db", len(incoming), len(self.incoming)
-                    )
-                if incoming or error:
+                    if not self.incoming:
+                        self.incoming_monotime = monotonic_time
                     self.incoming.extend(incoming)
-                    self.exception = self.exception or error
-                    self._notify_all_locked()
+                    in_len, buf_len = len(incoming), len(self.incoming)
+                    data_log.debug("Read %db -> buf=%db", in_len, buf_len)
+                self.exception = self.exception or error
+                self._notify_all_locked()
 
     def _writeloop(self) -> None:
         log.debug("Starting thread")
