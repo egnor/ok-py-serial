@@ -47,9 +47,9 @@ lots of gnarly system details. However, some issues keep coming up:
 
 The `ok-serial` library uses PySerial internally but has a revised interface:
 
-- Ports are referenced by
-  [port match expressions](#serial-port-match-expressions) with wildcard
-  support, eg. `*RP2040*` or `2e43:0226` or `manufacturer="Arduino"`.
+- Ports are referenced by [match strings](#port-matching) with wildcard
+  support (eg. `RP2040` or `2e43:0226`) or, for more sophisticated needs, by
+  arbitrary `SerialPort -> bool` callables.
 
 - I/O operations are thread safe and can be blocking, non-blocking,
   timeout-based, or async. Blocking operations can be interrupted.
@@ -101,9 +101,6 @@ API elements worth knowing include:
   \- establish a connection to a specific port and perform I/O
 - [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports)
   \- get all ports on the system, with descriptive attributes
-- [`SerialPortMatcher`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortMatcher)
-  \- use [port match expression strings](#serial-port-match-expressions) to
-     identify ports of interest
 - [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker)
   \- scan and connect to a port with automatic error retry
 
@@ -176,47 +173,36 @@ Serial port: /dev/ttyACM3
 ...
 ```
 
-## Serial port match expressions
+## Port matching
 
-Instead of plain device names, `ok-serial` can use **port match expressions**
-to find ports. Match expressions are made of space-separated search terms:
+`SerialConnection(match=...)` and `SerialPortTracker(...)` take either a
+**match string** or a **predicate callable** (`SerialPort -> bool`).
 
-- `word` - case INsensitive whole-word match in any attribute value
-- `wild*word?` - `*` and `?` are wildcards (any text, single character)
-- `1234`, `0xabcd` - hex or decimal values match hex or decimal equivalents
-- `spaces\ and\ st\*rs\?` - special characters can be escaped with backslash...
-- `"spaces and st*rs?"` - ...or with C/JS/Python-style quoted strings
-- `attr="specific value"` - scoped to attribute prefix, must match whole value
-- `~/regexp/` - case SENSITIVE regex match
-  ([Python `re`](https://docs.python.org/3/library/re.html))
-- `attr~/regexp/` - attribute-scoped partial regex match
-- `attr~/^regexp$/` - attribute-scoped whole-value regex match
-- `newest` - the shortest-uptime port among those matching other terms
-- `oldest` - the longest-uptime port among those matching other terms
+A match string is split on whitespace into glob tokens. Each token must match
+(case-insensitively, as a whole-word glob with `*` and `?` wildcards) somewhere
+in some attribute value. So:
 
-Some examples:
+- `Pico` - some attribute contains the word `pico` (any case)
+- `RP2040 DF625*` - some attribute contains `rp2040`, and some attribute
+  contains a word starting with `df625`
+- `2e8a:0005` - matches the canonical `vid_pid` form (lowercase hex)
+- `ttyS1` - does NOT match `/dev/ttyS10`; use `ttyS1*` for prefix matching
 
-- `Pico Serial` - the words `pico` AND `serial` must each appear somewhere
-  (any case, as a whole word)
-- `RP2040 DF625*` - the word `rp2040` AND a word starting with `df625`
-- `subsys="usb"` - `subsystem` must equal `usb` (any case but whole value)
-- `Adafruit serial~/^DF625/` - `adafruit` must appear somewhere (any
-case), and `serial_number` must begin with `DF625` (uppercase as written)
+Word boundaries treat any non-alphanumeric character (`/`, `:`, `_`, etc.)
+as a separator, so partial USB IDs and device-path fragments work naturally.
 
-You can use `okserial list` with `$OK_LOGGING_LEVEL=debug`
-to see parsing results:
+For anything more elaborate (substring matching across attribute boundaries,
+regex, negation, etc.), pass a callable:
 
-```text
-% OK_LOGGING_LEVEL=debug okserial list -v 'Adafruit serial~/^DF625.*/'
-🕸  ok_serial.scanning: Parsed 'Adafruit serial~/^DF625.*/':
-  *~/(?<!\w)(Adafruit)(?!\w)/
-  serial~/^DF625.*/
-🕸  ok_serial.scanning: Found 36 ports
-🎯 36 serial ports found, 1 matches 'Adafruit serial~/^DF625.*/'
-Serial port: /dev/ttyACM3
-   device='/dev/ttyACM3'
-   ...
+```python
+ok_serial.SerialPortTracker(
+    match=lambda p: p.attr.get("manufacturer") == "Adafruit"
+    and p.attr.get("serial_number", "").startswith("DF625"),
+)
 ```
+
+Run `okserial list` to see which ports are visible and what attributes they
+have.
 
 ## Sharing modes
 

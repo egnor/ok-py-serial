@@ -18,7 +18,6 @@ from ok_serial._connection import (
 )
 
 from ok_serial._scanning import scan_serial_ports, SerialPort
-from ok_serial._matcher import SerialPortMatcher
 from ok_serial._tracker import SerialPortTracker, TrackerOptions
 from ok_serial._locking import SerialSharingType
 
@@ -26,7 +25,6 @@ from ok_serial._exceptions import (
     SerialException,
     SerialIoClosed,
     SerialIoException,
-    SerialMatcherInvalid,
     SerialOpenBusy,
     SerialOpenException,
     SerialScanException,

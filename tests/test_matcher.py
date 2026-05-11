@@ -1,64 +1,78 @@
-"""Unit tests for ok_serial._scanning."""
+"""Unit tests for ok_serial._matching."""
 
-import ok_serial
 from ok_serial import SerialPort
+from ok_serial._matching import compile_match
 
 
-WB, WE = "(?<![A-Z0-9])", "(?![A-Z0-9])"
-
-PARSE_CHECKS = [
-    ("simple", [f"~/{WB}simple{WE}/"]),
-    ("!simple", [f"!~/{WB}simple{WE}/"]),
-    (
-        " \twith whitespace\n ",
-        [f"~/{WB}with{WE}/", f"~/{WB}whitespace{WE}/"],
-    ),
-    ("wild*card?expr", [f"~/{WB}wild.*card.expr{WE}/"]),
-    ("wild\\*card\\?expr", [f"~/{WB}wild\\*card\\?expr{WE}/"]),
-    ("field='don\\'t panic'", ["field~/^don't\\ panic$/"]),
-    ("field!='do panic'", ["field!~/^do\\ panic$/"]),
-    (r'a=" quoted: \"string\" "', [r'a~/^\ quoted:\ "string"\ $/']),
-    (r'a=avalue b!="bvalue"', ["b!~/^bvalue$/", "a~/^avalue$/"]),
-    (
-        """val a='av' etc b!="bv" !etc""",
-        [
-            "b!~/^bv$/",
-            f"!~/{WB}etc{WE}/",
-            f"~/{WB}val{WE}/",
-            "a~/^av$/",
-            f"~/{WB}etc{WE}/",
-        ],
-    ),
-    ("0", [f"~/{WB}(0|0*0|(0x)?0*0h?){WE}/"]),
-    ("a=123", ["a~/^(123|0*123|(0x)?0*7bh?)$/"]),
-    ("0b1010", [f"~/{WB}(0b1010|0*10|(0x)?0*ah?){WE}/"]),
-    ("!0x07B", [f"!~/{WB}(0x07B|0*123|(0x)?0*7bh?){WE}/"]),
-    ("01ab:23cd", [f"~/{WB}01ab:23cd{WE}/"]),
-]
+def _filter(spec, ports):
+    pred = compile_match(spec)
+    return [p for p in ports if pred(p)]
 
 
-def test_SerialPortMatcher_init():
-    for spec, expected in PARSE_CHECKS:
-        actual = ok_serial.SerialPortMatcher(spec)
-        assert actual.patterns() == expected
-
-
-def test_SerialPortMatcher_filter():
-    input = [
-        SerialPort(name="z1", attr={"a": "axx", "b": "xxb", "c": "xmidx"}),
-        SerialPort(name="z2", attr={"a": "Axx", "b": "xxB", "c": "xMIDx"}),
-        SerialPort(name="z3", attr={"a": "Amid", "b": "xxB"}),
-        SerialPort(name="z4", attr={"a": "xxa", "b": "xxb", "c": "xmidx"}),
-        SerialPort(name="z5", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
-        SerialPort(name="z6", attr={"a": "axx", "b": "xxb", "c": "xmadx"}),
+def test_match_none_and_empty():
+    ports = [
+        SerialPort(name="a", attr={"x": "1"}),
+        SerialPort(name="b", attr={}),
     ]
+    assert _filter(None, ports) == ports
+    assert _filter("", ports) == ports
+    assert _filter("   \t\n", ports) == ports
 
-    matcher = ok_serial.SerialPortMatcher("")
-    output = matcher.filter(input)
-    assert output == input
 
-    matcher = ok_serial.SerialPortMatcher("*mid* a* !*b")
-    output = matcher.filter(input)
-    assert output == [
-        SerialPort(name="z5", attr={"a": "axx", "b": "bxx", "c": "xmidx"}),
+def test_match_callable_passthrough():
+    ports = [
+        SerialPort(name="a", attr={"x": "1"}),
+        SerialPort(name="b", attr={"x": "2"}),
     ]
+    pred = compile_match(lambda p: p.attr["x"] == "2")
+    assert [p for p in ports if pred(p)] == [ports[1]]
+
+
+def test_whole_word_match():
+    ports = [
+        SerialPort(name="a", attr={"device": "/dev/ttyS1"}),
+        SerialPort(name="b", attr={"device": "/dev/ttyS10"}),
+    ]
+    # bare token: whole-word, no /dev/ttyS10 false hit
+    assert _filter("ttyS1", ports) == [ports[0]]
+    # explicit prefix glob:
+    assert _filter("ttyS1*", ports) == ports
+    # case-insensitive:
+    assert _filter("TTYS1", ports) == [ports[0]]
+
+
+def test_multi_attribute():
+    ports = [
+        SerialPort(
+            name="z1",
+            attr={"description": "Pico Serial", "vid_pid": "2e8a:0005"},
+        ),
+        SerialPort(
+            name="z2",
+            attr={"description": "Arduino Uno", "vid_pid": "2341:0043"},
+        ),
+    ]
+    # tokens AND'd, each must hit some attribute
+    assert _filter("Pico 2e8a:0005", ports) == [ports[0]]
+    assert _filter("Pico 2341:0043", ports) == []  # no port has both
+    assert _filter("pico serial", ports) == [ports[0]]
+
+
+def test_wildcards():
+    ports = [
+        SerialPort(name="a", attr={"serial_number": "DF62585783"}),
+        SerialPort(name="b", attr={"serial_number": "AB12345678"}),
+    ]
+    assert _filter("DF625*", ports) == [ports[0]]
+    assert _filter("*5783", ports) == [ports[0]]
+    assert _filter("DF62?85783", ports) == [ports[0]]
+    assert _filter("DF625", ports) == []  # not whole word
+
+
+def test_word_boundaries_around_punctuation():
+    # `:` and `/` count as word boundaries, so partial vid:pid works
+    ports = [
+        SerialPort(name="a", attr={"vid_pid": "2e8a:0005"}),
+    ]
+    assert _filter("2e8a", ports) == ports
+    assert _filter("0005", ports) == ports

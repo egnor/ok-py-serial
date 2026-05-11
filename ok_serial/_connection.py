@@ -9,7 +9,7 @@ import time
 
 from ok_serial import _exceptions
 from ok_serial._locking import SerialSharingType, using_fd_lock, using_lock_file
-from ok_serial._matcher import SerialPortMatcher
+from ok_serial._matching import PortPredicate, compile_match
 from ok_serial._scanning import SerialPort, scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
@@ -70,14 +70,16 @@ class SerialConnection(contextlib.AbstractContextManager):
     def __init__(
         self,
         *,
-        match: str | SerialPortMatcher | None = None,
+        match: str | PortPredicate | None = None,
         port: str | SerialPort | None = None,
         opts: SerialConnectionOptions = SerialConnectionOptions(),
         **kwargs,
     ):
         """
         Opens a serial port to make it available for use.
-        - `match` can be a [port match expression](https://github.com/egnor/ok-py-serial#serial-port-match-expressions) matching exactly one port...
+        - `match` selects a port: a
+          [match string](https://github.com/egnor/ok-py-serial#port-matching)
+          or a `SerialPort -> bool` callable matching exactly one port...
           - OR `port` must name a raw system serial device to open.
         - `opts` can define baud rate and other port parameters...
           - OR other keywords are forwarded to `SerialConnectionOptions`
@@ -89,7 +91,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         Example:
         ```
-        with SerialConnection(match="vid_pid=0403:6001", baud=115200, sharing="polite") as p:
+        with SerialConnection(match="0403:6001", baud=115200, sharing="polite") as p:
             ... interact with `p` ...
             # automatically closed on exit from block
         ```
@@ -98,23 +100,22 @@ class SerialConnection(contextlib.AbstractContextManager):
         - `SerialOpenException`: I/O error opening the specified port
         - `SerialOpenBusy`: The port is already in use
         - `SerialScanException`: System error scanning ports to find `match`
-        - `SerialMatcherInvalid`: Bad format of `match` string
         """
 
         assert (match is not None) + (port is not None) == 1
         opts = dataclasses.replace(opts, **kwargs)
 
         if match is not None:
-            if isinstance(match, str):
-                match = SerialPortMatcher(match)
+            predicate = compile_match(match)
             if not (found := scan_serial_ports()):
                 raise _exceptions.SerialOpenException("No ports found")
-            if not (matched := match.filter(found)):
+            matched = [p for p in found if predicate(p)]
+            if not matched:
                 msg = f"No ports match {match!r}"
                 raise _exceptions.SerialOpenException(msg)
             if len(matched) > 1:
                 matched_text = "".join(f"\n  {p}" for p in matched)
-                msg = f'Multiple ports match "{match}": {matched_text}'
+                msg = f"Multiple ports match {match!r}: {matched_text}"
                 raise _exceptions.SerialOpenException(msg)
             port = matched[0].name
             log.debug("Scanned %r, found %s", match, port)

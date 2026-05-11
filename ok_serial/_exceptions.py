@@ -40,9 +40,3 @@ class SerialScanException(SerialException):
     """Exception raised for system errors scanning available ports."""
 
     pass
-
-
-class SerialMatcherInvalid(ValueError):
-    """Exception raised when a port matcher string is syntactically invalid."""
-
-    pass

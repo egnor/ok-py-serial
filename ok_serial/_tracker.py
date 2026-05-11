@@ -11,7 +11,7 @@ from ok_serial._exceptions import (
     SerialIoException,
     SerialOpenException,
 )
-from ok_serial._matcher import SerialPortMatcher
+from ok_serial._matching import PortPredicate, compile_match
 from ok_serial._scanning import SerialPort, scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
@@ -36,7 +36,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     def __init__(
         self,
-        match: str | SerialPortMatcher,
+        match: str | PortPredicate | None = None,
         *,
         baud: int = 0,
         topts: TrackerOptions = TrackerOptions(),
@@ -44,7 +44,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
     ):
         """
         Prepare to manage a serial port connection.
-        - `match` must be a [port match expression](https://github.com/egnor/ok-py-serial#serial-port-match-expressions) matching the port of interest
+        - `match` selects the port of interest: a
+          [match string](https://github.com/egnor/ok-py-serial#port-matching),
+          a `SerialPort -> bool` callable, or `None` for any port
         - `topts` can define parameters for tracking (eg. re-scan interval)
         - `copts` can define parameters for connecting (eg. baud rate)
           - OR `baud` can set the baud rate (as a shortcut)
@@ -54,17 +56,13 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         connection; use `SerialPortTracker` as the target of a
         [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with)
         to automatically close the port on exit from the `with` body.
-
-        Raises:
-        - `SerialMatcherInvalid`: Bad format of `match` string
         """
 
-        if isinstance(match, str):
-            match = SerialPortMatcher(match)
         if baud:
             copts = dataclasses.replace(copts, baud=baud)
 
-        self._match = match
+        self.match = match
+        self._predicate = compile_match(match)
         self._tracker_opts = topts
         self._conn_opts = copts
 
@@ -75,14 +73,14 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
 
-        log.debug("Tracking: %s", repr(str(match)) if match else "(any port)")
+        log.debug("Tracking: %r", match if match else "(any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
     def __repr__(self) -> str:
         return (
-            f"SerialPortTracker({self._match!r}, "
+            f"SerialPortTracker({self.match!r}, "
             f"topts={self._tracker_opts!r}, "
             f"copts={self._conn_opts!r})"
         )
@@ -122,12 +120,12 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         if key(p) not in self._scan_keys:
                             p.attr["tracking"] = "new"
 
-                    matched = self._match.filter(found)
+                    matched = [p for p in found if self._predicate(p)]
                     self._next_scan = to_deadline(wait)
                     self._scan_keys = set(key(p) for p in found)
                     self._scan_matched = matched
                     nf, nm = len(found), len(matched)
-                    log.debug("%d/%d ports match %r", nm, nf, str(self._match))
+                    log.debug("%d/%d ports match %r", nm, nf, self.match)
 
                 if self._scan_matched:
                     return self._scan_matched
@@ -221,8 +219,3 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             wait = from_deadline(next_scan)
             log.debug("Next scan in %.2fs", wait)
             await asyncio.sleep(wait)
-
-    @property
-    def matcher(self) -> SerialPortMatcher:
-        """The `SerialPortMatcher` used by this tracker."""
-        return self._match

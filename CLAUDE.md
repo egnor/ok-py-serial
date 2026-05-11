@@ -20,7 +20,7 @@ uv run pytest
 uv run pytest tests/test_scanning.py
 
 # Run a specific test
-uv run pytest tests/test_scanning.py::test_SerialPortMatcher_init
+uv run pytest tests/test_matcher.py::test_whole_word_match
 ```
 
 ## Architecture
@@ -34,7 +34,7 @@ uv run pytest tests/test_scanning.py::test_SerialPortMatcher_init
   - Uses dedicated reader/writer threads (`_IoThreads`) for non-blocking I/O
   - Thread-safe via `threading.Condition` monitor pattern
 
-- _matcher.py: `SerialPortMatcher` - fielded glob expressions for matching ports
+- `_matcher.py`: `compile_match()` - turns a match string or callable into a `SerialPort -> bool` predicate (simple whole-word glob; pass a callable for anything fancier)
 
 - **`_scanning.py`**: Port discovery
   - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports

@@ -102,7 +102,7 @@ def _port_from_pyserial(p: list_ports_common.ListPortInfo) -> SerialPort | None:
             hash //= len(_HASHCODE)
         attr["tid"] = tid
 
-    # set "time" to creation time of port (used for oldest/newest filtering)
+    # set "time" to creation time of port (tracker prefers newer ports)
     try:
         st = os.stat(p.device)
     except OSError:

@@ -18,7 +18,6 @@ import ok_serial
 import ok_serial.terminal
 
 ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
-ok_logging_setup.skip_traceback_for(ok_serial.SerialMatcherInvalid)
 ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
 
 
@@ -42,15 +41,14 @@ def list_command(
 ):
     """Print a list of available serial ports"""
 
-    tracker = ok_serial.SerialPortTracker(match=" ".join(port))
-    if (expr := str(tracker.matcher)) and wait_time:
+    spec = " ".join(port)
+    tracker = ok_serial.SerialPortTracker(match=spec or None)
+    if spec and wait_time:
         logging.info(
-            "🔎 Finding serial ports (%.2fs timeout): %r",
-            wait_time,
-            str(tracker.matcher),
+            "🔎 Finding serial ports (%.2fs timeout): %r", wait_time, spec
         )
-    elif expr:
-        logging.info("🔎 Finding serial ports: %r", expr)
+    elif spec:
+        logging.info("🔎 Finding serial ports: %r", spec)
     elif wait_time:
         logging.info("🔎 Finding serial ports (%.2fs timeout)", wait_time)
     else:
@@ -59,28 +57,27 @@ def list_command(
     found = tracker.find_sync(timeout=wait_time)
     num = len(found)
     if num == 0:
-        if expr := str(tracker.matcher):
-            ok_logging_setup.exit(f"🚫 No serial ports match {expr!r}")
+        if spec:
+            ok_logging_setup.exit(f"🚫 No serial ports match {spec!r}")
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
     logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
 
-    matcher = tracker.matcher
     if one and num != 1:
         ok_logging_setup.exit(
             f"{num} serial ports found, only --one allowed:"
-            + "".join(f"\n  {format_line(p, matcher)}" for p in found)
+            + "".join(f"\n  {format_line(p)}" for p in found)
         )
     if print_name:
         for p in found:
             click.echo(p.name)
     elif print_verbose:
         for p in found:
-            click.echo(format_detail(p, matcher) + "\n")
+            click.echo(format_detail(p) + "\n")
     else:
         for p in found:
-            click.echo(format_line(p, matcher))
+            click.echo(format_line(p))
 
 
 @main.command()
@@ -95,45 +92,33 @@ def term_command(match: tuple[str, ...], baud: int, wait_time: float = 0):
     )
 
 
-def format_line(
-    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
-):
+def format_line(port: ok_serial.SerialPort):
     main_keys = "device tid subsystem vid_pid description serial_number".split()
     words = []
     for k in main_keys:
-        if v := format_value(port, matcher, k):
+        if v := format_value(port, k):
             words.append(v)
 
     if age := format_age(port):
         words.append(age)
 
-    for k, v in port.attr.items():
-        if matcher.attr_hit(port, k) and k not in main_keys:
-            if not (k == "name" and matcher.attr_hit(port, "device")):
-                words.append(f"{k}={format_value(port, matcher, k)}")
-
     return " ".join(words)
 
 
-def format_detail(
-    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher
-) -> str:
-    label = f"Port: {format_value(port, matcher, 'device')}"
-    if tid := format_value(port, matcher, "tid"):
+def format_detail(port: ok_serial.SerialPort) -> str:
+    label = f"Port: {format_value(port, 'device')}"
+    if tid := format_value(port, "tid"):
         label += f" {tid}"
     if age := format_age(port):
         label += f" {age}"
     return label + "".join(
-        f"\n  {k}={format_value(port, matcher, k)}" for k in port.attr
+        f"\n  {k}={format_value(port, k)}" for k in port.attr
     )
 
 
-def format_value(
-    port: ok_serial.SerialPort, matcher: ok_serial.SerialPortMatcher, k: str
-) -> str:
+def format_value(port: ok_serial.SerialPort, k: str) -> str:
     if v := port.attr.get(k, ""):
-        v = repr(v) if re.search(r"""[\s!"'*=?\\]""", v) else v
-        return v + ("✅" if matcher.attr_hit(port, k) else "")
+        return repr(v) if re.search(r"\s", v) else v
     return ""
 
 
