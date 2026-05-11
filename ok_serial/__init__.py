@@ -23,6 +23,7 @@ from ok_serial._locking import SerialSharingType
 
 from ok_serial._exceptions import (
     SerialException,
+    SerialIoCeded,
     SerialIoClosed,
     SerialIoException,
     SerialOpenBusy,

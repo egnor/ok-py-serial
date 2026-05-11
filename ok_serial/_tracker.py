@@ -73,7 +73,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None
 
-        log.debug("Tracking: %r", match if match else "(any port)")
+        log.debug("Tracking: %r", match or "(any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
@@ -93,6 +93,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
         with self._lock:
             if self._conn:
+                log.debug("Closing %s", self._conn.port_name)
                 self._conn.close()
 
     def find_sync(self, timeout: float | int | None = None) -> list[SerialPort]:
@@ -178,20 +179,21 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except SerialIoClosed:
-                        log.debug("%s closed", self._conn.port_name)
+                        log.debug("Conn to %s closed", self._conn.port_name)
+                        self._conn.close()  # make sure _fully_ closed
                         self._conn = None
                     except SerialIoException as exc:
                         name = self._conn.port_name
-                        log.warning("%s failed (%s)", name, exc)
+                        log.warning("Conn to %s failed (%s)", name, exc)
                         self._conn.close()
                         self._conn = None
 
                 ports.sort(key=lambda p: p.attr.get("time", ""), reverse=True)
                 for port in ports:
                     try:
-                        self._conn = SerialConnection(
-                            port=port, opts=self._conn_opts
-                        )
+                        log.debug("Opening %s", port)
+                        opts = self._conn_opts
+                        self._conn = SerialConnection(port=port, opts=opts)
                         return self._conn
                     except SerialOpenException as exc:
                         log.warning("Can't open %s (%s)", port, exc)

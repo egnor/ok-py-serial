@@ -14,122 +14,200 @@ SerialSharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
 log = logging.getLogger("ok_serial.locking")
 
+# Linux TIOCGEXCL: _IOR('T', 0x40, int)
+TIOCGEXCL = getattr(termios, "TIOCGEXCL", 0x80045440)
 
-@contextlib.contextmanager
-def using_lock_file(device: str, sharing: SerialSharingType):
+# Bits set on the port's termios as a "canary" in polite mode. All three are
+# cleared by cfmakeraw() and by pyserial's reconfigure; all three are no-ops
+# in the modes ok-serial uses (PARMRK only matters with PARENB; IGNBRK only
+# affects BREAK delivery, which we don't surface; ECHONL only matters with
+# ICANON). If any of these clears, someone else reconfigured the port.
+_CANARY_IFLAG = termios.PARMRK | termios.IGNBRK
+_CANARY_LFLAG = termios.ECHONL
+
+
+def _lock_path_for(device: str) -> Path:
     parts = Path(device).parts[-2:]
-    if parts[-1].isdigit() and parts[-2:][0].startswith("pt"):
-        lock_path = Path(f"/var/lock/LCK..{'.'.join(parts[-2:])}")
-    else:
-        lock_path = Path(f"/var/lock/LCK..{parts[-1]}")
-    for _try in range(10):
-        if _try_lock_file(device=device, lock_path=lock_path, sharing=sharing):
-            break
-    else:
-        message = "Serial port busy (retries exceeded)"
-        raise SerialOpenBusy(message, device)
-
-    yield
-
-    _release_lock_file(lock_path, sharing)
+    if parts[-1].isdigit() and parts[0].startswith("pt"):
+        return Path(f"/var/lock/LCK..{'.'.join(parts)}")
+    return Path(f"/var/lock/LCK..{parts[-1]}")
 
 
-@contextlib.contextmanager
-def using_fd_lock(device: str, fd: int, sharing: SerialSharingType):
-    try:
-        if sharing == "polite":
-            # briefly acquire an exclusive lock to defer to other polite users
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            log.debug("Acquired flock(LOCK_SH) on %s", device)
-        elif sharing != "oblivious":
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            log.debug("Acquired flock(LOCK_EX) on %s", device)
-    except BlockingIOError as ex:
-        message = "Serial port busy (flock claimed)"
-        raise SerialOpenBusy(message, device) from ex
-    except OSError:
-        log.warning("Can't lock (flock) %s", device, exc_info=True)
+class PortLock(contextlib.AbstractContextManager):
+    """Holds all port-locking state for one `SerialConnection`.
 
-    try:
-        if sharing in ("exclusive", "stomp"):
-            fcntl.ioctl(fd, termios.TIOCEXCL)
-            log.debug("Acquired TIOCEXCL on %s", device)
-    except OSError:
-        log.warning("Can't lock (TIOCEXCL) %s", device, exc_info=True)
+    Context-manager scope covers the LCK..* (or .polite) lockfile. Call
+    `attach_fd(fd)` after the device is open to claim fd-level state
+    (flock, TIOCEXCL, termios canary). Call `check()` periodically.
+    """
 
-    yield
+    fd: int | None
+    _created_path: Path | None
+    _canary_baseline: list | None
 
-    try:
-        fcntl.ioctl(fd, termios.TIOCNXCL)
-        log.debug("Released TIOCEXCL on %s", device)
-    except OSError:
-        log.warning("Can't release TIOCEXCL on %s", device, exc_info=True)
+    def __init__(self, device: str, sharing: SerialSharingType) -> None:
+        self.device = device
+        self.sharing = sharing
+        self.path = _lock_path_for(device)
+        self.polite_path = self.path.with_name(self.path.name + ".polite")
+        self.fd = None
+        self._created_path = None
+        self._canary_baseline = None
+        self._tiocexcl_held = False
 
-    try:
-        if sharing != "oblivious":
-            fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
-            log.debug("Released flock on %s", device)
-    except OSError:
-        log.warning("Can't release flock on %s", device, exc_info=True)
+    def __enter__(self) -> "PortLock":
+        self._claim_lockfile()
+        return self
 
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        if self._created_path is not None:
+            _release_lock_file(self._created_path)
+            self._created_path = None
 
-def _try_lock_file(
-    *, device: str, lock_path: Path, sharing: SerialSharingType
-) -> bool:
-    if sharing == "oblivious":
-        return True
+    def attach_fd(self, fd: int) -> None:
+        """Claim fd-level state."""
+        self.fd = fd
+        if self.sharing == "oblivious":
+            return
 
-    if not lock_path.parent.is_dir():
-        log.debug("No lock directory %s", lock_path.parent)
-        return True
+        try:
+            if self.sharing == "polite":
+                # Probe for any existing flock holder, then release so we
+                # don't shut out a future exclusive user.
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
+                log.debug("Probed flock on %s (polite)", self.device)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                log.debug("Acquired flock(LOCK_EX) on %s", self.device)
+        except BlockingIOError as ex:
+            message = "Serial port busy (flock claimed)"
+            raise SerialOpenBusy(message, self.device) from ex
+        except OSError:
+            log.warning("Can't lock (flock) %s", self.device, exc_info=True)
 
-    if owner_pid := _lock_file_owner(lock_path):
-        if owner_pid == os.getpid():
-            log.debug("We already own %s", lock_path)
-            return True
-
-        if sharing == "stomp":
+        if self.sharing in ("exclusive", "stomp"):
             try:
-                os.kill(owner_pid, signal.SIGTERM)
-                log.debug("Killed owner %d of %s", owner_pid, lock_path)
+                fcntl.ioctl(fd, termios.TIOCEXCL)
+                self._tiocexcl_held = True
+                log.debug("Acquired TIOCEXCL on %s", self.device)
             except OSError:
-                log.warning(
-                    "Can't kill owner %d of %s",
-                    owner_pid,
-                    lock_path,
-                    exc_info=True,
-                )
+                msg, dev = "Can't lock (TIOCEXCL) %s", self.device
+                log.warning(msg, dev, exc_info=True)
+
+        if self.sharing == "polite":
+            self._install_canary(fd)
+
+    def check(self) -> str | None:
+        """Returns a reason string if polite mode should cede, else None."""
+        if self.sharing != "polite" or self.fd is None:
+            return None
+
+        if self._canary_baseline is not None:
+            try:
+                current = termios.tcgetattr(self.fd)
+                iflag_ok = (current[0] & _CANARY_IFLAG) == _CANARY_IFLAG
+                lflag_ok = (current[3] & _CANARY_LFLAG) == _CANARY_LFLAG
+                if not iflag_ok or not lflag_ok:
+                    return "termios canary cleared"
+            except (OSError, termios.error):
+                pass
+
+        try:
+            import array
+
+            buf = array.array("i", [0])
+            fcntl.ioctl(self.fd, TIOCGEXCL, buf, True)
+            if buf[0]:
+                return "TIOCEXCL set by another user"
+        except OSError:
+            pass
+
+        owner = _lock_file_owner(self.path)
+        if owner and owner != os.getpid():
+            return f"{self.path} appeared (pid={owner})"
+        if owner is None and self.path.exists():
+            return f"{self.path} appeared"
+
+        return None
+
+    def _claim_lockfile(self) -> None:
+        if self.sharing == "oblivious":
+            return
+
+        if self.sharing == "polite":
+            owner = _lock_file_owner(self.path)  # cleans up stale
+            if self.path.exists():
+                message = f"Serial port busy ({self.path}"
+                message += f": pid={owner})" if owner else ")"
+                raise SerialOpenBusy(message, self.device)
+            self._try_claim(self.polite_path, mode="exclusive")
         else:
-            log.debug("PID %d owns %s", owner_pid, lock_path)
-            message = f"Serial port busy ({lock_path}: pid={owner_pid})"
-            raise SerialOpenBusy(message, device)
+            self._try_claim(self.path, mode=self.sharing)
 
-    try:
-        write_mode = "wt" if sharing == "stomp" else "xt"
-        with lock_path.open(write_mode) as lock_file:
-            lock_file.write(f"{os.getpid():>10d}\n")
-    except FileExistsError:
-        log.warning("Conflict creating %s", lock_path)
-        return False  # try again (with a retry limit)
-    except OSError:
-        log.warning("Can't create %s", lock_path, exc_info=True)
-        return True  # proceed anyway
+    def _try_claim(self, path: Path, *, mode: str) -> None:
+        for _try in range(10):
+            if not path.parent.is_dir():
+                log.debug("No lock directory %s", path.parent)
+                return
 
-    log.debug("Claimed %s", lock_path)
-    return True
+            if owner_pid := _lock_file_owner(path):
+                if owner_pid == os.getpid():
+                    log.debug("We already own %s", path)
+                    return
+                if mode == "stomp":
+                    try:
+                        os.kill(owner_pid, signal.SIGTERM)
+                        log.debug("Killed owner %d of %s", owner_pid, path)
+                    except OSError:
+                        msg = "Can't kill owner %d of %s"
+                        log.warning(msg, owner_pid, path, exc_info=True)
+                else:
+                    log.debug("PID %d owns %s", owner_pid, path)
+                    message = f"Serial port busy ({path}: pid={owner_pid})"
+                    raise SerialOpenBusy(message, self.device)
+
+            try:
+                write_mode = "wt" if mode == "stomp" else "xt"
+                with path.open(write_mode) as lock_file:
+                    lock_file.write(f"{os.getpid():>10d}\n")
+            except FileExistsError:
+                log.warning("Conflict creating %s", path)
+                continue  # retry
+            except OSError:
+                log.warning("Can't create %s", path, exc_info=True)
+                return  # proceed anyway
+
+            log.debug("Claimed %s", path)
+            self._created_path = path
+            return
+
+        message = "Serial port busy (retries exceeded)"
+        raise SerialOpenBusy(message, self.device)
+
+    def _install_canary(self, fd: int) -> None:
+        try:
+            baseline = termios.tcgetattr(fd)
+            modified = list(baseline)
+            modified[0] = modified[0] | _CANARY_IFLAG
+            modified[3] = modified[3] | _CANARY_LFLAG
+            termios.tcsetattr(fd, termios.TCSANOW, modified)
+            self._canary_baseline = baseline
+            log.debug("Installed polite canary on %s", self.device)
+        except (OSError, termios.error):
+            msg = "Can't install polite canary on %s"
+            log.warning(msg, self.device, exc_info=True)
 
 
-def _release_lock_file(lock_path: Path, sharing: SerialSharingType) -> None:
-    if sharing == "oblivious" or _lock_file_owner(lock_path) != os.getpid():
+def _release_lock_file(lock_path: Path) -> None:
+    if _lock_file_owner(lock_path) != os.getpid():
         return
 
     try:
         lock_path.unlink()
-        log.debug("Released %s", lock_path)
+        log.debug("Removed %s", lock_path)
     except OSError:
-        log.warning("Can't release %s", lock_path, exc_info=True)
+        log.warning("Can't remove %s", lock_path, exc_info=True)
 
 
 def _lock_file_owner(lock_path: Path) -> int | None:

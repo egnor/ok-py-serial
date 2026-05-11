@@ -321,3 +321,36 @@ def test_signals_after_close_raises(pty_serial):
 
     with pytest.raises(ok_serial.SerialIoClosed):
         conn.set_signals(dtr=True)
+
+
+#
+# Polite mode intrusion detection (canary cede)
+#
+
+
+def test_polite_cedes_when_canary_cleared(pty_serial):
+    """Polite mode should raise SerialIoCeded when another process clears
+    the termios canary bits (simulating cfmakeraw by an external tool)."""
+    with ok_serial.SerialConnection(port=pty_serial.path, sharing="polite") as conn:
+        # Verify the canary bits are set on the shared tty struct.
+        iflag, _, _, lflag, _, _, _ = termios.tcgetattr(pty_serial.simulated.fileno())
+        assert iflag & (termios.PARMRK | termios.IGNBRK)
+        assert lflag & termios.ECHONL
+
+        # Simulate an external tool reconfiguring the port (cfmakeraw-style).
+        attr = termios.tcgetattr(pty_serial.simulated.fileno())
+        attr[0] &= ~(termios.PARMRK | termios.IGNBRK)
+        attr[3] &= ~termios.ECHONL
+        termios.tcsetattr(pty_serial.simulated.fileno(), termios.TCSANOW, attr)
+
+        # Readloop wakes every 0.5s in polite mode; give it a bit longer.
+        with pytest.raises(ok_serial.SerialIoCeded):
+            conn.read_sync(timeout=2.0)
+
+
+def test_polite_does_not_cede_normally(pty_serial):
+    """Polite mode should not raise spuriously when no intrusion occurs."""
+    with ok_serial.SerialConnection(port=pty_serial.path, sharing="polite") as conn:
+        # Normal read should time out cleanly (no cede).
+        data = conn.read_sync(timeout=0.7)
+        assert data == b""

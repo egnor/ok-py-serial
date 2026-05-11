@@ -8,7 +8,7 @@ import threading
 import time
 
 from ok_serial import _exceptions
-from ok_serial._locking import SerialSharingType, using_fd_lock, using_lock_file
+from ok_serial._locking import PortLock, SerialSharingType
 from ok_serial._matching import PortPredicate, compile_match
 from ok_serial._scanning import SerialPort, scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
@@ -124,14 +124,16 @@ class SerialConnection(contextlib.AbstractContextManager):
             port = port.name
 
         with contextlib.ExitStack() as cleanup:
-            cleanup.enter_context(using_lock_file(port, opts.sharing))
+            port_lock = cleanup.enter_context(PortLock(port, opts.sharing))
 
             try:
+                # (If "polite", wake the readloop periodically for checks.)
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
                         baudrate=opts.baud,
                         write_timeout=0.1,
+                        timeout=(0.5 if opts.sharing == "polite" else None),
                     )
                 )
                 log.debug("Opened %s %s", port, opts)
@@ -144,16 +146,15 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenException(msg, port) from ex
 
             if hasattr(pyserial, "fileno"):
-                fd, share = pyserial.fileno(), opts.sharing
-                cleanup.enter_context(using_fd_lock(port, fd, share))
+                port_lock.attach_fd(pyserial.fileno())
 
-            self._io = cleanup.enter_context(_IoThreads(pyserial))
+            self._io = cleanup.enter_context(_IoThreads(pyserial, port_lock))
             self._io.start()
             self._cleanup = cleanup.pop_all()
 
     def __del__(self) -> None:
-        if hasattr(self, "_cleanup"):
-            self._cleanup.close()
+        if cleanup := getattr(self, "_cleanup", None):
+            cleanup.close()
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self._cleanup.__exit__(exc_type, exc_value, traceback)
@@ -376,9 +377,14 @@ class SerialConnection(contextlib.AbstractContextManager):
 
 
 class _IoThreads(contextlib.AbstractContextManager):
-    def __init__(self, pyserial: serial.Serial) -> None:
+    def __init__(
+        self,
+        pyserial: serial.Serial,
+        port_lock: PortLock | None = None,
+    ) -> None:
         self.threads: list[threading.Thread] = []
         self.pyserial = pyserial
+        self.port_lock = port_lock
         self.monitor = threading.Condition()
         self.outgoing = bytearray()
         self.incoming = bytearray()
@@ -423,7 +429,7 @@ class _IoThreads(contextlib.AbstractContextManager):
     def _readloop(self) -> None:
         log.debug("Starting thread")
         while not self.exception:
-            incoming, error = b"", None
+            incoming, error, monotonic_time = b"", None, 0.0
             try:
                 # Block for at least one byte, then grab all available
                 incoming = self.pyserial.read(size=1)
@@ -437,6 +443,12 @@ class _IoThreads(contextlib.AbstractContextManager):
                 error = _exceptions.SerialIoException(msg, dev)
                 error.__cause__ = ex
                 data_log.warning("%s (%s)", msg, ex)
+
+            if error is None and self.port_lock is not None:
+                if reason := self.port_lock.check():
+                    msg, dev = f"Ceding port ({reason})", self.pyserial.port
+                    error = _exceptions.SerialIoCeded(msg, dev)
+                    log.info("%s: %s", dev, msg)
 
             with self.monitor:
                 if incoming:

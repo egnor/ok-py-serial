@@ -209,21 +209,16 @@ have.
 When opening a port,
 [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.__init__)
 offers a choice of
-[four sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
+[sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
 
-- `oblivious` (not recommended) - no locking is done and locks are ignored.
-  Multiple users may end up sending and receiving data on the same port.
-- `polite` - open fails if the port is locked. Once opened, no locks
-  are held except for a shared lock to ward off other `polite` users. If a
-  less polite program opens the port later there will be conflict.
-  (In the future, this mode will attempt to notice such conflicts
-  and close out the port, deferring to the less-polite program.)
-- `exclusive` (the default) - open fails if the port is locked
-  by a non-`polite` user. Once opened, locking protocols are used to prevent
-  or discourage others from opening the port.
-- `stomp` (use with care!) - _any other program using the port is killed_,
-  if possible; regardless, locks are acquired, if possible; regardless,
-  the port is opened, if possible.
+- `oblivious` (not recommended) - Checks no locks and holds no locks.
+  Multiple programs may open the port at once, leading to corruption.
+- `polite` - Checks for locks before opening the port, but holds no locks
+  while running. Abandons the port if another program is detected using it.
+- `exclusive` (the default) - Checks for locks before opening the port, and
+  holds locks to guard against other programs using the port.
+- `stomp` (use with care!) - _Any other program using the port is killed_,
+  if possible; locks are held, if possible; the port is opened regardless.
 
 Sharing mode implementation is limited by OS capabilities, process permissions,
 and historical conventions of port usage coordination.

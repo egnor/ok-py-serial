@@ -24,6 +24,12 @@ class SerialIoClosed(SerialIoException):
     pass
 
 
+class SerialIoCeded(SerialIoException):
+    """Exception raised when a `polite` connection cedes to another user."""
+
+    pass
+
+
 class SerialOpenException(SerialException):
     """Exception raised for system errors opening a serial port."""
 
