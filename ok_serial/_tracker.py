@@ -104,7 +104,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         Returns a list of matching `SerialPort` objects, or `[]` on timeout.
 
         Raises:
-        - `SerialScanException`: System error scanning ports
+        - `SerialScanException` - System error scanning ports
         """
 
         def key(p: SerialPort) -> str:
@@ -160,17 +160,13 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         If a connection is established and healthy, returns it immediately.
 
         Otherwise, waits up to `timeout` seconds (forever for `None`) for
-        serial port(s) to appear matching this tracker's requirements, then
-        attempts a new connection. If the connection succeeds, it is remembered
-        and returned, otherwise scanning resumes.
-
-        If multiple ports match the requirements, connections are attempted
-        to each, and the first success (if any) is remembered and returned.
+        serial port(s) to appear matching this tracker's requirements,
+        returning the first successful connection from among them.
 
         Returns `None` on timeout.
 
         Raises:
-        - `SerialScanException`: System error scanning ports
+        - `SerialScanException` - System error scanning ports
         """
 
         deadline = to_deadline(timeout)

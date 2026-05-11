@@ -26,10 +26,10 @@ class SerialConnectionOptions:
     sharing: SerialSharingType = "exclusive"
     """
     Port access negotiation strategy:
-    - `"oblivious"`: Don't perform any locking.
-    - `"polite"`: Defer to other users, don't lock the port.
-    - `"exclusive":` Require exclusive access, lock the port or fail.
-    - `"stomp"`: Try to kill other users, try to lock the port, open the
+    - `"oblivious"` - Don't perform any locking.
+    - `"polite"` - Defer to other users, don't lock the port.
+    - `"exclusive"` - Require exclusive access, lock the port or fail.
+    - `"stomp"` - Try to kill other users, try to lock the port, open the
       port regardless. Use with care!
     """
 
@@ -77,17 +77,16 @@ class SerialConnection(contextlib.AbstractContextManager):
     ):
         """
         Opens a serial port to make it available for use.
-        - `match` selects a port: a
+        - `match` selects one port: a
           [match string](https://github.com/egnor/ok-py-serial#port-matching)
-          or a `SerialPort -> bool` callable matching exactly one port...
+          or a `SerialPort -> bool` callable...
           - OR `port` must name a raw system serial device to open.
         - `opts` can define baud rate and other port parameters...
           - OR other keywords are forwarded to `SerialConnectionOptions`
 
-        Call `close` to release the port; use
+        Call `close` to release the port, or use
         `SerialConnection` as the target of a
-        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with)
-        to automatically close the port on exit from the `with` body.
+        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with).
 
         Example:
         ```
@@ -97,9 +96,9 @@ class SerialConnection(contextlib.AbstractContextManager):
         ```
 
         Raises:
-        - `SerialOpenException`: I/O error opening the specified port
-        - `SerialOpenBusy`: The port is already in use
-        - `SerialScanException`: System error scanning ports to find `match`
+        - `SerialOpenException` - I/O error opening the specified port
+        - `SerialOpenBusy` - The port is already in use
+        - `SerialScanException` - System error scanning ports to find `match`
         """
 
         assert (match is not None) + (port is not None) == 1
@@ -182,8 +181,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         then returns all of it (b"" on timeout).
 
         Raises:
-        - `SerialIoException`: port I/O failed and there is no matching data
-        - `SerialIoClosed`: the port was closed and there is no matching data
+        - `SerialIoException` - port I/O failed and there is no matching data
+        - `SerialIoClosed` - the port was closed and there is no matching data
         """
 
         deadline = to_deadline(timeout)
@@ -223,8 +222,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         buffer size.)
 
         Raises:
-        - `SerialIoException`: port I/O failed
-        - `SerialIoClosed`: the port was closed
+        - `SerialIoException` - port I/O failed
+        - `SerialIoClosed` - the port was closed
         """
 
         with self._io.monitor:
@@ -242,8 +241,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         Returns `True` if the drain completed, `False` on timeout.
 
         Raises:
-        - `SerialIoException`: port I/O failed
-        - `SerialIoClosed`: the port was closed
+        - `SerialIoException` - port I/O failed
+        - `SerialIoClosed` - the port was closed
         """
 
         deadline = to_deadline(timeout)
@@ -295,13 +294,13 @@ class SerialConnection(contextlib.AbstractContextManager):
         Sets outgoing
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals)
         state (use `None` for no change):
-        - `dtr`: assert Data Terminal Ready
-        - `rts`: assert Ready To Send
-        - `send_break`: send a continuous BREAK condition
+        - `dtr` - assert Data Terminal Ready
+        - `rts` - assert Ready To Send
+        - `send_break` - send a continuous BREAK condition
 
         Raises:
-        - `SerialIoException`: port I/O failed
-        - `SerialIoClosed`: the port was closed
+        - `SerialIoException` - port I/O failed
+        - `SerialIoClosed` - the port was closed
         """
 
         with self._io.monitor:
@@ -326,8 +325,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
 
         Raises:
-        - `SerialIoException`: port I/O failed
-        - `SerialIoClosed`: the port was closed
+        - `SerialIoException` - port I/O failed
+        - `SerialIoClosed` - the port was closed
         """
 
         with self._io.monitor:

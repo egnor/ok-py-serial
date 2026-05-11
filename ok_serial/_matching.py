@@ -23,23 +23,16 @@ def compile_match(spec: str | PortPredicate | None) -> PortPredicate:
     """
 
     if spec is None or spec == "":
-        return _match_any
+        return lambda p: True
     if callable(spec):
         return spec
     tokens = [_compile_token(t) for t in spec.split()]
     if not tokens:
-        return _match_any
+        return lambda p: True
 
-    def predicate(port: SerialPort) -> bool:
-        return all(
-            any(t.search(v) for v in port.attr.values()) for t in tokens
-        )
-
-    return predicate
-
-
-def _match_any(port: SerialPort) -> bool:
-    return True
+    return lambda port: all(
+        any(t.search(v) for v in port.attr.values()) for t in tokens
+    )
 
 
 def _compile_token(token: str) -> re.Pattern:

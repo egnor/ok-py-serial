@@ -43,7 +43,7 @@ def scan_serial_ports() -> list[SerialPort]:
     is returned instead of actual system scan results.
 
     Raises:
-    - `SerialScanException`: System error scanning ports
+    - `SerialScanException` - System error scanning ports
     """
 
     if ov_path := os.getenv("OK_SERIAL_SCAN_OVERRIDE"):
