@@ -38,6 +38,7 @@ def using_lock_file(device: str, sharing: SerialSharingType):
 def using_fd_lock(device: str, fd: int, sharing: SerialSharingType):
     try:
         if sharing == "polite":
+            # briefly acquire an exclusive lock to defer to other polite users
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fd, fcntl.LOCK_UN | fcntl.LOCK_NB)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)

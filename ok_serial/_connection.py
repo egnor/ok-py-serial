@@ -77,9 +77,9 @@ class SerialConnection(contextlib.AbstractContextManager):
     ):
         """
         Opens a serial port to make it available for use.
-        - `match` selects one port: a
+        - `match` is a
           [match string](https://github.com/egnor/ok-py-serial#port-matching)
-          or a `SerialPort -> bool` callable...
+          or `SerialPort -> bool` callable matching exactly one port...
           - OR `port` must name a raw system serial device to open.
         - `opts` can define baud rate and other port parameters...
           - OR other keywords are forwarded to `SerialConnectionOptions`
