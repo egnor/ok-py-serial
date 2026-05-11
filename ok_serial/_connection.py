@@ -9,8 +9,8 @@ import time
 
 from ok_serial import _exceptions
 from ok_serial._locking import PortLock, SerialSharingType
-from ok_serial._matching import PortPredicate, compile_match
-from ok_serial._scanning import SerialPort, scan_serial_ports
+from ok_serial._metadata import SerialPort, PortPredicate
+from ok_serial._scanning import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
 log = logging.getLogger("ok_serial.connection")
@@ -105,18 +105,14 @@ class SerialConnection(contextlib.AbstractContextManager):
         opts = dataclasses.replace(opts, **kwargs)
 
         if match is not None:
-            predicate = compile_match(match)
-            if not (found := scan_serial_ports()):
-                raise _exceptions.SerialOpenException("No ports found")
-            matched = [p for p in found if predicate(p)]
-            if not matched:
+            if not (found := scan_serial_ports(match)):
                 msg = f"No ports match {match!r}"
                 raise _exceptions.SerialOpenException(msg)
-            if len(matched) > 1:
-                matched_text = "".join(f"\n  {p}" for p in matched)
-                msg = f"Multiple ports match {match!r}: {matched_text}"
+            if len(found) > 1:
+                found_text = "".join(f"\n  {p}" for p in found)
+                msg = f"Multiple ports match {match!r}: {found_text}"
                 raise _exceptions.SerialOpenException(msg)
-            port = matched[0].name
+            port = found[0].name
             log.debug("Scanned %r, found %s", match, port)
 
         assert port is not None
@@ -146,6 +142,8 @@ class SerialConnection(contextlib.AbstractContextManager):
                     raise _exceptions.SerialOpenException(msg, port) from ex
 
             if hasattr(pyserial, "fileno"):
+                # unlock fd before closing port (see note on release_fd)
+                cleanup.callback(port_lock.release_fd)
                 port_lock.attach_fd(pyserial.fileno())
 
             self._io = cleanup.enter_context(_IoThreads(pyserial, port_lock))
@@ -434,21 +432,20 @@ class _IoThreads(contextlib.AbstractContextManager):
                 # Block for at least one byte, then grab all available
                 incoming = self.pyserial.read(size=1)
                 monotonic_time = time.monotonic()
+                if self.port_lock:
+                    self.port_lock.check()
                 if incoming:
                     waiting = self.pyserial.in_waiting
                     if waiting > 0:
                         incoming += self.pyserial.read(size=waiting)
+            except _exceptions.SerialIoException as ex:
+                error = ex
+                data_log.warning("%s", ex)
             except OSError as ex:
                 msg, dev = "Serial read error", self.pyserial.port
                 error = _exceptions.SerialIoException(msg, dev)
                 error.__cause__ = ex
                 data_log.warning("%s (%s)", msg, ex)
-
-            if error is None and self.port_lock is not None:
-                if reason := self.port_lock.check():
-                    msg, dev = f"Ceding port ({reason})", self.pyserial.port
-                    error = _exceptions.SerialIoCeded(msg, dev)
-                    log.info("%s: %s", dev, msg)
 
             with self.monitor:
                 if incoming:

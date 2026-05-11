@@ -11,8 +11,9 @@ from ok_serial._exceptions import (
     SerialIoException,
     SerialOpenException,
 )
-from ok_serial._matching import PortPredicate, compile_match
-from ok_serial._scanning import SerialPort, scan_serial_ports
+from ok_serial._matching import compile_match
+from ok_serial._metadata import SerialPort, PortPredicate
+from ok_serial._scanning import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
 log = logging.getLogger("ok_serial.tracker")
@@ -62,7 +63,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             copts = dataclasses.replace(copts, baud=baud)
 
         self.match = match
-        self._predicate = compile_match(match)
+        self._match = compile_match(match)
         self._tracker_opts = topts
         self._conn_opts = copts
 
@@ -96,64 +97,6 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                 log.debug("Closing %s", self._conn.port_name)
                 self._conn.close()
 
-    def find_sync(self, timeout: float | int | None = None) -> list[SerialPort]:
-        """
-        Waits up to `timeout` seconds (forever for `None`) until serial port(s)
-        exist matching this tracker's requirements. Rescans periodically while
-        waiting (see `TrackerOptions.scan_interval`).
-
-        Returns a list of matching `SerialPort` objects, or `[]` on timeout.
-
-        Raises:
-        - `SerialScanException` - System error scanning ports
-        """
-
-        def key(p: SerialPort) -> str:
-            return p.name + "@" + p.attr.get("time", "")
-
-        deadline = to_deadline(timeout)
-        while True:
-            with self._lock:
-                if (wait := from_deadline(self._next_scan)) <= 0:
-                    wait = self._tracker_opts.scan_interval
-                    found = scan_serial_ports()
-                    for p in found if self._next_scan else []:  # not first scan
-                        if key(p) not in self._scan_keys:
-                            p.attr["tracking"] = "new"
-
-                    matched = [p for p in found if self._predicate(p)]
-                    self._next_scan = to_deadline(wait)
-                    self._scan_keys = set(key(p) for p in found)
-                    self._scan_matched = matched
-                    nf, nm = len(found), len(matched)
-                    log.debug("%d/%d ports match %r", nm, nf, self.match)
-
-                if self._scan_matched:
-                    return self._scan_matched
-
-            timeout_wait = from_deadline(deadline)
-            if timeout_wait < wait:
-                return []
-
-            log.debug("Next scan in %.2fs", wait)
-            time.sleep(wait)
-
-    async def find_async(self) -> list[SerialPort]:
-        """
-        Similar to `find_sync` but returns a
-        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
-        instead of blocking the current thread.
-        """
-
-        while True:
-            with self._lock:
-                next_scan = self._next_scan
-            if ports := self.find_sync(timeout=0):
-                return ports
-            wait = from_deadline(next_scan)
-            log.debug("Next scan in %.2fs", wait)
-            await asyncio.sleep(wait)
-
     def connect_sync(
         self, timeout: float | int | None = None
     ) -> SerialConnection | None:
@@ -171,9 +114,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         """
 
         deadline = to_deadline(timeout)
-        ports: list[SerialPort] = []
         while True:
             with self._lock:
+                # Return an existing live connection if possible
                 if self._conn:
                     try:
                         self._conn.write(b"")  # check for liveness
@@ -188,8 +131,24 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         self._conn.close()
                         self._conn = None
 
-                ports.sort(key=lambda p: p.attr.get("time", ""), reverse=True)
-                for port in ports:
+                # Re-scan for ports at the specified interval
+                if (wait := from_deadline(self._next_scan)) <= 0:
+                    self._scan_matched = scan_serial_ports(self._match)
+                    self._scan_matched.sort(
+                        key=lambda p: p.attr.get("time", ""), reverse=True
+                    )
+
+                    self._scan_keys, old_keys = set(), self._scan_keys
+                    for p in self._scan_matched:
+                        key = p.name + "@" + p.attr.get("time", "")
+                        self._scan_keys.add(key)
+                        if self._next_scan and key not in old_keys:
+                            p.attr["tracking"] = "new"
+
+                    wait = self._tracker_opts.scan_interval
+                    self._next_scan = to_deadline(wait)
+
+                for port in list(self._scan_matched):
                     try:
                         log.debug("Opening %s", port)
                         opts = self._conn_opts
@@ -197,10 +156,13 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         return self._conn
                     except SerialOpenException as exc:
                         log.warning("Can't open %s (%s)", port, exc)
-                        self._scan_matched = []  # force re-scan on error
+                        self._scan_matched = []  # cool down until re-scan
 
-            if not (ports := self.find_sync(timeout=from_deadline(deadline))):
+            if from_deadline(deadline) < wait:
                 return None
+
+            log.debug("Next scan in %.2fs", wait)
+            time.sleep(wait)
 
     async def connect_async(self) -> SerialConnection:
         """
@@ -210,10 +172,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         """
 
         while True:
-            with self._lock:
-                next_scan = self._next_scan
             if conn := self.connect_sync(timeout=0):
                 return conn
-            wait = from_deadline(next_scan)
+            with self._lock:
+                wait = from_deadline(self._next_scan)
             log.debug("Next scan in %.2fs", wait)
             await asyncio.sleep(wait)

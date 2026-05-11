@@ -1,13 +1,6 @@
-import logging
 import re
-from collections.abc import Callable
 
-from ok_serial._scanning import SerialPort
-
-log = logging.getLogger("ok_serial.matching")
-
-PortPredicate = Callable[[SerialPort], bool]
-"""A function that returns True for ports of interest."""
+from ok_serial._metadata import PortPredicate
 
 
 def compile_match(spec: str | PortPredicate | None) -> PortPredicate:

@@ -1,4 +1,3 @@
-import dataclasses
 import datetime
 import json
 import logging
@@ -10,6 +9,8 @@ from serial.tools import list_ports
 from serial.tools import list_ports_common
 
 from ok_serial._exceptions import SerialScanException
+from ok_serial._matching import compile_match
+from ok_serial._metadata import SerialPort, PortPredicate
 
 log = logging.getLogger("ok_serial.scanning")
 
@@ -17,25 +18,15 @@ _HASHMASK = (1 << (struct.calcsize("L") * 8)) - 1
 _HASHCODE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 
-@dataclasses.dataclass(frozen=True)
-class SerialPort:
-    """Metadata about a serial port found on the system"""
-
-    name: str
-    """The OS device identifier, eg. `/dev/ttyUSB3`, 'COM4', etc."""
-
-    attr: dict[str, str]
-    """
-    [Metadata](https://github.com/egnor/py-ok-serial#serial-port-attributes)
-    """
-
-    def __str__(self):
-        return self.name
-
-
-def scan_serial_ports() -> list[SerialPort]:
+def scan_serial_ports(
+    match: str | PortPredicate | None = None,
+) -> list[SerialPort]:
     """
     Returns a list of serial ports currently attached to the system.
+
+    If set, `match` is a
+    [match string](https://github.com/egnor/ok-py-serial#port-matching)
+    or `SerialPort -> bool` callable to filter the ports returned.
 
     For testing and encapsulation, if the environment variable
     `$OK_SERIAL_SCAN_OVERRIDE` is the pathname of a JSON file in
@@ -48,7 +39,7 @@ def scan_serial_ports() -> list[SerialPort]:
 
     if ov_path := os.getenv("OK_SERIAL_SCAN_OVERRIDE"):
         try:
-            out = _ports_from_json_text(pathlib.Path(ov_path).read_text())
+            found = _ports_from_json_text(pathlib.Path(ov_path).read_text())
         except (OSError, ValueError) as ex:
             msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov_path}"
             raise SerialScanException(msg) from ex
@@ -59,17 +50,26 @@ def scan_serial_ports() -> list[SerialPort]:
             pyserial_ports = list_ports.comports()
         except OSError as ex:
             raise SerialScanException("Can't scan serial") from ex
-        out = []
+        found = []
         for pyserial_port in pyserial_ports:
             if port := _port_from_pyserial(pyserial_port):
-                out.append(port)
+                found.append(port)
 
-    out.sort(key=natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P))
-    log.debug("Found %d ports", len(out))
-    return out
+    sort_key = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
+    found.sort(key=sort_key)
+
+    if match is not None:
+        cull = list(filter(compile_match(match), found))
+        log.debug("Found %d ports, %d match %r", len(found), len(cull), match)
+        return cull
+    else:
+        log.debug("Found %d ports", len(found))
+        return found
 
 
-def _port_from_pyserial(p: list_ports_common.ListPortInfo) -> SerialPort | None:
+def _port_from_pyserial(
+    p: list_ports_common.ListPortInfo,
+) -> SerialPort | None:
     # filter out bogus serial8250 entries on Linux (ttyS0~ttyS31)
     # https://stackoverflow.com/questions/2530096/how-to-find-all-serial-devices-ttys-ttyusb-on-linux-without-opening-them/12301542#12301542
     # https://askubuntu.com/questions/1520139/pyserial-lists-incorrect-serialports-on-ubuntu-24-04

@@ -17,15 +17,16 @@ from ok_serial._connection import (
     SerialControlSignals,
 )
 
-from ok_serial._scanning import scan_serial_ports, SerialPort
+from ok_serial._scanning import scan_serial_ports
+from ok_serial._metadata import SerialPort
 from ok_serial._tracker import SerialPortTracker, TrackerOptions
 from ok_serial._locking import SerialSharingType
 
 from ok_serial._exceptions import (
     SerialException,
-    SerialIoCeded,
     SerialIoClosed,
     SerialIoException,
+    SerialIoTaken,
     SerialOpenBusy,
     SerialOpenException,
     SerialScanException,

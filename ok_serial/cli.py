@@ -18,7 +18,7 @@ import ok_serial
 import ok_serial.terminal
 
 ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
-ok_logging_setup.skip_traceback_for(ok_serial.SerialScanException)
+ok_logging_setup.skip_traceback_for(OSError)
 
 
 @click.group()
@@ -31,7 +31,6 @@ def main():
 @click.option("-1", "--one", is_flag=True)
 @click.option("-n", "--print-name", is_flag=True)
 @click.option("-v", "--print-verbose", is_flag=True)
-@click.option("-w", "--wait-time", default=0.0)
 def list_command(
     port: tuple[str, ...],
     one: bool = False,
@@ -41,20 +40,12 @@ def list_command(
 ):
     """Print a list of available serial ports"""
 
-    spec = " ".join(port)
-    tracker = ok_serial.SerialPortTracker(match=spec or None)
-    if spec and wait_time:
-        logging.info(
-            "🔎 Finding serial ports (%.2fs timeout): %r", wait_time, spec
-        )
-    elif spec:
+    if spec := " ".join(port):
         logging.info("🔎 Finding serial ports: %r", spec)
-    elif wait_time:
-        logging.info("🔎 Finding serial ports (%.2fs timeout)", wait_time)
     else:
         logging.info("🔎 Finding serial ports...")
 
-    found = tracker.find_sync(timeout=wait_time)
+    found = ok_serial.scan_serial_ports(spec)
     num = len(found)
     if num == 0:
         if spec:

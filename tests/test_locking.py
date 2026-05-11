@@ -11,21 +11,6 @@ from ok_serial import _locking
 
 
 #
-# Lock path generation
-#
-
-
-def test_lock_path_for_regular_device():
-    assert _locking._lock_path_for("/dev/ttyUSB0") == Path(
-        "/var/lock/LCK..ttyUSB0"
-    )
-
-
-def test_lock_path_for_pty_device():
-    assert _locking._lock_path_for("/dev/pts/5") == Path("/var/lock/LCK..pts.5")
-
-
-#
 # Lock file ownership
 #
 
@@ -70,73 +55,79 @@ def test_lock_file_owner_removes_invalid_content(fs):
 
 def test_oblivious_skips_lock_file(fs):
     fs.create_dir("/var/lock")
-    with _locking.PortLock("/dev/ttyUSB0", sharing="oblivious"):
-        assert not Path("/var/lock/LCK..ttyUSB0").exists()
+    with _locking.PortLock("/dev/ttyTEST0", sharing="oblivious"):
+        assert not Path("/var/lock/LCK..ttyTEST0").exists()
 
 
-def test_polite_creates_sidecar_not_lck(fs):
+def test_polite_creates_sidecar_only(fs):
     fs.create_dir("/var/lock")
-    with _locking.PortLock("/dev/ttyUSB0", sharing="polite"):
+    with _locking.PortLock("/dev/ttyTEST0", sharing="polite"):
         # Polite does NOT create the standard LCK..* file (would shut out
         # other lock-aware programs); it uses a .polite sidecar instead.
-        assert not Path("/var/lock/LCK..ttyUSB0").exists()
-        polite_path = Path("/var/lock/LCK..ttyUSB0.polite")
+        assert not Path("/var/lock/LCK..ttyTEST0").exists()
+        polite_path = Path("/var/lock/LCK..ttyTEST0.polite")
         assert polite_path.exists()
         assert int(polite_path.read_text().strip()) == os.getpid()
 
 
-def test_polite_fails_when_lck_held(fs):
+def test_polite_fails_when_lock_file_held(fs):
     fs.create_dir("/var/lock")
-    Path("/var/lock/LCK..ttyUSB0").write_text("         1\n")  # init
+    Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")  # init
     with pytest.raises(_exceptions.SerialOpenBusy):
-        with _locking.PortLock("/dev/ttyUSB0", sharing="polite"):
+        with _locking.PortLock("/dev/ttyTEST0", sharing="polite"):
             pass
 
 
 def test_polite_fails_when_other_polite_present(fs):
     fs.create_dir("/var/lock")
-    Path("/var/lock/LCK..ttyUSB0.polite").write_text("         1\n")
+    Path("/var/lock/LCK..ttyTEST0.polite").write_text("         1\n")
     with pytest.raises(_exceptions.SerialOpenBusy):
-        with _locking.PortLock("/dev/ttyUSB0", sharing="polite"):
+        with _locking.PortLock("/dev/ttyTEST0", sharing="polite"):
             pass
 
 
 def test_exclusive_creates_lock_file(fs):
     fs.create_dir("/var/lock")
-    with _locking.PortLock("/dev/ttyUSB0", sharing="exclusive"):
-        lock_path = Path("/var/lock/LCK..ttyUSB0")
+    with _locking.PortLock("/dev/ttyTEST0", sharing="exclusive"):
+        lock_path = Path("/var/lock/LCK..ttyTEST0")
         assert lock_path.exists()
         assert int(lock_path.read_text().strip()) == os.getpid()
+
+    # check name variants
+    with _locking.PortLock("/dev/subdir/ttyTEST1", sharing="exclusive"):
+        assert Path("/var/lock/LCK..ttyTEST1").exists()
+    with _locking.PortLock("/dev/pts/2", sharing="exclusive"):
+        assert Path("/var/lock/LCK..pts.2").exists()
 
 
 def test_lock_file_removed_on_release(fs):
     fs.create_dir("/var/lock")
-    lock_path = Path("/var/lock/LCK..ttyUSB0")
-    with _locking.PortLock("/dev/ttyUSB0", sharing="exclusive"):
+    lock_path = Path("/var/lock/LCK..ttyTEST0")
+    with _locking.PortLock("/dev/ttyTEST0", sharing="exclusive"):
         assert lock_path.exists()
     assert not lock_path.exists()
 
 
 def test_exclusive_raises_when_port_busy(fs):
     fs.create_dir("/var/lock")
-    lock_path = Path("/var/lock/LCK..ttyUSB0")
+    lock_path = Path("/var/lock/LCK..ttyTEST0")
     # PID 1 (init/systemd) always exists
     lock_path.write_text("         1\n")
 
     with pytest.raises(_exceptions.SerialOpenBusy):
-        with _locking.PortLock("/dev/ttyUSB0", sharing="exclusive"):
+        with _locking.PortLock("/dev/ttyTEST0", sharing="exclusive"):
             pass
 
 
 def test_stomp_overwrites_existing_lock(fs, mocker):
     fs.create_dir("/var/lock")
-    lock_path = Path("/var/lock/LCK..ttyUSB0")
+    lock_path = Path("/var/lock/LCK..ttyTEST0")
     lock_path.write_text("         1\n")  # Owned by init
 
     # Mock os.kill to avoid actually signaling init
     mock_kill = mocker.patch("os.kill")
 
-    with _locking.PortLock("/dev/ttyUSB0", sharing="stomp"):
+    with _locking.PortLock("/dev/ttyTEST0", sharing="stomp"):
         assert int(lock_path.read_text().strip()) == os.getpid()
 
     # Verify SIGTERM was sent to the owning process
@@ -145,7 +136,7 @@ def test_stomp_overwrites_existing_lock(fs, mocker):
 
 def test_missing_lock_directory_proceeds(fs):
     # Don't create /var/lock
-    with _locking.PortLock("/dev/ttyUSB0", sharing="exclusive"):
+    with _locking.PortLock("/dev/ttyTEST0", sharing="exclusive"):
         pass
 
 
@@ -172,8 +163,7 @@ def test_polite_probes_and_releases_flock(fs, mocker):
     fs.create_dir("/var/lock")
     mock_flock = mocker.patch("fcntl.flock")
     mock_ioctl = mocker.patch("fcntl.ioctl")
-    # Skip canary install (would call tcsetattr on bogus fd).
-    mocker.patch.object(_locking.PortLock, "_install_canary")
+    mocker.patch("termios.tcsetattr")
 
     with _locking.PortLock("/dev/test", sharing="polite") as lock:
         lock.attach_fd(fd=999)
@@ -239,16 +229,13 @@ def test_check_returns_none_for_non_polite(fs):
     assert lock.check() is None  # exclusive: never returns intrusion
 
 
-def test_check_detects_lck_file_appearing(fs, mocker):
+def test_check_detects_lock_file_appearing(fs, mocker):
     fs.create_dir("/var/lock")
     mocker.patch("fcntl.flock")
-    mocker.patch.object(_locking.PortLock, "_install_canary")
 
-    with _locking.PortLock("/dev/ttyUSB0", sharing="polite") as lock:
-        lock.attach_fd(fd=999)
+    with _locking.PortLock("/dev/ttyTEST0", sharing="polite") as lock:
         # Someone else creates the regular LCK..* file. Use PID 1 (init) so
         # `_lock_file_owner` sees a live owner that isn't us.
-        Path("/var/lock/LCK..ttyUSB0").write_text("         1\n")
-        reason = lock.check()
-        assert reason is not None
-        assert "LCK..ttyUSB0" in reason
+        Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")
+        with pytest.raises(_exceptions.SerialIoTaken):
+            lock.check()

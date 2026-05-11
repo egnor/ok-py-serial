@@ -24,8 +24,8 @@ class SerialIoClosed(SerialIoException):
     pass
 
 
-class SerialIoCeded(SerialIoException):
-    """Exception raised when a `polite` connection cedes to another user."""
+class SerialIoTaken(SerialIoException):
+    """Exception raised when a `polite` connection detects another user."""
 
     pass
 
