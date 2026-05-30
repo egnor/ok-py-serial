@@ -15,7 +15,6 @@ except ModuleNotFoundError:
     raise
 
 import ok_serial
-import ok_serial.terminal
 
 ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
 ok_logging_setup.skip_traceback_for(OSError)
@@ -78,9 +77,7 @@ def list_command(
 def term_command(match: tuple[str, ...], baud: int, wait_time: float = 0):
     """Start an interactive terminal on a serial port"""
 
-    ok_serial.terminal.run_terminal(
-        match=" ".join(match), baud=baud, wait_time=wait_time
-    )
+    pass
 
 
 def format_line(port: ok_serial.SerialPort):

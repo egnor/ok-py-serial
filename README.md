@@ -150,7 +150,7 @@ and are platform/device dependent but usually include:
 - `location` - system bus attachment path, eg. `3-2.1:1.0`
 
 To see all the attributes, install `ok-serial`, connect some device(s) and
-run `okserial --verbose`:
+run `okserial list --print-verbose`:
 
 ```text
 Serial port: /dev/ttyACM3
