@@ -37,12 +37,18 @@ class SerialOpenException(SerialException):
 
 
 class SerialOpenBusy(SerialOpenException):
-    """Exception raised if an open attempt failes due to port contention."""
+    """Exception raised if an open attempt fails due to port contention."""
 
     pass
 
 
 class SerialScanException(SerialException):
     """Exception raised for system errors scanning available ports."""
+
+    pass
+
+
+class SerialTrackerExhausted(SerialException):
+    """Exception raised for permanent timeout or retry limit finding a port."""
 
     pass

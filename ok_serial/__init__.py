@@ -30,6 +30,7 @@ from ok_serial._exceptions import (
     SerialOpenBusy,
     SerialOpenException,
     SerialScanException,
+    SerialTrackerExhausted,
 )
 
 __all__ = [n for n in globals() if not n.startswith("_")]

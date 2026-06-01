@@ -35,12 +35,12 @@ class EscapeCodeChunker:
 
     TIMEOUT = 0.1  # seconds to pause before giving up on partial data
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._partial = bytearray()
         self._partial_timeout = 0.0
         self._chunks: list[str | bytes] = []
 
-    def add_data(self, data: bytes, data_time: float):
+    def add_data(self, data: bytes, data_time: float) -> None:
         """Adds terminal data with time of arrival."""
 
         if not data and self._partial and data_time > self._partial_timeout:
@@ -72,10 +72,15 @@ class EscapeCodeChunker:
         self._partial.clear()
         self._partial_timeout = 0.0
 
-    def get_chunks(self) -> list[str | bytes]:
-        """Gets accumulated data broken into chunks:
-        - str for well formed UTF-8 characters
-        - bytes for control characters or escape sequences to be interpreted
+    def read_chunks(self) -> list[str | bytes]:
+        """Returns accumulated data broken into chunks:
+        - str for well formed UTF-8 strings
+        - bytes for control characters, escape sequences, or invalid data
         """
         out, self._chunks = self._chunks, []
         return out
+
+    @property
+    def partial_timeout(self) -> float | None:
+        """When incoming partial data will be flushed, None if no such"""
+        return self._partial_timeout if self._partial else None

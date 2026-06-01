@@ -23,6 +23,7 @@ class SerialConnectionOptions:
 
     baud: int = 115200
     """The [baud rate](https://en.wikipedia.org/wiki/Baud) to use."""
+
     sharing: SerialSharingType = "exclusive"
     """
     Port access negotiation strategy:
@@ -109,8 +110,8 @@ class SerialConnection(contextlib.AbstractContextManager):
                 msg = f"No ports match {match!r}"
                 raise _exceptions.SerialOpenException(msg)
             if len(found) > 1:
-                found_text = "".join(f"\n  {p}" for p in found)
-                msg = f"Multiple ports match {match!r}: {found_text}"
+                detail = "".join(f"\n  {p}" for p in found)
+                msg = f"Multiple ports match {match!r}: {detail}"
                 raise _exceptions.SerialOpenException(msg)
             port = found[0].name
             log.debug("Scanned %r, found %s", match, port)
