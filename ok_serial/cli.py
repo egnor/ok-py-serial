@@ -92,7 +92,7 @@ def term_command(
     baud: int,
     wait_time: float = 0.0,
     reconnect: bool = False,
-    sharing: str = "",
+    sharing: ok_serial.SerialSharingType = "exclusive",
 ):
     """Start an interactive terminal on a serial port"""
 

@@ -175,7 +175,7 @@ async def test_connect_async_waits_for_port(pty_serial, set_scan_override):
         await asyncio.sleep(0.1)
         set_scan_override({pty_serial.path: {"name": "appears"}})
 
-    opts = ok_serial.SerialSerialTrackerOptions(scan_interval=0.05)
+    opts = ok_serial.SerialTrackerOptions(scan_interval=0.05)
     with ok_serial.SerialPortTracker("appears", topts=opts) as tracker:
         asyncio.create_task(add_port_later())
         conn = await asyncio.wait_for(tracker.connect_async(), timeout=2)
