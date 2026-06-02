@@ -1,6 +1,6 @@
 [tools]
 python = "3.11"
-uv = "latest"
+uv = "0.11"
 
 [settings]
 experimental = true

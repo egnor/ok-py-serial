@@ -37,13 +37,13 @@ class TerminalChunker:
 
     def __init__(self) -> None:
         self._partial = bytearray()
-        self._partial_timeout = 0.0
+        self._partial_deadline = 0.0
         self._chunks: list[str | bytes] = []
 
     def add_data(self, data: bytes, data_time: float) -> None:
         """Adds terminal data with timestamp. Use data=b"" to mark idle time."""
 
-        if not data and self._partial and data_time > self._partial_timeout:
+        if not data and self._partial and data_time > self._partial_deadline:
             self._chunks.append(bytes(self._partial[:1]))
             self._partial = self._partial[1:]
 
@@ -65,12 +65,12 @@ class TerminalChunker:
                 pos += 1
             else:
                 self._partial = self._partial[pos:]
-                self._partial_timeout = data_time + self.TIMEOUT
+                self._partial_deadline = data_time + self.TIMEOUT
                 assert self._partial in (char_part, esc_part), match.groups()
                 return
 
         self._partial.clear()
-        self._partial_timeout = 0.0
+        self._partial_deadline = 0.0
 
     def read_chunks(self) -> list[str | bytes]:
         """Returns accumulated data so far:
@@ -84,6 +84,6 @@ class TerminalChunker:
         return out
 
     @property
-    def partial_timeout(self) -> float | None:
+    def partial_deadline(self) -> float | None:
         """When incoming partial data will be flushed, None if no such"""
-        return self._partial_timeout if self._partial else None
+        return self._partial_deadline if self._partial else None
