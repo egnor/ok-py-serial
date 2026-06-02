@@ -85,9 +85,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         - `opts` can define baud rate and other port parameters...
           - OR other keywords are forwarded to `SerialConnectionOptions`
 
-        Call `close` to release the port, or use
-        `SerialConnection` as the target of a
-        [`with` statement](https://docs.python.org/3/reference/compound_stmts.html#with).
+        Call `close` to release the port, or use `SerialConnection` as the
+        target of a `with` statement.
 
         Example:
         ```
@@ -203,9 +202,8 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def read_async(self) -> TimestampBytes:
         """
-        Similar to `read_sync` but returns a
-        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
-        instead of blocking the current thread.
+        Similar to `read_sync` but returns a coroutine instead of
+        blocking the current thread.
         """
 
         while True:
@@ -259,9 +257,8 @@ class SerialConnection(contextlib.AbstractContextManager):
 
     async def drain_async(self) -> bool:
         """
-        Similar to `drain_sync` but returns a
-        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
-        instead of blocking the current thread.
+        Similar to `drain_sync` but returns a coroutine instead of
+        blocking the current thread.
         """
 
         while True:

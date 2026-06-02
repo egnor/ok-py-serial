@@ -7,6 +7,8 @@ import logging
 import re
 import sys
 
+from ok_serial._tracker import run_terminal
+
 try:
     import click
     import ok_logging_setup
@@ -31,7 +33,7 @@ def main():
 @click.option("-n", "--print-name", is_flag=True)
 @click.option("-v", "--print-verbose", is_flag=True)
 def list_command(
-    port: tuple[str, ...],
+    match: tuple[str, ...],
     one: bool = False,
     print_name: bool = False,
     print_verbose: bool = False,
@@ -39,7 +41,7 @@ def list_command(
 ):
     """Print a list of available serial ports"""
 
-    if spec := " ".join(port):
+    if spec := " ".join(match):
         logging.info("🔎 Finding serial ports: %r", spec)
     else:
         logging.info("🔎 Finding serial ports...")
@@ -71,13 +73,32 @@ def list_command(
 
 
 @main.command()
-@click.argument("match", nargs=-1)
+@click.argument("match", nargs=-1, required=True)
 @click.argument("baud", type=int)
 @click.option("-w", "--wait-time", default=0.0)
-def term_command(match: tuple[str, ...], baud: int, wait_time: float = 0):
+@click.option("-r", "--reconnect", is_flag=True)
+@click.option("--oblivious", "sharing", flag_value="oblivious")
+@click.option("--polite", "sharing", flag_value="polite")
+@click.option("--exclusive", "sharing", flag_value="exclusive", default=True)
+@click.option("--stomp", "sharing", flag_value="stomp")
+def term_command(
+    match: tuple[str, ...],
+    baud: int,
+    wait_time: float = 0.0,
+    reconnect: bool = False,
+    sharing: str = "",
+):
     """Start an interactive terminal on a serial port"""
 
-    pass
+    spec = " ".join(match)
+    copts = ok_serial.SerialConnectionOptions(baud=baud, sharing=sharing)
+    topts = ok_serial.SerialTrackerOptions(
+        scan_timeout=wait_time,
+        reconnect_limit=None if reconnect else 0,
+    )
+
+    with ok_serial.SerialPortTracker(spec, topts=topts, copts=copts) as tr:
+        run_terminal(tr)
 
 
 def format_line(port: ok_serial.SerialPort):

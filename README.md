@@ -112,15 +112,13 @@ Methods come in different flavors of blocking behavior:
   [exceptions](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialIoException)
 - `*_async` methods (eg.
   [`read_async`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.read_async))
-  return a
-  [`Future`](https://docs.python.org/3/library/asyncio-future.html)
-  the caller can
+  return a coroutine the caller can
   [`await`](https://docs.python.org/3/reference/expressions.html#await)
   (see [asyncio](https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html))
   - Use
     [`asyncio.timeout`](https://docs.python.org/3/library/asyncio-task.html#timeouts)
     to add a timeout
-  - Errors are reported via the `Future` (`await` will raise)
+  - Errors are reported via the coroutine (`await` will raise)
 - Other methods (neither `*_sync` nor `*_async`) are non-blocking.
 
 Methods and functions of any flavor are thread-safe and thread-sane, and

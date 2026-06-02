@@ -19,7 +19,7 @@ from ok_serial._connection import (
 
 from ok_serial._scanning import scan_serial_ports
 from ok_serial._metadata import SerialPort
-from ok_serial._tracker import SerialPortTracker, TrackerOptions
+from ok_serial._tracker import SerialPortTracker, SerialTrackerOptions
 from ok_serial._locking import SerialSharingType
 
 from ok_serial._exceptions import (
@@ -34,3 +34,6 @@ from ok_serial._exceptions import (
 )
 
 __all__ = [n for n in globals() if not n.startswith("_")]
+
+for _name in __all__:
+    globals()[_name].__module__ = "ok_serial"

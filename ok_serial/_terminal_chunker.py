@@ -1,7 +1,7 @@
 import re
 
 
-class EscapeCodeChunker:
+class TerminalChunker:
     """Breaks VTxxx data into output characters and control sequences."""
 
     PARSE_RX = re.compile(
@@ -19,9 +19,9 @@ class EscapeCodeChunker:
         # https://vt100.net/emu/dec_ansi_parser
         b"("
         b"(?:\x1b\\[|\x9b)[\x20-\x3f]*[\x40-\x7e]|"  # CSI
-        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x98\x9d-\x9f])"  # DCS/SOS/OSC/PM/APC
-        b"[\x20-\x7f]*(?:\x07|\x9c|\x1b\\\\)|"  # DCS/SOS/OSC/PM/APC con't
-        b"\x1b[\x30-\x4f\x51-\x57\x59\x5a\x60-\x7e]"  # ESC-controls
+        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x98\x9d-\x9f])"  # DCS/SOS/OSC/PM/APC...
+        b"[\x20-\x7f]*(?:\x07|\x9c|\x1b\\\\)|"  # ...end DCS/SOS/OSC/PM/APC
+        b"\x1b[\x30-\x4f\x51-\x57\x59\x5a\x60-\x7e]"  # ESC-char controls
         b")|"
         # group 4: *partial* VTxxx control sequence at end of data
         b"("
@@ -29,7 +29,7 @@ class EscapeCodeChunker:
         b"(?:\x1b\\[|\x9b)[\x20-\x3f]*$|"  # CSI
         b"(?:\x1b[\x50\x58\\]-\x5f]|[\x98\x9d-\x9f])[\x20-\x7f]*\x1b?$"  # etc
         b")|"
-        # group 5: any other byte (control code, invalid, etc)
+        # group 5: any other byte (control char, invalid, etc)
         b"([\x00-\xff])"
     )
 
@@ -41,7 +41,7 @@ class EscapeCodeChunker:
         self._chunks: list[str | bytes] = []
 
     def add_data(self, data: bytes, data_time: float) -> None:
-        """Adds terminal data with time of arrival."""
+        """Adds terminal data with timestamp. Use data=b"" to mark idle time."""
 
         if not data and self._partial and data_time > self._partial_timeout:
             self._chunks.append(bytes(self._partial[:1]))
@@ -73,9 +73,12 @@ class EscapeCodeChunker:
         self._partial_timeout = 0.0
 
     def read_chunks(self) -> list[str | bytes]:
-        """Returns accumulated data broken into chunks:
+        """Returns accumulated data so far:
         - str for well formed UTF-8 strings
         - bytes for control characters, escape sequences, or invalid data
+
+        Partial but otherwise valid UTF-8 or terminal codes stay buffered
+        more data arrives they time out so they can be returned as one chunk.
         """
         out, self._chunks = self._chunks, []
         return out

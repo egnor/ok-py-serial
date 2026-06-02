@@ -21,7 +21,7 @@ log = logging.getLogger("ok_serial.tracker")
 
 
 @dataclasses.dataclass(frozen=True)
-class TrackerOptions:
+class SerialTrackerOptions:
     """Optional parameters for `SerialPortTracker`."""
 
     scan_interval: float | int = 0.5
@@ -47,7 +47,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         match: str | PortPredicate | None = None,
         *,
         baud: int = 0,
-        topts: TrackerOptions = TrackerOptions(),
+        topts: SerialTrackerOptions = SerialTrackerOptions(),
         copts: SerialConnectionOptions = SerialConnectionOptions(),
     ):
         """
@@ -61,8 +61,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
         Actual port scans and connections only happen when `connect_*`
         is called. Call `close` to end any open connection, and/or use
-        `SerialPortTracker` as the target of a `with` statement to
-        automatically close the port on exit.
+        `SerialPortTracker` as the target of a `with` statement.
         """
 
         if baud:
@@ -132,6 +131,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     except SerialIoClosed:
                         log.debug("Conn to %s closed", self._conn.port_name)
                     except SerialIoException as exc:
+                        if self._tracker_opts.reconnect_limit == 0:
+                            msg = f"{self.match!r} {exc}"
+                            raise SerialTrackerExhausted(msg) from exc
                         name = self._conn.port_name
                         log.warning("Conn to %s failed (%s)", name, exc)
 
@@ -139,10 +141,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     self._conn = None
                     self._reconnect_count += 1
                     limit = self._tracker_opts.reconnect_limit
-                    if limit == 0:
-                        msg = f"Reconnection disabled: {self.match!r}"
-                        raise SerialTrackerExhausted(msg)
-                    elif limit is not None and self._reconnect_count > limit:
+                    if limit is not None and self._reconnect_count > limit:
                         msg = f"Reconnect limit ({limit}) met: {self.match!r}"
                         raise SerialTrackerExhausted(msg)
 
@@ -192,7 +191,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             assert self._scan_deadline is not None
             if from_deadline(self._scan_deadline) < wait:
                 scan_timeout = self._tracker_opts.scan_timeout
-                msg = f"Scan timeout ({scan_timeout:.3f}s) met: {self.match!r}"
+                msg = f"No ports match {self.match!r}"
+                if scan_timeout and scan_timeout > 0:
+                    msg += f" ({scan_timeout:.2f}s timeout)"
                 raise SerialTrackerExhausted(msg)
 
             if from_deadline(call_deadline) < wait:
@@ -203,9 +204,8 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     async def connect_async(self) -> SerialConnection:
         """
-        Similar to `connect_sync` but returns a
-        [`Future`](https://docs.python.org/3/library/asyncio-future.html#asyncio.Future)
-        instead of blocking the current thread.
+        Similar to `connect_sync` but returns a coroutine instead of
+        blocking the current thread.
         """
 
         while True:
