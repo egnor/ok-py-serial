@@ -2,12 +2,13 @@
 
 """CLI tool to scan serial ports and/or communicate with them"""
 
+import asyncio
 import datetime
 import logging
 import re
 import sys
 
-from ok_serial._tracker import run_terminal
+from ok_serial._terminal import run_terminal_async
 
 try:
     import click
@@ -18,8 +19,13 @@ except ModuleNotFoundError:
 
 import ok_serial
 
-ok_logging_setup.install({"OK_LOGGING_LEVEL": "info"})
-ok_logging_setup.skip_traceback_for(OSError)
+ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException
+ok_logging_setup.install(
+    {
+        "OK_LOGGING_LEVEL": "info",
+        "OK_LOGGING_REPEAT_PER_MINUTE": "60",
+    }
+)
 
 
 @click.group()
@@ -28,7 +34,7 @@ def main():
 
 
 @main.command()
-@click.argument("port", nargs=-1)
+@click.argument("match", nargs=-1)
 @click.option("-1", "--one", is_flag=True)
 @click.option("-n", "--print-name", is_flag=True)
 @click.option("-v", "--print-verbose", is_flag=True)
@@ -98,7 +104,7 @@ def term_command(
     )
 
     with ok_serial.SerialPortTracker(spec, topts=topts, copts=copts) as tr:
-        run_terminal(tr)
+        asyncio.run(run_terminal_async(tr))
 
 
 def format_line(port: ok_serial.SerialPort):
