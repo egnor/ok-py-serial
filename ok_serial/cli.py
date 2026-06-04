@@ -20,7 +20,6 @@ import ok_serial
 
 logging_opts = {
     "OK_LOGGING_LEVEL": "info",
-    "OK_LOGGING_REPEAT_PER_MINUTE": "20",
     "OK_LOGGING_TERMINATOR": "\r\n",  # for terminal output
 }
 ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException

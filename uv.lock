@@ -258,11 +258,11 @@ wheels = [
 
 [[package]]
 name = "ok-logging-setup"
-version = "0.14"
+version = "0.15"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f2/08/550c3f5924b329f1c6ff1b625325a138236474656bb91a26b40ba9e173f8/ok_logging_setup-0.14.tar.gz", hash = "sha256:c572516a34e548f71e8358e698b2157763e8d4ddc28d2c6a0fd35b1d313bb307", size = 7586, upload-time = "2026-06-02T21:32:24.351Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/a4/762c8bbe74f5358d9d076c8d068400a3d9f5062fb38ada41118dcb5fb927/ok_logging_setup-0.15.tar.gz", hash = "sha256:978721825bedae34fa20898c8bbe860c44692307f7930b30763ced6f0ee7924c", size = 7913, upload-time = "2026-06-04T19:00:14.124Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/99/db363ed3691851940dcf3398ab6da9725284c03dfdb1fe87abad913482a6/ok_logging_setup-0.14-py3-none-any.whl", hash = "sha256:b84959d333fe564ffe63f04e20005fff62851980ebc2ba652e6d038f03318b29", size = 9671, upload-time = "2026-06-02T21:32:25.405Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/65/a1d431542a54c2baec4677072efeef398bb8b8df51d579d54877890dc4e6/ok_logging_setup-0.15-py3-none-any.whl", hash = "sha256:1097fdde78bc22bb57928b82da3760b9b2b5d3881a4366c0d59d45beb48b2944", size = 9950, upload-time = "2026-06-04T19:00:15.125Z" },
 ]
 
 [[package]]
@@ -298,7 +298,7 @@ requires-dist = [
     { name = "beartype", specifier = ">=0.22.9" },
     { name = "click", marker = "extra == 'cli'", specifier = ">=8.3.1" },
     { name = "natsort", specifier = ">=8.4.0" },
-    { name = "ok-logging-setup", marker = "extra == 'cli'", specifier = ">=0.14" },
+    { name = "ok-logging-setup", marker = "extra == 'cli'", specifier = ">=0.15" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "types-pyserial", specifier = ">=3.5.0.20251001" },
 ]
