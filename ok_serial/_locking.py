@@ -67,8 +67,8 @@ class PortLock(contextlib.AbstractContextManager):
                 try:
                     del_path.unlink()
                     log.debug("Removed %s", del_path)
-                except OSError:
-                    log.warning("Can't remove %s", del_path, exc_info=True)
+                except OSError as ex:
+                    log.warning("Can't remove %s: %s", del_path, str(ex))
 
     def attach_fd(self, fd: int) -> None:
         """Claim fd-level locking."""
@@ -88,8 +88,8 @@ class PortLock(contextlib.AbstractContextManager):
         except BlockingIOError as ex:
             message = "Serial port busy (flock claimed)"
             raise _exceptions.SerialOpenBusy(message, self.device) from ex
-        except OSError:
-            log.warning("Can't lock (flock) %s", self.device, exc_info=True)
+        except OSError as ex:
+            log.warning("Can't lock (flock) %s: %s", self.device, str(ex))
 
         if self.sharing == "polite":
             try:
@@ -98,17 +98,17 @@ class PortLock(contextlib.AbstractContextManager):
                 modified[3] = modified[3] | _CANARY_LFLAG
                 termios.tcsetattr(fd, termios.TCSANOW, modified)
                 log.debug("Installed takeover detector on %s", self.device)
-            except (OSError, termios.error):
-                msg = "Can't install takeover detector on %s"
-                log.warning(msg, self.device, exc_info=True)
+            except (OSError, termios.error) as ex:
+                msg = "Can't install takeover detector on %s: %s"
+                log.warning(msg, self.device, str(ex))
 
         if self.sharing in ("exclusive", "stomp"):
             try:
                 fcntl.ioctl(fd, termios.TIOCEXCL)
                 log.debug("Acquired TIOCEXCL on %s", self.device)
-            except OSError:
-                message, dev = "Can't lock (TIOCEXCL) %s", self.device
-                log.warning(message, dev, exc_info=True)
+            except OSError as ex:
+                message, dev = "Can't lock (TIOCEXCL) %s: %s", self.device
+                log.warning(message, dev, str(ex))
 
     def release_fd(self) -> None:
         """Release fd-level locking.
@@ -124,9 +124,9 @@ class PortLock(contextlib.AbstractContextManager):
             try:
                 fcntl.ioctl(self._fd, termios.TIOCNXCL)
                 log.debug("Released TIOCEXCL on %s", self.device)
-            except OSError:
-                message = "Can't unlock (TIOCNXCL) %s"
-                log.warning(message, self.device, exc_info=True)
+            except OSError as ex:
+                message = "Can't unlock (TIOCNXCL) %s: %s"
+                log.warning(message, self.device, str(ex))
 
     def check(self) -> None:
         """Raises SerialIoTaken in "polite" mode if outside use was seen."""
@@ -174,9 +174,9 @@ def _claim_lock_file(device: str, lock_path: Path, mode: str) -> None:
                 try:
                     os.kill(owner_pid, signal.SIGTERM)
                     log.debug("Killed owner %d of %s", owner_pid, lock_path)
-                except OSError:
-                    msg = "Can't kill owner %d of %s"
-                    log.warning(msg, owner_pid, lock_path, exc_info=True)
+                except OSError as ex:
+                    msg = "Can't kill owner %d of %s: %s"
+                    log.warning(msg, owner_pid, lock_path, str(ex))
             else:
                 log.debug("PID %d owns %s", owner_pid, lock_path)
                 message = f"Serial port busy ({lock_path}: pid={owner_pid})"
@@ -189,8 +189,8 @@ def _claim_lock_file(device: str, lock_path: Path, mode: str) -> None:
         except FileExistsError:
             log.warning("Conflict creating %s", lock_path)
             continue  # retry
-        except OSError:
-            log.warning("Can't create %s", lock_path, exc_info=True)
+        except OSError as ex:
+            log.warning("Can't create %s: %s", lock_path, str(ex))
             return  # proceed anyway
 
         log.debug("Claimed %s", lock_path)
@@ -214,9 +214,9 @@ def _lock_file_owner(lock_path: Path) -> int | None:
         try:
             lock_path.unlink()
             log.debug("Removed bad/stale %s", lock_path)
-        except OSError:
-            log.warning("Can't remove %s", lock_path, exc_info=True)
+        except OSError as ex:
+            log.warning("Can't remove %s: %s", lock_path, str(ex))
         return None
-    except OSError:
-        log.warning("Can't check %s", lock_path, exc_info=True)
+    except OSError as ex:
+        log.warning("Can't check %s: %s", lock_path, str(ex))
         return None
