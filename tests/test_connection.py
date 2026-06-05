@@ -329,7 +329,7 @@ def test_signals_after_close_raises(pty_serial):
 
 
 def test_polite_cedes_when_canary_cleared(pty_serial):
-    """Polite mode should raise SerialIoTaken when another process clears
+    """Polite mode should raise SerialIoConflict when another process clears
     the termios canary bits (simulating cfmakeraw by an external tool)."""
     with ok_serial.SerialConnection(
         port=pty_serial.path, sharing="polite"
@@ -348,7 +348,7 @@ def test_polite_cedes_when_canary_cleared(pty_serial):
         termios.tcsetattr(pty_serial.simulated.fileno(), termios.TCSANOW, attr)
 
         # Readloop wakes every 0.5s in polite mode; give it a bit longer.
-        with pytest.raises(ok_serial.SerialIoTaken):
+        with pytest.raises(ok_serial.SerialIoConflict):
             conn.read_sync(timeout=2.0)
 
 

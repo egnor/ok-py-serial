@@ -24,7 +24,7 @@ class SerialIoClosed(SerialIoException):
     pass
 
 
-class SerialIoTaken(SerialIoException):
+class SerialIoConflict(SerialIoException):
     """Exception raised when a `polite` connection detects another user."""
 
     pass

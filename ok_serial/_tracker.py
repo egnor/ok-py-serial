@@ -80,7 +80,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         self._reconnect_count = 0
         self._conn: SerialConnection | None = None
 
-        log.debug("Tracking: %r", match or "(any port)")
+        log.debug("Tracking %r", match or "(any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
@@ -128,26 +128,31 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                     try:
                         self._conn.write(b"")  # check for liveness
                         return self._conn
-                    except SerialIoClosed:
-                        log.debug("Conn to %s closed", self._conn.port_name)
-                    except SerialIoException as exc:
+                    except SerialIoException as ex:
                         if self._tracker_opts.reconnect_limit == 0:
-                            msg = f"{self.match!r} {exc}"
-                            raise SerialTrackerExhausted(msg) from exc
-                        name = self._conn.port_name
-                        log.warning("Conn to %s failed (%s)", name, exc)
+                            msg = f"{ex} (reconnect disabled)"
+                            raise SerialTrackerExhausted(msg) from ex
+                        log_level = 20 if isinstance(ex, SerialIoClosed) else 30
+                        log.log(log_level, "⛓️‍💥 %s", ex)
 
                     self._conn.close()
                     self._conn = None
                     self._reconnect_count += 1
                     limit = self._tracker_opts.reconnect_limit
                     if limit is not None and self._reconnect_count > limit:
-                        msg = f"Reconnect limit ({limit}) met: {self.match!r}"
+                        msg = f"{self.match!r} reconnect limit met ({limit})"
                         raise SerialTrackerExhausted(msg)
 
                 if self._scan_deadline is None:
                     scan_timeout = self._tracker_opts.scan_timeout
                     self._scan_deadline = to_deadline(scan_timeout)
+                    if scan_timeout is None:
+                        log.info("🔎 Scanning for %r (ongoing)", self.match)
+                    elif scan_timeout > 0:
+                        msg = "🔎 Scanning for %r (%.2fs timeout)"
+                        log.info(msg, self.match, scan_timeout)
+                    else:
+                        log.info("🔎 Looking for %r", self.match)
 
                 # Re-scan for ports at the specified interval
                 if (wait := from_deadline(self._next_scan)) <= 0:
@@ -179,13 +184,13 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
                 if port := self._scan_matched:
                     try:
-                        log.debug("Opening %s", port)
+                        log.info("🔗 Connecting to %s", port.name)
                         opts = self._conn_opts
                         self._conn = SerialConnection(port=port, opts=opts)
                         self._scan_deadline = None  # reset for next scan
                         return self._conn
-                    except SerialOpenException as exc:
-                        log.warning("Can't open %s (%s)", port, exc)
+                    except SerialOpenException as ex:
+                        log.warning("%s", ex)
                         self._scan_matched = None  # cool down until re-scan
 
             assert self._scan_deadline is not None

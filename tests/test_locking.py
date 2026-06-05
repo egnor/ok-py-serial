@@ -237,5 +237,5 @@ def test_check_detects_lock_file_appearing(fs, mocker):
         # Someone else creates the regular LCK..* file. Use PID 1 (init) so
         # `_lock_file_owner` sees a live owner that isn't us.
         Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")
-        with pytest.raises(_exceptions.SerialIoTaken):
+        with pytest.raises(_exceptions.SerialIoConflict):
             lock.check()

@@ -438,12 +438,12 @@ class _IoThreads(contextlib.AbstractContextManager):
                         incoming += self.pyserial.read(size=waiting)
             except _exceptions.SerialIoException as ex:
                 error = ex
-                data_log.warning("%s", ex)
+                data_log.debug("%s", ex)
             except OSError as ex:
                 msg, dev = "Serial read error", self.pyserial.port
                 error = _exceptions.SerialIoException(msg, dev)
                 error.__cause__ = ex
-                data_log.warning("%s (%s)", msg, ex)
+                data_log.debug("%s: %s", msg, ex)
 
             with self.monitor:
                 if incoming:

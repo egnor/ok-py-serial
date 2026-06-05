@@ -10,7 +10,7 @@ import time
 import typing
 
 from ok_serial._terminal_chunker import TerminalChunker
-from ok_serial._timeout_math import from_deadline, TIMEOUT_MAX
+from ok_serial._timeout_math import from_deadline
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,15 +50,11 @@ class _TerminalSession:
             )
 
             while True:
-                logging.info("🔎 Scanning for ports matching %r", opts.match)
                 self._serial = await tracker.connect_async()
-                logging.info("✅ Connected to %s", self._serial.port_name)
                 try:
                     await self._serial_reader_task()
-                except ok_serial.SerialIoException as e:
-                    logging.error("%s", e)  # loop, try again
-                    self._serial.close()
-                    self._serial = None
+                except ok_serial.SerialIoException:
+                    self._serial = None  # loop and try again
 
     async def _stdin_reader_task(self, stdin: asyncio.StreamReader):
         chunker = TerminalChunker()
