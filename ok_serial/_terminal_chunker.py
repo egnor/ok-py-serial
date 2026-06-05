@@ -5,29 +5,43 @@ class TerminalChunker:
     """Breaks VTxxx data into output characters and control sequences."""
 
     PARSE_RX = re.compile(
-        # group 1: string of complete UTF-8 code points
-        # https://en.wikipedia.org/wiki/UTF-8#Description
+        # group 1: well-formed UTF-8 code points -- what str.decode() accepts
+        # Grammar: https://datatracker.ietf.org/doc/html/rfc3629#section-4
         b"((?:"
-        b"[\x20-\x7e]|"
-        b"[\xc0-\xdf][\x80-\xbf]|"
-        b"[\xe0-\xef][\x80-\xbf]{2}|"
-        b"[\xf0-\xf7][\x80-\xbf]{3}"
+        b"[\x20-\x7e]|"  # printable ASCII (other 1-byte are controls, group 5)
+        b"[\xc2-\xdf][\x80-\xbf]|"  # 2-byte
+        # 3-byte, no overlong, no UTF-16 surrogates (U+D800..U+DFFF)
+        b"\xe0[\xa0-\xbf][\x80-\xbf]|[\xe1-\xec][\x80-\xbf]{2}|"
+        b"\xed[\x80-\x9f][\x80-\xbf]|[\xee-\xef][\x80-\xbf]{2}|"
+        # 4-byte, no overlong, no code points > U+10FFFF
+        b"\xf0[\x90-\xbf][\x80-\xbf]{2}|[\xf1-\xf3][\x80-\xbf]{3}|"
+        b"\xf4[\x80-\x8f][\x80-\xbf]{2}"
         b")+)|"
-        # group 2: *partial* UTF-8 code point at end of data
-        b"([\xc0-\xf7][\x80-\xbf]*$)|"
+        # group 2: incomplete-but-valid UTF-8 prefix at end of data
+        b"("
+        b"[\xc2-\xf4]|"
+        b"\xe0[\xa0-\xbf]|[\xe1-\xec][\x80-\xbf]|"
+        b"\xed[\x80-\x9f]|[\xee-\xef][\x80-\xbf]|"
+        b"\xf0[\x90-\xbf][\x80-\xbf]?|[\xf1-\xf3][\x80-\xbf]{1,2}|"
+        b"\xf4[\x80-\x8f][\x80-\xbf]?"
+        b")\\Z|"
         # group 3: one complete VTxxx control sequence
         # https://vt100.net/emu/dec_ansi_parser
         b"("
         b"(?:\x1b\\[|\x9b)[\x20-\x3f]*[\x40-\x7e]|"  # CSI
-        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x98\x9d-\x9f])"  # DCS/SOS/OSC/PM/APC...
+        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x90\x98\x9d-\x9f])"  # DCS/SOS/OSC/PM/APC
         b"[\x20-\x7f]*(?:\x07|\x9c|\x1b\\\\)|"  # ...end DCS/SOS/OSC/PM/APC
-        b"\x1b[\x30-\x4f\x51-\x57\x59\x5a\x60-\x7e]"  # ESC-char controls
+        b"(?:\x1b[\x4e\x4f]|[\x8e\x8f])[\x20-\x7e]|"  # SS2/SS3 + char
+        b"\x1b[\x20-\x2f]+[\x30-\x7e]|"  # ESC + intermediates + final (charset)
+        b"\x1b[\x30-\x4d\x51-\x57\x59\x5a\x60-\x7e]"  # ESC-char controls
         b")|"
         # group 4: *partial* VTxxx control sequence at end of data
         b"("
-        b"\x1b$|"  # ESC by itself
-        b"(?:\x1b\\[|\x9b)[\x20-\x3f]*$|"  # CSI
-        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x98\x9d-\x9f])[\x20-\x7f]*\x1b?$"  # etc
+        b"\x1b\\Z|"  # ESC by itself
+        b"(?:\x1b[\x4e\x4f]|[\x8e\x8f])\\Z|"  # SS2/SS3 awaiting char
+        b"\x1b[\x20-\x2f]+\\Z|"  # ESC + intermediates awaiting final
+        b"(?:\x1b\\[|\x9b)[\x20-\x3f]*\\Z|"  # CSI
+        b"(?:\x1b[\x50\x58\\]-\x5f]|[\x90\x98\x9d-\x9f])[\x20-\x7f]*\x1b?\\Z"
         b")|"
         # group 5: any other byte (control char, invalid, etc)
         b"([\x00-\xff])"
@@ -54,6 +68,7 @@ class TerminalChunker:
             assert match, self._partial[pos:]
             chars, char_part, esc, esc_part, other = match.groups()
             if chars:
+                # group 1 only matches well-formed UTF-8, so this can't raise
                 self._chunks.append(chars.decode())
                 pos += len(chars)
             elif esc:
