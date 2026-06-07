@@ -1,9 +1,12 @@
 import ok_serial
 
 import asyncio
+import collections.abc
 import contextlib
 import dataclasses
+import io
 import logging
+import os
 import sys
 import termios
 import time
@@ -16,8 +19,8 @@ from ok_serial._timeout_math import from_deadline
 @dataclasses.dataclass(frozen=True)
 class SerialTerminalOptions:
     match: str
-    tracker: ok_serial.SerialTrackerOptions
-    connection: ok_serial.SerialConnectionOptions
+    topts: ok_serial.SerialTrackerOptions
+    copts: ok_serial.SerialConnectionOptions
 
 
 def run_terminal(opts: SerialTerminalOptions):
@@ -34,20 +37,18 @@ class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
         async with contextlib.AsyncExitStack() as exits:
             self._serial: ok_serial.SerialConnection | None = None
+            self._stdin_is_tty = exits.enter_context(_raw_tty_context(0))
+            self._stdout_is_tty = exits.enter_context(_raw_tty_context(1))
+            exits.enter_context(_logging_callback_context(self._on_log_print))
 
-            self._stdin_is_tty = exits.enter_context(raw_tty_context(0))
-            self._stdout_is_tty = exits.enter_context(raw_tty_context(1))
-
-            stdin_reader_context = stream_reader_async_context(sys.stdin)
+            stdin_reader_context = _async_reader_context(sys.stdin)
             stdin_reader = await exits.enter_async_context(stdin_reader_context)
             stdin_tasks = await exits.enter_async_context(asyncio.TaskGroup())
             stdin_tasks.create_task(self._stdin_reader_task(stdin_reader))
 
-            tracker = exits.enter_context(
-                ok_serial.SerialPortTracker(
-                    opts.match, topts=opts.tracker, copts=opts.connection
-                )
-            )
+            SPT = ok_serial.SerialPortTracker
+            tracker = SPT(opts.match, topts=opts.topts, copts=opts.copts)
+            exits.enter_context(tracker)
 
             while True:
                 self._serial = await tracker.connect_async()
@@ -79,9 +80,37 @@ class _TerminalSession:
 
             print("SERIAL CHUNKS", chunker.get_chunks(), end="\r\n")
 
+    def _on_log_print(self, s: str):
+        pass
+
 
 @contextlib.contextmanager
-def raw_tty_context(fd: typing.Literal[0, 1]) -> typing.Iterator[bool]:
+def _logging_callback_context(
+    callback: collections.abc.Callable[[str], None],
+) -> typing.Iterator[None]:
+    class StreamWrapper(io.TextIOBase):
+        def write(self, s: str):
+            callback(s)
+
+    wrapper = StreamWrapper()
+    stdout_stat = os.stat(sys.stdout.fileno())
+    restore: list[tuple[logging.StreamHandler, typing.Any]] = []
+    try:
+        for handler in logging.root.handlers:
+            if isinstance(handler, logging.StreamHandler):
+                try:
+                    assert os.stat(handler.stream.fileno()) == stdout_stat
+                    restore.append((handler, handler.setStream(wrapper)))
+                except Exception:
+                    continue
+        yield None
+    finally:
+        for handler, stream in restore:
+            handler.setStream(stream)
+
+
+@contextlib.contextmanager
+def _raw_tty_context(fd: typing.Literal[0, 1, 2]) -> typing.Iterator[bool]:
     try:
         old_attr = termios.tcgetattr(fd)
     except termios.error:
@@ -105,7 +134,7 @@ def raw_tty_context(fd: typing.Literal[0, 1]) -> typing.Iterator[bool]:
 
 
 @contextlib.asynccontextmanager
-async def stream_reader_async_context(
+async def _async_reader_context(
     f: typing.IO,
 ) -> typing.AsyncIterator[asyncio.StreamReader]:
     reader = asyncio.StreamReader()
