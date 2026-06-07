@@ -7,8 +7,6 @@ import logging
 import re
 import sys
 
-from ok_serial._terminal import run_terminal, SerialTerminalOptions
-
 try:
     import click
     import ok_logging_setup
@@ -17,13 +15,10 @@ except ModuleNotFoundError:
     raise
 
 import ok_serial
+from ok_serial._terminal import run_terminal, SerialTerminalOptions
 
-logging_opts = {
-    "OK_LOGGING_LEVEL": "info",
-    "OK_LOGGING_TERMINATOR": "\r\n",  # for terminal output
-}
 ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException
-ok_logging_setup.install(logging_opts)
+ok_logging_setup.install()
 
 
 @click.group()

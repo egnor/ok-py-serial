@@ -3,7 +3,7 @@ import json
 import logging
 import natsort
 import os
-import pathlib
+import stat
 import struct
 from serial.tools import list_ports
 from serial.tools import list_ports_common
@@ -38,14 +38,17 @@ def scan_serial_ports(
     """
 
     if ov_path := os.getenv("OK_SERIAL_SCAN_OVERRIDE"):
+        # Externally overridden port list
         try:
-            found = _ports_from_json_text(pathlib.Path(ov_path).read_text())
+            with open(ov_path) as file:
+                found = _ports_from_json_text(file.read())
         except (OSError, ValueError) as ex:
             msg = f"Can't read $OK_SERIAL_SCAN_OVERRIDE {ov_path}"
             raise SerialScanException(msg) from ex
 
         log.debug("Read $OK_SERIAL_SCAN_OVERRIDE %s", ov_path)
     else:
+        # Use pyserial's port scanner
         try:
             pyserial_ports = list_ports.comports()
         except OSError as ex:
@@ -53,18 +56,39 @@ def scan_serial_ports(
         found = []
         for pyserial_port in pyserial_ports:
             if port := _port_from_pyserial(pyserial_port):
+                log.debug("pyserial port: %s", port)
+                found.append(port)
+
+        # Check for an exact device path match that pyserial didn't show
+        if port := _port_from_path(match):
+            log.debug("direct path port: %s", port)
+            if not any(port.name == p.name for p in found):
                 found.append(port)
 
     sort_key = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
-    found.sort(key=sort_key)
-
-    if match is not None:
-        cull = list(filter(compile_match(match), found))
-        log.debug("Found %d ports, %d match %r", len(found), len(cull), match)
-        return cull
+    if match:
+        culled = list(filter(compile_match(match), found))
+        log.debug("Found %d ports, %d match %r", len(found), len(culled), match)
     else:
         log.debug("Found %d ports", len(found))
-        return found
+        culled = found
+
+    culled.sort(key=sort_key)
+    return culled
+
+
+def _port_from_path(p: str | PortPredicate | None) -> SerialPort | None:
+    if isinstance(p, str) and p.startswith("/dev/"):
+        try:
+            st = os.stat(p)
+        except OSError:
+            return None
+        if st.st_mode & stat.S_IFCHR:
+            dt = datetime.datetime.fromtimestamp(st.st_ctime_ns * 1e-9)
+            attr = {"device": p, "time": dt.isoformat(timespec="milliseconds")}
+            return SerialPort(name=str(p), attr=attr)
+
+    return None
 
 
 def _port_from_pyserial(
@@ -108,7 +132,7 @@ def _port_from_pyserial(
     except OSError:
         pass
     else:
-        dt = datetime.datetime.fromtimestamp(st.st_mtime_ns * 1e-9)
+        dt = datetime.datetime.fromtimestamp(st.st_ctime_ns * 1e-9)
         attr["time"] = dt.isoformat(timespec="milliseconds")
 
     # set "vid_pid" to standard format XXXX:XXXX

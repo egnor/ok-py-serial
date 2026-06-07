@@ -1,12 +1,9 @@
 import ok_serial
 
 import asyncio
-import collections.abc
 import contextlib
 import dataclasses
-import io
 import logging
-import os
 import sys
 import termios
 import time
@@ -39,7 +36,9 @@ class _TerminalSession:
             self._serial: ok_serial.SerialConnection | None = None
             self._stdin_is_tty = exits.enter_context(_raw_tty_context(0))
             self._stdout_is_tty = exits.enter_context(_raw_tty_context(1))
-            exits.enter_context(_logging_callback_context(self._on_log_print))
+
+            stderr_patch_args = (sys.stderr, "write", self._stderr_write)
+            exits.enter_context(_setattr_context(*stderr_patch_args))
 
             stdin_reader_context = _async_reader_context(sys.stdin)
             stdin_reader = await exits.enter_async_context(stdin_reader_context)
@@ -80,33 +79,22 @@ class _TerminalSession:
 
             print("SERIAL CHUNKS", chunker.get_chunks(), end="\r\n")
 
-    def _on_log_print(self, s: str):
-        pass
+    def _stderr_write(self, s: str):
+        print("STDERR CHUNK", s, end="\r\n")
 
 
-@contextlib.contextmanager
-def _logging_callback_context(
-    callback: collections.abc.Callable[[str], None],
-) -> typing.Iterator[None]:
-    class StreamWrapper(io.TextIOBase):
-        def write(self, s: str):
-            callback(s)
-
-    wrapper = StreamWrapper()
-    stdout_stat = os.stat(sys.stdout.fileno())
-    restore: list[tuple[logging.StreamHandler, typing.Any]] = []
+@contextlib.asynccontextmanager
+async def _async_reader_context(
+    f: typing.IO,
+) -> typing.AsyncIterator[asyncio.StreamReader]:
+    reader = asyncio.StreamReader()
+    loop = asyncio.get_running_loop()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    transport, _ = await loop.connect_read_pipe(lambda: protocol, f)
     try:
-        for handler in logging.root.handlers:
-            if isinstance(handler, logging.StreamHandler):
-                try:
-                    assert os.stat(handler.stream.fileno()) == stdout_stat
-                    restore.append((handler, handler.setStream(wrapper)))
-                except Exception:
-                    continue
-        yield None
+        yield reader
     finally:
-        for handler, stream in restore:
-            handler.setStream(stream)
+        transport.close()
 
 
 @contextlib.contextmanager
@@ -133,15 +121,11 @@ def _raw_tty_context(fd: typing.Literal[0, 1, 2]) -> typing.Iterator[bool]:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_attr)
 
 
-@contextlib.asynccontextmanager
-async def _async_reader_context(
-    f: typing.IO,
-) -> typing.AsyncIterator[asyncio.StreamReader]:
-    reader = asyncio.StreamReader()
-    loop = asyncio.get_running_loop()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    transport, _ = await loop.connect_read_pipe(lambda: protocol, f)
+@contextlib.contextmanager
+def _setattr_context(obj: object, attr: str, val) -> typing.Iterator:
+    save = getattr(obj, attr, None)
     try:
-        yield reader
+        setattr(obj, attr, val)
+        yield save
     finally:
-        transport.close()
+        setattr(obj, attr, save)

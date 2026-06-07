@@ -12,7 +12,6 @@ from ok_serial._exceptions import (
     SerialOpenException,
     SerialTrackerExhausted,
 )
-from ok_serial._matching import compile_match
 from ok_serial._metadata import SerialPort, PortPredicate
 from ok_serial._scanning import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
@@ -68,7 +67,6 @@ class SerialPortTracker(contextlib.AbstractContextManager):
             copts = dataclasses.replace(copts, baud=baud)
 
         self.match = match
-        self._match = compile_match(match)
         self._tracker_opts = topts
         self._conn_opts = copts
 
@@ -156,18 +154,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
                 # Re-scan for ports at the specified interval
                 if (wait := from_deadline(self._next_scan)) <= 0:
-                    found = scan_serial_ports()  # we filter after adding "new"
-
-                    # identify which ports are "new" since startup
-                    keys = {f"{p.name}@{p.attr.get('time', '')}" for p in found}
-                    if self._baseline_keys is None:
-                        self._baseline_keys = keys
-                    for p in found:
-                        key = p.name + "@" + p.attr.get("time", "")
-                        if key not in self._baseline_keys:
-                            p.attr["tracking"] = "new"
-
-                    matched = [p for p in found if self._match(p)]
+                    matched = scan_serial_ports(self.match)
                     if len(matched) == 1:
                         self._scan_matched = matched[0]
                     elif matched:

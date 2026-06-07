@@ -125,42 +125,6 @@ def test_multiple_matches_resolved_then_connects(pty_serial, set_scan_override):
         assert conn.port_name == pty_serial.path
 
 
-def test_match_tracking_new(pty_serial, set_scan_override):
-    # Only a port that appears on a later scan (not the first) is "new".
-    set_scan_override({})
-    opts = ok_serial.SerialTrackerOptions(scan_interval=0.05)
-    with ok_serial.SerialPortTracker("new", topts=opts) as tracker:
-        assert tracker.connect_sync(timeout=0.1) is None
-        set_scan_override({pty_serial.path: {"name": "foo"}})
-        conn = tracker.connect_sync(timeout=1)
-        assert conn is not None
-        assert conn.port_name == pty_serial.path
-
-
-def test_match_tracking_new_ignores_existing(pty_serial, set_scan_override):
-    # A port present from the first scan isn't "new", so match="new" skips it.
-    set_scan_override({pty_serial.path: {"name": "foo"}})
-    opts = ok_serial.SerialTrackerOptions(scan_interval=0.05)
-    with ok_serial.SerialPortTracker("new", topts=opts) as tracker:
-        assert tracker.connect_sync(timeout=0.3) is None
-
-
-def test_match_tracking_new_survives_reconnect(pty_serial, set_scan_override):
-    # "new" is sticky relative to the startup baseline: a new port stays "new"
-    set_scan_override({})
-    opts = ok_serial.SerialTrackerOptions(scan_interval=0.05)
-    with ok_serial.SerialPortTracker("new", topts=opts) as tracker:
-        assert tracker.connect_sync(timeout=0.1) is None
-        set_scan_override({pty_serial.path: {"name": "foo"}})
-        conn1 = tracker.connect_sync(timeout=1)
-        assert conn1 is not None
-        conn1.close()  # Simulate the connection dropping.
-        conn2 = tracker.connect_sync(timeout=1)
-        assert conn2 is not None
-        assert conn2 is not conn1
-        assert conn2.port_name == pty_serial.path
-
-
 async def test_connect_async_finds_port(pty_serial, set_scan_override):
     set_scan_override({pty_serial.path: {"name": "async_test"}})
     with ok_serial.SerialPortTracker("async_test") as tracker:
