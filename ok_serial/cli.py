@@ -28,9 +28,9 @@ def main():
 
 @main.command()
 @click.argument("match", nargs=-1)
-@click.option("-1", "--one", is_flag=True)
-@click.option("-n", "--print-name", is_flag=True)
-@click.option("-v", "--print-verbose", is_flag=True)
+@click.option("--one", "-1", is_flag=True)
+@click.option("--print-name", "-n", is_flag=True)
+@click.option("--print-verbose", "-v", is_flag=True)
 def list_command(
     match: tuple[str, ...],
     one: bool = False,
@@ -72,30 +72,32 @@ def list_command(
 
 
 @main.command()
-@click.argument("match", nargs=-1, required=True)
-@click.argument("baud", type=int)
-@click.option("-w", "--wait-time", default=0.0)
-@click.option("-r", "--reconnect", is_flag=True)
+@click.argument("port_baud", metavar="PORT/BAUD", nargs=-1, required=True)
+@click.option("--wait-time", "-w", default=0.0)
+@click.option("--reconnect", "-r", is_flag=True)
 @click.option("--oblivious", "sharing", flag_value="oblivious")
 @click.option("--polite", "sharing", flag_value="polite")
 @click.option("--exclusive", "sharing", flag_value="exclusive", default=True)
 @click.option("--stomp", "sharing", flag_value="stomp")
 def term_command(
-    match: tuple[str, ...],
-    baud: int,
+    port_baud: tuple[str, ...],
     wait_time: float = 0.0,
     reconnect: bool = False,
     sharing: ok_serial.SerialSharingType = "exclusive",
 ):
     """Start an interactive terminal on a serial port"""
 
-    spec = " ".join(match)
+    baud = 115200
+    if port_baud[-1].isdigit():
+        port_baud, baud = port_baud[:-1], int(port_baud[-1])
+
+    match = " ".join(port_baud)
     copts = ok_serial.SerialConnectionOptions(baud=baud, sharing=sharing)
     topts = ok_serial.SerialTrackerOptions(
         scan_timeout=wait_time,
         reconnect_limit=None if reconnect else 0,
     )
-    run_terminal(SerialTerminalOptions(spec, topts, copts))
+    run_terminal(SerialTerminalOptions(match, topts, copts))
 
 
 def format_line(port: ok_serial.SerialPort):

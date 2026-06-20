@@ -59,11 +59,12 @@ def scan_serial_ports(
                 log.debug("pyserial port: %s", port)
                 found.append(port)
 
-        # Check for an exact device path match that pyserial didn't show
+        # Prioritize exact device path match
         if port := _port_from_path(match):
             log.debug("direct path port: %s", port)
-            if not any(port.name == p.name for p in found):
-                found.append(port)
+            found = [p for p in found if p.name == port.name]
+            if not found:
+                found.append(port)  # not found by pyserial (eg. pty)
 
     sort_key = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
     if match:

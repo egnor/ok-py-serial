@@ -16,7 +16,7 @@ SerialSharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 log = logging.getLogger("ok_serial.locking")
 
 # Linux TIOCGEXCL: _IOR('T', 0x40, int)
-TIOCGEXCL = getattr(termios, "TIOCGEXCL", 0x80045440)
+_TIOCGEXCL = getattr(termios, "TIOCGEXCL", 0x80045440)
 
 # Bits set on the port's termios as a "canary" to detect other users.
 # All three are cleared by cfmakeraw() and by pyserial's reconfigure;
@@ -43,8 +43,9 @@ class PortLock(contextlib.AbstractContextManager):
         else:
             self._lock_path = Path(f"/var/lock/LCK..{dev_parts[-1]}")
 
-        self._polite_path = Path(str(self._lock_path) + ".polite")
         self._fd: int | None = None
+        self._linux_pty_quirk = device.startswith("/dev/pts/")
+        self._polite_path = Path(str(self._lock_path) + ".polite")
 
     def __enter__(self) -> "PortLock":
         if self.sharing == "polite":
@@ -102,31 +103,32 @@ class PortLock(contextlib.AbstractContextManager):
                 msg = "Monitoring %s: %s"
                 log.warning(msg, self.device, ex)
 
+        # skip TIOCEXCL on Linux pty slaves since it stays until *master* close
         if self.sharing in ("exclusive", "stomp"):
             try:
-                fcntl.ioctl(fd, termios.TIOCEXCL)
-                log.debug("Acquired TIOCEXCL on %s", self.device)
+                if self._linux_pty_quirk:
+                    log.debug("Skipping TIOCEXCL on pty %s", self.device)
+                else:
+                    fcntl.ioctl(fd, termios.TIOCEXCL)
+                    log.debug("Acquired TIOCEXCL on %s", self.device)
             except OSError as ex:
                 message, dev = "Locking (TIOCEXCL) %s: %s", self.device
                 log.warning(message, dev, ex)
 
     def release_fd(self) -> None:
-        """Release fd-level locking.
-
-        Closing the fd does this also, EXCEPT if a pty master remains open,
-        TIOCEXCL stays set, and that happens to be the case in testing.
-        """
+        """Release fd-level locking."""
 
         if self._fd is None:
             return
 
-        if self.sharing in ("exclusive", "stomp"):
+        # This also happens on last-close, but release explicitly anyway
+        if self.sharing in ("exclusive", "stomp") and not self._linux_pty_quirk:
             try:
                 fcntl.ioctl(self._fd, termios.TIOCNXCL)
                 log.debug("Released TIOCEXCL on %s", self.device)
             except OSError as ex:
                 message = "Releasing (TIOCNXCL) %s: %s"
-                log.warning(message, self.device, ex)
+                log.debug(message, self.device, ex)  # expected if port is gone
 
     def check(self) -> None:
         """Raises SerialIoConflict in "polite" mode if outside use was seen."""
@@ -135,7 +137,7 @@ class PortLock(contextlib.AbstractContextManager):
             try:
                 termios_attr = termios.tcgetattr(self._fd)
                 excl_state = array.array("i", [0])
-                fcntl.ioctl(self._fd, TIOCGEXCL, excl_state, True)
+                fcntl.ioctl(self._fd, _TIOCGEXCL, excl_state, True)
             except (OSError, termios.error):
                 message = "Error checking for conflict"
                 raise _exceptions.SerialIoException(message, self.device)

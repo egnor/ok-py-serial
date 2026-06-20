@@ -472,7 +472,7 @@ class _IoThreads(contextlib.AbstractContextManager):
                     msg, dev = "Serial write error", self.pyserial.port
                     error = _exceptions.SerialIoException(msg, dev)
                     error.__cause__ = ex
-                    data_log.warning("%s (%s)", msg, ex)
+                    data_log.debug("%s (%s)", msg, ex)
 
             with self.monitor:
                 if chunk:
@@ -502,8 +502,6 @@ class _IoThreads(contextlib.AbstractContextManager):
         with self.monitor:
             future = self.async_loop.create_future()
             self.async_futures.append(future)
-            dev, nf = self.pyserial.port, len(self.async_futures)
-            data_log.debug("%s: Adding async future -> %d total", dev, nf)
             return future
 
     def _resolve_futures_in_loop(self) -> None:
@@ -514,8 +512,6 @@ class _IoThreads(contextlib.AbstractContextManager):
         with self.monitor:
             to_resolve, self.async_futures = self.async_futures, []
 
-        dev = self.pyserial.port
-        data_log.debug("%s: Waking %d async futures", dev, len(to_resolve))
         for future in to_resolve:
             if not future.done():
                 future.set_result(None)

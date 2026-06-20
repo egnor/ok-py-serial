@@ -30,7 +30,7 @@ class SerialIoConflict(SerialIoException):
     pass
 
 
-class SerialOpenException(SerialException):
+class SerialOpenException(SerialIoException):
     """Exception raised for system errors opening a serial port."""
 
     pass
