@@ -37,8 +37,8 @@ SGR_SUBCODE_RX = re.compile(
 )
 
 
-class TerminalStyleSaver:
-    """Buffers VTxxx text-style settings for interpretation and restoration.
+class TerminalModeSaver:
+    """Buffers VTxxx settings for interpretation and restoration.
 
     Currently captures:
     - SGR codes (text style, color, font, etc.), including save/restore
