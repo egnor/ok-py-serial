@@ -1,6 +1,6 @@
 """Unit tests for ok_serial._terminal_chunker."""
 
-from ok_serial._terminal_chunker import TerminalChunker
+from ok_serial._terminal_chunker import TerminalChunker, CHUNK_TIMEOUT
 
 
 def chunk_all(data: bytes) -> list[str | bytes]:
@@ -112,4 +112,4 @@ def test_deadline_advances_with_partial():
     # nothing pending -> a long deadline; a partial -> a short one
     assert chunker.deadline > 100.0
     chunker.add_data(b"\x1b[", 20.0)
-    assert chunker.deadline == 20.0 + TerminalChunker.TIMEOUT
+    assert chunker.deadline == 20.0 + CHUNK_TIMEOUT

@@ -100,5 +100,7 @@ class TerminalChunker:
 
     @property
     def deadline(self) -> float:
-        """Call add_data() again by this time (same timebase as add_data)."""
+        """Timeout deadline for buffered input; call add_data() with no data
+        after this time if there's no further input."""
+
         return self._data_deadline

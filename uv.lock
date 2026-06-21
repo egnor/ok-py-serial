@@ -270,7 +270,6 @@ name = "ok-serial"
 version = "0.4"
 source = { editable = "." }
 dependencies = [
-    { name = "beartype" },
     { name = "natsort" },
     { name = "pyserial" },
     { name = "types-pyserial" },
@@ -284,6 +283,7 @@ cli = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "beartype" },
     { name = "mypy" },
     { name = "pdoc" },
     { name = "pyfakefs" },
@@ -295,7 +295,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beartype", specifier = ">=0.22.9" },
     { name = "click", marker = "extra == 'cli'", specifier = ">=8.3.1" },
     { name = "natsort", specifier = ">=8.4.0" },
     { name = "ok-logging-setup", marker = "extra == 'cli'", specifier = ">=0.17" },
@@ -306,6 +305,7 @@ provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "beartype" },
     { name = "mypy" },
     { name = "pdoc" },
     { name = "pyfakefs" },

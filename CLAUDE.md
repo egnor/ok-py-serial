@@ -10,7 +10,7 @@ This project uses mise for tool/script management.
 # Install tools and sync dependencies
 mise install
 
-# Run all checks (black, ruff, mypy, pytest)
+# Run all checks (ruff, mypy, pytest)
 mise run check
 
 # Run tests only
