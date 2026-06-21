@@ -1,11 +1,11 @@
-"""Unit tests for ok_serial._terminal_style_saver."""
+"""Unit tests for ok_serial._terminal_mode_saver."""
 
-from ok_serial._terminal_style_saver import TerminalStyleSaver
+from ok_serial._terminal_mode_saver import TerminalModeSaver
 
 
 def restore(*escapes: bytes) -> bytes:
     """Feeds escapes to a fresh saver and returns its restore sequence."""
-    saver = TerminalStyleSaver()
+    saver = TerminalModeSaver()
     for escape in escapes:
         saver.add_escape(escape)
     return saver.get_escape()
@@ -54,7 +54,7 @@ def test_256_color_and_truecolor():
 def test_overline_frame_and_other_cancel_groups():
     # each "off" code supersedes its "on" code instead of accumulating
     assert restore(b"\x1b[53m", b"\x1b[55m") == b"\x1b[;55m"  # overline off
-    assert restore(b"\x1b[51m", b"\x1b[52m") == b"\x1b[;52m"  # framed -> encircled
+    assert restore(b"\x1b[51m", b"\x1b[52m") == b"\x1b[;52m"  # frame -> circle
     assert restore(b"\x1b[52m", b"\x1b[54m") == b"\x1b[;54m"  # frame off
     assert restore(b"\x1b[11m", b"\x1b[13m") == b"\x1b[;13m"  # alt font latest
     assert restore(b"\x1b[26m", b"\x1b[50m") == b"\x1b[;50m"  # prop spacing off
@@ -65,7 +65,7 @@ def test_overline_frame_and_other_cancel_groups():
 
 
 def test_extension_color_and_styled_underline():
-    # styled underline (kitty 4:3 = curly) is one underline category with 4/21/24
+    # styled underline (kitty 4:3 = curly) is one category with 4/21/24
     assert restore(b"\x1b[4:3m", b"\x1b[24m") == b"\x1b[;24m"
     # underline color (T.416) is its own color category
     assert restore(b"\x1b[58;5;9m") == b"\x1b[;58;5;9m"
@@ -98,7 +98,7 @@ def test_non_style_escapes_ignored():
 
 def test_dec_save_and_restore():
     # ESC 7 snapshots the style, ESC 8 restores it
-    saver = TerminalStyleSaver()
+    saver = TerminalModeSaver()
     saver.add_escape(b"\x1b[1m")
     saver.add_escape(b"\x1b7")  # DECSC: save bold
     saver.add_escape(b"\x1b[31m")  # add red on top
@@ -108,7 +108,7 @@ def test_dec_save_and_restore():
 
 
 def test_xterm_push_and_pop_sgr():
-    saver = TerminalStyleSaver()
+    saver = TerminalModeSaver()
     saver.add_escape(b"\x1b[1m")
     saver.add_escape(b"\x1b[#{")  # XTPUSHSGR: push bold
     saver.add_escape(b"\x1b[31m")
