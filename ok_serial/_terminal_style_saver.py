@@ -1,8 +1,8 @@
 import re
 
-# regexp to match style-relevant terminal escape sequences
+# regexp to match relevant terminal escape sequences
 # https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-STYLE_CODE_RX = re.compile(
+ESCAPE_CODE_RX = re.compile(
     # group 1: Set Graphics Rendition (SGR) content
     b"(?:\x1b\\[|\x9b)(.*m)|"
     # group 2: DECSC / DECRC (DEC Save/Restore Cursor) command
@@ -11,11 +11,11 @@ STYLE_CODE_RX = re.compile(
     b"(?:\x1b\\[|\x9b)#([{}pq])"
 )
 
-# regexp to match individual codes within SGR content, each ending in m or ;.
+# regexp to match individual SGR content codes, each ending in m or ;
 # codes in the same category supercede (latest wins)
-SGR_CODE_RX = re.compile(
+SGR_SUBCODE_RX = re.compile(
     b"(?:"
-    b"(?P<reset>0?)|"  # 0 or empty parameter: reset all attributes
+    b"(?P<RESET>0?)|"  # 0 or empty parameter: reset all attributes
     b"(?P<weight>1|2|22)|"  # bold / faint / normal intensity
     b"(?P<slant>3|20|23)|"  # italic / Fraktur / neither (23 cancels both)
     b"(?P<under>4(?::\\d+)?|21|24)|"  # single (or 4:n styled) / double / off
@@ -32,56 +32,59 @@ SGR_CODE_RX = re.compile(
     b"(?P<bg>4[0-79]|10[0-7]|48;5;\\d+|48;2;\\d+;\\d+;\\d+|48:[\\d:]*)|"
     b"(?P<ul>58;5;\\d+|58;2;\\d+;\\d+;\\d+|58:[\\d:]*|59)|"  # underline color
     b"(?P<script>7[345])|"  # super- / sub-script / off
-    b"(?P<other>[^m;]+)"
+    b"(?P<OTHER>[^m;]+)"
     b")[m;]"
 )
 
 
 class TerminalStyleSaver:
-    """Buffers VTxxx text-style settings for interpretation and restoration."""
+    """Buffers VTxxx text-style settings for interpretation and restoration.
+
+    Currently captures:
+    - SGR codes (text style, color, font, etc.), including save/restore
+
+    Does not capture:
+    - Cursor position, scrolling, or other non-style-setting codes
+    - Doublewidth, pixel graphics, custom palettes, or other esoteric styles
+    """
 
     def __init__(self) -> None:
-        self.codes: dict[bytes, bytes] = {}
-        self._dec_save: dict[bytes, bytes] = {}
-        self._xt_stack: list[dict[bytes, bytes]] = []
+        self.sgr_codes: dict[bytes, bytes] = {}
+        self._sgr_save_dec: dict[bytes, bytes] = {}
+        self._sgr_save_xterm: list[dict[bytes, bytes]] = []
 
     def add_escape(self, chunk: bytes) -> None:
-        """If a terminal escape (from TerminalChunker) is text-style-relevant,
-        incorporates it into the saved style. Handles SGR, DEC(SC/RC) and
-        XT(PUSH/POP)SGR; does not capture doublewidth modes, pixel graphics,
-        custom characters, custom palettes, or other semi esoteric features.
-        Ignores cursor movement, scrolling and other non-style-setting codes.
-        """
+        """Incorporates an escape (from TerminalChunker) into saved state."""
 
-        if match := STYLE_CODE_RX.fullmatch(chunk):
+        if match := ESCAPE_CODE_RX.fullmatch(chunk):
             sgr, dec_save, xt_push = match.groups()
             if sgr is not None:
                 pos = 0
                 while pos < len(sgr):
-                    sgr_match = SGR_CODE_RX.match(sgr, pos)
+                    sgr_match = SGR_SUBCODE_RX.match(sgr, pos)
                     assert sgr_match, sgr[pos:]
                     pos, name = sgr_match.end(), sgr_match.lastgroup
                     assert name, sgr[pos:]  # some named group always matches
-                    if name == "reset":
-                        self.codes.clear()
+                    if name == "RESET":
+                        self.sgr_codes.clear()
                     else:
                         # category codes key by name (latest in category wins);
-                        # "other" codes key by value so distinct ones accumulate
+                        # "OTHER" codes key by value so distinct ones accumulate
                         value = sgr_match.group(name)
-                        key = value if name == "other" else name.encode()
-                        self.codes.pop(key, None)  # reorder to latest
-                        self.codes[key] = value
+                        key = value if name == "OTHER" else name.encode()
+                        self.sgr_codes.pop(key, None)  # reorder to latest
+                        self.sgr_codes[key] = value
             elif dec_save == b"7":
-                self._dec_save = {**self.codes}
+                self._sgr_save_dec = {**self.sgr_codes}
             elif dec_save == b"8":
-                self.codes = {**self._dec_save}
+                self.sgr_codes = {**self._sgr_save_dec}
             elif xt_push in (b"{", b"p"):
-                self._xt_stack.append({**self.codes})
+                self._sgr_save_xterm.append({**self.sgr_codes})
             elif xt_push in (b"}", b"q"):
-                if self._xt_stack:
-                    self.codes = self._xt_stack.pop()
+                if self._sgr_save_xterm:
+                    self.sgr_codes = self._sgr_save_xterm.pop()
 
     def get_escape(self) -> bytes:
-        """Returns an SGR escape code to restore the accumulated text style."""
+        """Returns an escape code to restore previously accumulated state."""
 
-        return b"\x1b[;" + b";".join(self.codes.values()) + b"m"
+        return b"\x1b[;" + b";".join(self.sgr_codes.values()) + b"m"
