@@ -84,7 +84,7 @@ class _TerminalSession:
     def _on_serial_chunk(self, chunk: bytes | str):
         self._echo_timer.cancel()
         # TODO: clean up pending typeahead / menu
-        # TODO: restore termianl context, move to newline if not
+        # TODO: restore terminal context, move to newline if not
         if isinstance(chunk, str):
             sys.stdout.write(chunk)
         else:
