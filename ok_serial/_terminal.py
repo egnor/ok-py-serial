@@ -35,48 +35,56 @@ async def run_terminal_async(opts: SerialTerminalOptions):
 class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
         async with contextlib.AsyncExitStack() as cleanup:
+            self._event_loop = asyncio.get_running_loop()
+            self._new_data_event = asyncio.Event()
             self._serial: ok_serial.SerialConnection | None = None
-            self._serial_enable = asyncio.Event()
-            self._serial_enable.set()
+            self._from_stdin: list[bytes | str] = []
+            self._from_serial: list[bytes | str] = []
+            self._from_stderr_capture: list[str] = []
 
             # Inject stderr shim before putting tty in raw mode
             if os.isatty(2) and os.stat(1) == os.stat(2):
-                stderr_patch_args = (sys.stderr, "write", self._on_stderr_chunk)
+                stderr_patch_args = (sys.stderr, "write", self._capture_stderr)
                 stderr_patch_context = _setattr_context(*stderr_patch_args)
                 cleanup.enter_context(stderr_patch_context)
 
-            self._event_loop = asyncio.get_running_loop()
             self._echo_timer = self._event_loop.call_soon(lambda: None)
             cleanup.callback(lambda: self._echo_timer.cancel())
 
             self._stdin_is_tty = cleanup.enter_context(_raw_tty_context(0))
             self._stdout_is_tty = cleanup.enter_context(_raw_tty_context(1))
 
-            stdin_context = _async_reader_context(sys.stdin)
-            stdin_reader = await cleanup.enter_async_context(stdin_context)
-            stdin_tasks = await cleanup.enter_async_context(asyncio.TaskGroup())
-            stdin_tasks.create_task(self._run_stdin_reader(stdin_reader))
+            task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
+            task_group.create_task(self._read_from_stdin())
+            task_group.create_task(self._run_serial_tracker(opts))
+            await self._main_loop()
 
-            SPT = ok_serial.SerialPortTracker
-            tracker = SPT(opts.match, topts=opts.topts, copts=opts.copts)
-            cleanup.enter_context(tracker)
+    async def _main_loop(self):
+        echo_deadline: float | None = None
+        while True:
+            try:
+                async with asyncio.timeout(from_deadline(echo_deadline)):
+                    await self._new_data_event.wait()
+            except TimeoutError:
+                pass
 
-            while True:
-                self._serial = await tracker.connect_async()
-                try:
-                    await self._run_serial_reader()
-                except ok_serial.SerialIoException:
-                    self._serial = None  # loop and try again
+            for chunk in self._from_stdin:
+                self._on_stdin_chunk(chunk)
+
+            for chunk in self._from_serial:
+                self._on_serial_chunk(chunk)
+
+            for chunk in self._from_stderr_capture:
+                self._on_stderr_capture(chunk)
+
+            self._new_data_event.clear()
 
     def _on_stdin_chunk(self, chunk: bytes | str):
         # TODO: look for menu escape key
         # TODO: if in menu mode, interpret menu commands
         if self._serial:
-            # TODO: set echo timer
-            if isinstance(chunk, bytes):
-                self._serial.write(chunk)
-            else:
-                self._serial.write(chunk.encode())
+            chunk_bytes = chunk if isinstance(chunk, bytes) else chunk.encode()
+            self._serial.write(chunk_bytes)
         else:
             # TODO: beep, show text indicating connection closed?
             pass
@@ -93,32 +101,33 @@ class _TerminalSession:
 
         sys.stdout.flush()
 
-    def _on_stderr_chunk(self, chunk: str):
-        try:
-            assert asyncio.get_running_loop() == self._event_loop
-        except (AssertionError, RuntimeError):
-            return sys.stdout.write(chunk.replace("\n", "\r\n"))  # pass through
+    async def _read_from_stdin(self):
+        async with _async_reader_context(sys.stdin) as inp:
+            chunker = TerminalChunker()
+            while True:
+                try:
+                    async with asyncio.timeout(from_deadline(chunker.deadline)):
+                        chunker.add_data(await inp.read(256), time.monotonic())
+                except TimeoutError:
+                    chunker.add_data(b"", time.monotonic())
+                if chunks := chunker.get_chunks():
+                    self._from_stdin.extend(chunks)
+                    self._new_data_event.set()
 
-        # TODO: clean up pending typeahead / menu
-        # TODO: switch to error context, move to newline if not
-        sys.stdout.write(chunk.replace("\n", "\r\n"))
-        sys.stdout.flush()
-        # TODO: replace pending typeahead / menu
+    async def _run_serial_tracker(self, opts: SerialTerminalOptions):
+        SPT = ok_serial.SerialPortTracker
+        with SPT(opts.match, topts=opts.topts, copts=opts.copts) as tracker:
+            while True:
+                self._serial = await tracker.connect_async()
+                self._new_data_event.set()
+                try:
+                    await self._read_from_serial()
+                except ok_serial.SerialIoException as ex:
+                    logging.warning("%s", ex)
+                    self._serial = None
+                    self._new_data_event.set()
 
-    async def _run_stdin_reader(self, stdin: asyncio.StreamReader):
-        assert asyncio.get_running_loop() == self._event_loop
-        chunker = TerminalChunker()
-        while True:
-            try:
-                async with asyncio.timeout(from_deadline(chunker.deadline)):
-                    chunker.add_data(await stdin.read(256), time.monotonic())
-            except TimeoutError:
-                chunker.add_data(b"", time.monotonic())
-            for chunk in chunker.get_chunks():
-                self._on_stdin_chunk(chunk)
-
-    async def _run_serial_reader(self):
-        assert asyncio.get_running_loop() == self._event_loop
+    async def _read_from_serial(self):
         chunker = TerminalChunker()
         while True:
             try:
@@ -128,9 +137,16 @@ class _TerminalSession:
             except TimeoutError:
                 chunker.add_data(b"", time.monotonic())
 
-            for chunk in chunker.get_chunks():
-                await self._serial_enable.wait()
-                self._on_serial_chunk(chunk)
+            if chunks := chunker.get_chunks():
+                self._from_serial.extend(chunks)
+                self._new_data_event.set()
+
+    def _capture_stderr(self, data: str):
+        async def in_loop(data: str):
+            self._from_stderr_capture.append(data)
+            self._new_data_event.set()
+
+        asyncio.run_coroutine_threadsafe(in_loop(data), self._event_loop)
 
 
 @contextlib.asynccontextmanager
