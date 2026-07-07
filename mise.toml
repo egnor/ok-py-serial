@@ -7,7 +7,7 @@ experimental = true
 python.uv_venv_auto = true
 
 [hooks]
-postinstall = "uv sync --extra cli"
+postinstall = "uv sync"
 
 [tasks]
-check = ["uv sync --extra cli", "ruff check", "mypy", "pytest"]
+check = ["uv sync", "ruff check", "mypy", "pytest"]

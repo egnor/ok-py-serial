@@ -45,7 +45,7 @@ class _TerminalSession:
             # Inject stderr shim before putting tty in raw mode
             if os.isatty(2) and os.stat(1) == os.stat(2):
                 stderr_patch_args = (sys.stderr, "write", self._capture_stderr)
-                stderr_patch_context = _setattr_context(*stderr_patch_args)
+                stderr_patch_context = _monkeypatch_context(*stderr_patch_args)
                 cleanup.enter_context(stderr_patch_context)
 
             self._stdin_is_tty = cleanup.enter_context(_raw_tty_context(0))
@@ -190,7 +190,7 @@ def _raw_tty_context(fd: typing.Literal[0, 1, 2]) -> typing.Iterator[bool]:
 
 
 @contextlib.contextmanager
-def _setattr_context(obj: object, attr: str, val) -> typing.Iterator:
+def _monkeypatch_context(obj: object, attr: str, val) -> typing.Iterator:
     save = getattr(obj, attr, None)
     try:
         setattr(obj, attr, val)
