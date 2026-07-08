@@ -13,7 +13,7 @@ from ok_serial import _exceptions
 
 SerialSharingType = Literal["oblivious", "polite", "exclusive", "stomp"]
 
-log = logging.getLogger("ok_serial.locking")
+log = logging.getLogger("ok_serial.lock")
 
 # Linux TIOCGEXCL: _IOR('T', 0x40, int)
 _TIOCGEXCL = getattr(termios, "TIOCGEXCL", 0x80045440)

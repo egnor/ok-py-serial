@@ -15,7 +15,7 @@ from ok_serial._exceptions import (
     SerialTrackerExhausted,
 )
 from ok_serial._metadata import SerialPort, PortPredicate
-from ok_serial._scanning import scan_serial_ports
+from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
 log = logging.getLogger("ok_serial.tracker")

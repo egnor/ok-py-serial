@@ -1,4 +1,4 @@
-"""Unit tests for ok_serial._scanning."""
+"""Unit tests for ok_serial._scan."""
 
 import json
 import pytest

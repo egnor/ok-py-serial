@@ -17,7 +17,7 @@ mise run check
 uv run pytest
 
 # Run a single test file
-uv run pytest tests/test_scanning.py
+uv run pytest tests/test_scan.py
 
 # Run a specific test
 uv run pytest tests/test_matching.py::test_whole_word_match
@@ -36,7 +36,7 @@ uv run pytest tests/test_matching.py::test_whole_word_match
 
 - `_matching.py`: `compile_match()` - turns a match string or callable into a `SerialPort -> bool` predicate (simple whole-word glob; pass a callable for anything fancier)
 
-- **`_scanning.py`**: Port discovery
+- **`_scan.py`**: Port discovery
   - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports
   - Supports `OK_SERIAL_SCAN_OVERRIDE` env var for testing with fake port data
 
@@ -44,7 +44,7 @@ uv run pytest tests/test_matching.py::test_whole_word_match
   - Periodically scans for matching ports and maintains connection
   - Handles disconnect/reconnect transparently
 
-- **`_locking.py`**: Multi-layer port locking with sharing modes:
+- **`_lock.py`**: Multi-layer port locking with sharing modes:
   - `"oblivious"` - no locking
   - `"polite"` - shared flock, respects others
   - `"exclusive"` - exclusive flock + TIOCEXCL

@@ -21,7 +21,7 @@ ESCAPE_CODE_RX = re.compile(
     b"(?P<decscusr>\\d) q|"  # DEC set cursor style
     b"\\?(?P<decset>[\\d;]*)h|"  # DEC mode set
     b"(?P<decstr>!)p|"  # Soft terminal reset
-    b"(?P<sgr>.*m)|"  # Set Graphics Rendition
+    b"(?P<sgr>.*m)|"  # Set Graphics Rendition (capture 'm' as terminator)
     b"(?P<sm>[\\d;]*)h|"  # ANSI mode set
     b"(?P<rm>[\\d;]*)l|"  # ANSI mode reset
     b">(?P<xtsmpointer>\\d)p|"  # XTerm pointer visibility
@@ -32,7 +32,7 @@ ESCAPE_CODE_RX = re.compile(
     b")"
 )
 
-# regexp to match individual SGR content codes, each ending in m or ;
+# regexp to match individual SGR content codes, each ending in ; or m
 # codes in the same category supercede (latest wins)
 SGR_SUBCODE_RX = re.compile(
     b"(?:"
@@ -54,8 +54,11 @@ SGR_SUBCODE_RX = re.compile(
     b"(?P<ul>58;5;\\d+|58;2;\\d+;\\d+;\\d+|58:[\\d:]*|59)|"  # underline color
     b"(?P<baseline>7[345])|"  # super- / sub-script / off
     b"(?P<OTHER>[\\d:]+)"
-    b")[m;]"
+    b")[;m]"
 )
+
+# Escape codes that can be directly captured as a single mode
+SIMPLE_CODES = frozenset("decsca decscusr keypad shift xtsmpointer".split())
 
 # DEC private modes (CSI ? Pm h/l) we do NOT capture for replay:
 # - 2 (DECANM): reset switches to VT52 mode and changes the escape grammar
@@ -64,9 +67,9 @@ SGR_SUBCODE_RX = re.compile(
 SKIP_DEC_MODES = frozenset({2, 3, 1048})
 
 # Modes reset by DECSTR. Excludes DECAWM (?7) which terminals vary on.
-DECSTR_DEC_MODES = frozenset({1, 6, 25, 66})  # DECCKM, DECOM, DECTCEM, DECNKM
-DECSTR_ANSI_MODES = frozenset({2, 4})  # KAM, IRM
-DECSTR_OTHER_PREFIXES = frozenset({"charset", "decsca", "keypad", "shift"})
+DECSTR_DEC_MODES = [1, 6, 25, 66]  # DECCKM, DECOM, DECTCEM, DECNKM
+DECSTR_ANSI_MODES = [2, 4]  # KAM, IRM
+DECSTR_OTHER_MODES = "decsca G0 G1 G2 G3 keypad shift".split()
 
 
 class TerminalModeSaver:
@@ -103,9 +106,9 @@ class TerminalModeSaver:
         self.ansi_modes: dict[int, bytes] = {}
         self.dec_modes: dict[int, bytes] = {}
         self.other_modes: dict[str, bytes] = {}
-        self._sgr_save_dec: dict[str, bytes] = {}  # DECSC/DECRC
-        self._sgr_save_xterm: list[dict[str, bytes]] = []  # XT(PUSH/POP)SGR
-        self._dec_save: dict[int, bytes] = {}  # XTSAVE/XTRESTORE
+        self.save_sgr_dec: dict[str, bytes] = {}  # DECSC/DECRC
+        self.save_sgr_xterm: list[dict[str, bytes]] = []  # XT(PUSH/POP)SGR
+        self.save_dec_xterm: dict[int, bytes] = {}  # XTSAVE/XTRESTORE
 
     def add_escape(self, chunk: bytes) -> None:
         """Incorporates an escape (from TerminalChunker) into saved state."""
@@ -116,25 +119,19 @@ class TerminalModeSaver:
             body = escape_match[escape]
 
             # Simple modes to save
-            if escape in (
-                "decsca",
-                "decscusr",
-                "keypad",
-                "shift",
-                "xtsmpointer",
-            ):
+            if escape in SIMPLE_CODES:
                 self.other_modes.pop(escape, None)  # reorder to latest
                 self.other_modes[escape] = chunk
 
             # ESC codes
             elif escape == "charset":
-                key = f"charset:{body[0] & 3:d}"  # G0-G3
+                key = f"G{body[0] & 3:d}"  # G0-G3 charsets
                 self.other_modes.pop(key, None)  # reorder to latest
                 self.other_modes[key] = chunk
             elif escape == "decrc":
-                self.sgr_codes = {**self._sgr_save_dec}
+                self.sgr_codes = {**self.save_sgr_dec}
             elif escape == "decsc":
-                self._sgr_save_dec = {**self.sgr_codes}
+                self.save_sgr_dec = {**self.sgr_codes}
             elif escape == "ris":  # full reset & clear screen; replay DECSTR
                 # TODO: theoretically need explicit reset for non-DECSTR items
                 self.soft_reset = True
@@ -142,15 +139,14 @@ class TerminalModeSaver:
                 self.dec_modes.clear()
                 self.ansi_modes.clear()
                 self.other_modes.clear()
-                self._dec_save.clear()
-                self._sgr_save_dec.clear()
-                self._sgr_save_xterm.clear()
+                self.save_dec_xterm.clear()
+                self.save_sgr_dec.clear()
+                self.save_sgr_xterm.clear()
 
             # CSI codes
             elif escape == "decll":
-                if body == b"0":
-                    [self.other_modes.pop(f"decll:{n}", None) for n in "123"]
-                key = f"decll:{body[-1]:c}"  # decll:[1-3] or decll:0 (reset)
+                if (key := f"decll{body[-1]:c}") == "decll0":
+                    [self.other_modes.pop(f"decll{n}", None) for n in "123"]
                 self.other_modes.pop(key, None)  # reorder to latest
                 self.other_modes[key] = chunk
             elif dec_value := {"decrst": b"l", "decset": b"h"}.get(escape):
@@ -161,13 +157,12 @@ class TerminalModeSaver:
             elif escape == "decstr":  # soft reset: replay it, then later deltas
                 self.soft_reset = True
                 self.sgr_codes.clear()  # the replayed DECSTR resets SGR for us
-                for k in list(self.other_modes.keys()):
-                    if k.split(":", 1)[0] in DECSTR_OTHER_PREFIXES:
-                        del self.other_modes[k]
-                for mode in DECSTR_DEC_MODES:
-                    self.dec_modes.pop(mode, None)
-                for mode in DECSTR_ANSI_MODES:
-                    self.ansi_modes.pop(mode, None)
+                for dec_mode in DECSTR_DEC_MODES:
+                    self.dec_modes.pop(dec_mode, None)
+                for ansi_mode in DECSTR_ANSI_MODES:
+                    self.ansi_modes.pop(ansi_mode, None)
+                for other_mode in DECSTR_OTHER_MODES:
+                    self.other_modes.pop(other_mode, None)
             elif escape == "sgr":
                 sgr_pos = 0
                 while sgr_pos < len(body):
@@ -187,20 +182,20 @@ class TerminalModeSaver:
                     self.ansi_modes.pop(mode, None)  # reorder to latest
                     self.ansi_modes[mode] = ansi_value
             elif escape == "xtpopsgr":
-                if self._sgr_save_xterm:
-                    self.sgr_codes = self._sgr_save_xterm.pop()
+                if self.save_sgr_xterm:
+                    self.sgr_codes = self.save_sgr_xterm.pop()
             elif escape == "xtpushsgr":
-                self._sgr_save_xterm.append({**self.sgr_codes})
+                self.save_sgr_xterm.append({**self.sgr_codes})
             elif escape == "xtrestore":
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.dec_modes.pop(mode, None)  # reorder to latest
-                    if saved_value := self._dec_save.get(mode):
+                    if saved_value := self.save_dec_xterm.get(mode):
                         self.dec_modes[mode] = saved_value
             elif escape == "xtsave":
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                    self._dec_save.pop(mode, None)
+                    self.save_dec_xterm.pop(mode, None)
                     if current_value := self.dec_modes.get(mode):
-                        self._dec_save[mode] = current_value
+                        self.save_dec_xterm[mode] = current_value
             else:
                 assert False, escape  # one named group should match
 

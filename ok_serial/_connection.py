@@ -8,9 +8,9 @@ import threading
 import time
 
 from ok_serial import _exceptions
-from ok_serial._locking import PortLock, SerialSharingType
+from ok_serial._lock import PortLock, SerialSharingType
 from ok_serial._metadata import SerialPort, PortPredicate
-from ok_serial._scanning import scan_serial_ports
+from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
 log = logging.getLogger("ok_serial.connection")

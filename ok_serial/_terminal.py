@@ -101,7 +101,7 @@ class _TerminalSession:
         sys.stdout.flush()
 
     def _on_stderr_capture(self, chunk: str):
-        pass
+        sys.stdout.write(chunk.replace("\n", "\r\n"))
 
     async def _read_from_stdin(self):
         async with _async_reader_context(sys.stdin) as inp:

@@ -17,10 +17,10 @@ from ok_serial._connection import (
     SerialControlSignals,
 )
 
-from ok_serial._scanning import scan_serial_ports
+from ok_serial._scan import scan_serial_ports
 from ok_serial._metadata import SerialPort
 from ok_serial._tracker import SerialPortTracker, SerialTrackerOptions
-from ok_serial._locking import SerialSharingType
+from ok_serial._lock import SerialSharingType
 
 from ok_serial._exceptions import (
     SerialException,

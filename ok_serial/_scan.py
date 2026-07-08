@@ -12,7 +12,7 @@ from ok_serial._exceptions import SerialScanException
 from ok_serial._matching import compile_match
 from ok_serial._metadata import SerialPort, PortPredicate
 
-log = logging.getLogger("ok_serial.scanning")
+log = logging.getLogger("ok_serial.scan")
 
 _HASHMASK = (1 << (struct.calcsize("L") * 8)) - 1
 _HASHCODE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -60,11 +60,11 @@ def scan_serial_ports(
                 found.append(port)
 
         # Prioritize exact device path match
-        if port := _port_from_path(match):
-            log.debug("direct path port: %s", port)
-            found = [p for p in found if p.name == port.name]
-            if not found:
-                found.append(port)  # not found by pyserial (eg. pty)
+        if exact_port := _port_from_path(match):
+            # use pyserial metadata if pyserial also found this port
+            if not (found := [p for p in found if p.name == exact_port.name]):
+                log.debug("Named device: %s", exact_port)
+                found.append(exact_port)  # not found by pyserial (eg. pty)
 
     sort_key = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
     if match:
@@ -79,7 +79,7 @@ def scan_serial_ports(
 
 
 def _port_from_path(p: str | PortPredicate | None) -> SerialPort | None:
-    if isinstance(p, str) and p.startswith("/dev/"):
+    if isinstance(p, str):
         try:
             st = os.stat(p)
         except OSError:
