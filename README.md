@@ -14,7 +14,7 @@ Think twice before using this library! Consider something more established:
 
 Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) / [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter) library for Python. It runs most places Python does and abstracts lots of gnarly system details. However, some issues keep coming up:
 
-- Most modern serial ports are USB, and get temporary names like `/dev/ttyACM3` or `COM4`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep) or Linux's [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk) can help but require extra steps to use.
+- Most modern serial ports are USB, and get temporary names like `/dev/ttyACM3` or `COM4`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep) or Linux's [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk) are helpful but clunky.
 
 - Nonblocking or concurrent PySerial I/O is tricky and often [broken](https://github.com/pyserial/pyserial/issues/281) [entirely](https://github.com/pyserial/pyserial/issues/280).
 
@@ -41,8 +41,6 @@ pip install ok-serial
 ```
 
 (or `uv add ok-serial`, etc.)
-
-Install `ok-serial[cli]` to get dependencies for the `okserial` CLI tool.
 
 ## Usage
 
@@ -91,7 +89,7 @@ Specific attributes [come from PySerial](https://pyserial.readthedocs.io/en/late
 - `serial_number` - USB device serial, eg. `DF62585783553434`
 - `location` - system bus attachment path, eg. `3-2.1:1.0`
 
-To see all the attributes, install `ok-serial[cli]`, connect some device(s) and run `okserial list --print-verbose`:
+To see all the attributes, install `ok-serial`, connect some device(s) and run `okserial list --print-verbose`:
 
 ```text
 Serial port: /dev/ttyACM3
@@ -149,3 +147,27 @@ When opening a port, [`SerialConnection`](https://egnor.github.io/ok-py-serial/o
 - `stomp` (use with care!) - _Any other program using the port is killed_, if possible; locks are held, if possible; the port is opened regardless.
 
 Sharing mode implementation is limited by OS capabilities, process permissions, and historical conventions of port usage coordination. Best efforts are taken but your mileage may vary.
+
+## Terminal emulator
+
+Install `ok-serial` and run `okserial term <port> [baud]` to launch a simple terminal emulator connected to the specified port, eg. `okserial term MyDevice 115200`. See `okserial term --help` for options. While running, you should see a status line with further guidance.
+
+## Socat for testing and profit
+
+On Unix-ish systems, [socat](http://www.dest-unreach.org/socat/) is handy for connecting serial-port apps (okserial or otherwise) to non-serial endpoints (like a Unix program or a TCP socket). Install it with your favorite package manager (eg. `sudo apt install socat`), and run something like this in one window:
+
+```sh
+socat pty,raw,echo=0,link=socat.tmp shell:pty,stderr,setsid,ctty
+```
+
+The first socat argument `pty,raw,echo=0,link=socat.tmp` allocates a pseudoterminal (pty) that looks like a serial port, and creates a `./socat.tmp` symlink to the device. The `,raw,echo=0` suppresses default pty echo behavior to avoid the shell looping on its own output.
+
+The second socat argument `shell:ptr,stderr,setsid,ctty` starts a shell on its own pty, but this could be any socat endpoint (`exec:cat`, `tcp:localhost:8000`, etc).
+
+Socat will then shuffle data between the two points. Try this in another window (in the same directory):
+
+```sh
+okserial term socat.tmp  # in the same directory in another window
+```
+
+You should get terminal connected to the pty socat allocated; hit enter and you should see a shell prompt.
