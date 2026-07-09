@@ -72,8 +72,8 @@ DECSTR_ANSI_MODES = [2, 4]  # KAM, IRM
 DECSTR_OTHER_MODES = "decsca G0 G1 G2 G3 keypad shift".split()
 
 
-class TerminalModeSaver:
-    """Buffers VTxxx settings for interpretation and restoration.
+class TerminalMode:
+    """Buffered VTxxx settings for interpretation and restoration.
 
     Currently captures:
     - SGR codes (text style, color, font, etc.), including save/restore
@@ -199,7 +199,7 @@ class TerminalModeSaver:
             else:
                 assert False, escape  # one named group should match
 
-    def get_restore_escapes(self) -> bytes:
+    def replay_escapes(self) -> list[bytes]:
         """Returns escape code(s) to restore previously accumulated state."""
 
         out: list[bytes] = []
@@ -219,4 +219,4 @@ class TerminalModeSaver:
                     run_suffix = suffix
 
         out.extend(self.other_modes.values())
-        return b"".join(out)
+        return out
