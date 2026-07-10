@@ -1,51 +1,49 @@
+from ok_serial._terminal_mode import TerminalMode
+
+
 class TerminalWindow:
     """Rewrites terminal output to stay within a designated window region,
     eg. to leave room for a status bar or other "chrome".
     - sets a scrolling region with DECSTBM to the designated window
     - rewrites absolute cursor positioning to stay within the window
     - rewrites in-window DECSTBM to be a sub-region of the window
-    - saves and restores in-window cursor position and mode when switching
+    - saves and restores in-window cursor position and mode for switching
       between windowed and non-windowed output (eg. when updating status bar)
 
     This class does not handle I/O but rewrites chunks (escapes or text runs)
     intended for the terminal or received from the terminal.
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self):
+        self.window_region: tuple[int | None, int | None] = (None, None)
+        self.scroll_region: tuple[int | None, int | None] = (None, None)
+        self.cursor: tuple[int, int] | None = None
+        self.mode: TerminalMode = TerminalMode()
 
-    def set_region(self, first_row: int, last_row: int) -> list[bytes | str]:
-        """Sets window extent with 1-based row numbers; -1 = edge of screen.
-        Returns any chunks to send directly to the terminal to prepare for the
-        change (querying cursor position to restore after using DECSTBM).
+    def cursor_query(self) -> list[bytes | str]:
+        """Returns chunks to send to the terminal to query the cursor position.
+        Responses are handled by .chunk_from_terminal(...) to update .cursor.
         """
         return []
 
-    def window_ready(self) -> bool:
-        """Returns True if .chunk_to_window(...) is ready for use.
-        Returns False if a previous cursor query (DSR/CPR) is still pending.
-        (Check this again after .chunk_from_terminal(...) calls.)
+    def window_setup(self) -> list[bytes | str]:
+        """Returns chunks to send to the terminal to enter/resume the window,
+        based on .window_region, .scroll_region, .cursor, and .mode.
+        (If .cursor is None, the cursor is set at the top of the window.)
         """
-        return False
+        return []
 
-    def chunk_to_window(self, chunk: bytes | str) -> list[bytes | str]:
+    def chunk_to_window(self, chunk: bytes | str) -> bytes | str:
         """Translates an output chunk that should be kept inside the window.
-        Returns modified chunks to send directly to the terminal, with
-        absolute positioning adjusted and any cursor/mode restoration needed
-        so all .chunk_to_window(...) output is logically continuous.
+        Returns a chunk to send to the terminal with positioning adjustments.
+        Updates .scroll_region and .mode from the chunk; resets .cursor to None
+        (accurate cursor position tracking is difficult).
         """
         return []
 
-    def chunk_to_terminal(self, chunk: bytes | str) -> list[bytes | str]:
-        """Translates a NON window-boxed output chunk (eg. status bar update).
-        Doesn't modify the chunk, but prepends a cursor query if necessary to
-        save in-window state to restore in the next .chunk_to_window(...) call.
-
-        Important: Unlike in-window state, non-windowed position and mode are
-        NOT preserved when switching; each run of non-windowed output should
-        start with mode and position setup (eg. DECSTR, CUP, SGR, "text").
+    def chunk_from_terminal(self, chunk: bytes | str) -> bytes | str | None:
+        """Handles a chunk received from the terminal. If the chunk is a
+        response to a previous .cursor_query(...) call, updates .cursor and
+        returns None, otherwise returns the chunk for upstream processing.
         """
-        return []
-
-    def chunk_from_terminal(self, chunk: bytes | str) -> list[bytes | str]:
         return []
