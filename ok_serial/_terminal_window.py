@@ -22,14 +22,14 @@ class TerminalWindow:
 
     def cursor_query(self) -> list[bytes | str]:
         """Returns chunks to send to the terminal to query the cursor position.
-        Responses are handled by .chunk_from_terminal(...) to update .cursor.
+        Replies are handled by .chunk_from_terminal(...) which updates .cursor.
         """
         return []
 
     def window_setup(self) -> list[bytes | str]:
         """Returns chunks to send to the terminal to enter/resume the window,
         based on .window_region, .scroll_region, .cursor, and .mode.
-        (If .cursor is None, the cursor is set at the top of the window.)
+        (If .cursor is None, the cursor is moved to the top of the window.)
         """
         return []
 
@@ -43,7 +43,7 @@ class TerminalWindow:
 
     def chunk_from_terminal(self, chunk: bytes | str) -> bytes | str | None:
         """Handles a chunk received from the terminal. If the chunk is a
-        response to a previous .cursor_query(...) call, updates .cursor and
+        reply to a previous .cursor_query(...) call, updates .cursor and
         returns None, otherwise returns the chunk for upstream processing.
         """
         return []
