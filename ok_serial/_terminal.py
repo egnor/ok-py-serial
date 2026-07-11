@@ -56,7 +56,7 @@ class _TerminalSession:
             task_group.create_task(self._run_serial_tracker(opts))
             await self._main_loop()
 
-    async def _main_loop(self):
+    async def _main_loop(self) -> None:
         echo_deadline: float | None = None
         while True:
             try:

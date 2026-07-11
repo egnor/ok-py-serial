@@ -72,7 +72,7 @@ DECSTR_ANSI_MODES = [2, 4]  # KAM, IRM
 DECSTR_OTHER_MODES = "decsca G0 G1 G2 G3 keypad shift".split()
 
 
-class TerminalMode:
+class TerminalModeSaver:
     """Buffered VTxxx settings for interpretation and restoration.
 
     Currently captures:

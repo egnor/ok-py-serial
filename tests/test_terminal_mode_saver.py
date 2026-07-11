@@ -1,12 +1,13 @@
-"""Unit tests for ok_serial._terminal_mode."""
+"""Unit tests for ok_serial._terminal_mode_saver."""
 
-from ok_serial._terminal_mode import TerminalMode
+from ok_serial._terminal_mode_saver import TerminalModeSaver
 
 
 def restore(*escapes: bytes) -> list[bytes]:
     """Feeds escapes to a mode and returns the post-reset restore sequence."""
-    mode = TerminalMode()
-    [mode.add_escape(escape) for escape in escapes]
+    mode = TerminalModeSaver()
+    for escape in escapes:
+        mode.add_escape(escape)
     replay = mode.replay_escapes()
     assert replay[0] == b"\x1b[!p"
     return replay[1:]
