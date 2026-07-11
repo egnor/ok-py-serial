@@ -93,7 +93,6 @@ class TerminalMode:
       window title, palettes, or other esoteric state
 
     Attributes:
-    - soft_reset: bool, True if DECSTR or RIS was observed
     - sgr_codes: dict[str, bytes] from SGR category name to latest value
     - ansi_modes: dict[int, bytes] from ANSI mode number to b"l" or b"h"
     - dec_modes: dict[int, bytes] from DEC mode number to b"l" or b"h"
@@ -101,7 +100,6 @@ class TerminalMode:
     """
 
     def __init__(self) -> None:
-        self.soft_reset = False  # replay DECSTR before the rest of state
         self.sgr_codes: dict[str, bytes] = {}
         self.ansi_modes: dict[int, bytes] = {}
         self.dec_modes: dict[int, bytes] = {}
@@ -133,8 +131,7 @@ class TerminalMode:
             elif escape == "decsc":
                 self.save_sgr_dec = {**self.sgr_codes}
             elif escape == "ris":  # full reset & clear screen; replay DECSTR
-                # TODO: theoretically need explicit reset for non-DECSTR items
-                self.soft_reset = True
+                # TODO: need explicit reset state for non-DECSTR items?
                 self.sgr_codes.clear()
                 self.dec_modes.clear()
                 self.ansi_modes.clear()
@@ -155,7 +152,6 @@ class TerminalMode:
                         self.dec_modes.pop(mode, None)  # reorder to latest
                         self.dec_modes[mode] = dec_value
             elif escape == "decstr":  # soft reset: replay it, then later deltas
-                self.soft_reset = True
                 self.sgr_codes.clear()  # the replayed DECSTR resets SGR for us
                 for dec_mode in DECSTR_DEC_MODES:
                     self.dec_modes.pop(dec_mode, None)
@@ -202,9 +198,7 @@ class TerminalMode:
     def replay_escapes(self) -> list[bytes]:
         """Returns escape code(s) to restore previously accumulated state."""
 
-        out: list[bytes] = []
-        if self.soft_reset:
-            out.append(b"\x1b[!p")  # DECSTR: re-establish known baseline
+        out: list[bytes] = [b"\x1b[!p"]  # DECSTR: known baseline
         if self.sgr_codes:
             out.append(b"\x1b[" + b";".join(self.sgr_codes.values()) + b"m")
 

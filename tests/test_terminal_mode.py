@@ -4,11 +4,12 @@ from ok_serial._terminal_mode import TerminalMode
 
 
 def restore(*escapes: bytes) -> list[bytes]:
-    """Feeds escapes to a fresh mode and returns its restore sequence."""
+    """Feeds escapes to a mode and returns the post-reset restore sequence."""
     mode = TerminalMode()
-    for escape in escapes:
-        mode.add_escape(escape)
-    return mode.replay_escapes()
+    [mode.add_escape(escape) for escape in escapes]
+    replay = mode.replay_escapes()
+    assert replay[0] == b"\x1b[!p"
+    return replay[1:]
 
 
 def test_empty_state():
@@ -98,23 +99,16 @@ def test_non_style_escapes_ignored():
 
 def test_dec_save_and_restore():
     # ESC 7 snapshots the style, ESC 8 restores it
-    mode = TerminalMode()
-    mode.add_escape(b"\x1b[1m")
-    mode.add_escape(b"\x1b7")  # DECSC: save bold
-    mode.add_escape(b"\x1b[31m")  # add red on top
-    assert mode.replay_escapes() == [b"\x1b[1;31m"]
-    mode.add_escape(b"\x1b8")  # DECRC: back to just bold
-    assert mode.replay_escapes() == [b"\x1b[1m"]
+    assert restore(b"\x1b[1m", b"\x1b7", b"\x1b[31m") == [b"\x1b[1;31m"]
+    assert restore(b"\x1b[1m", b"\x1b7", b"\x1b[31m", b"\x1b8") == [b"\x1b[1m"]
 
 
 def test_xterm_push_and_pop_sgr():
-    mode = TerminalMode()
-    mode.add_escape(b"\x1b[1m")
-    mode.add_escape(b"\x1b[#{")  # XTPUSHSGR: push bold
-    mode.add_escape(b"\x1b[31m")
-    assert mode.replay_escapes() == [b"\x1b[1;31m"]
-    mode.add_escape(b"\x1b[#}")  # XTPOPSGR: pop back to bold
-    assert mode.replay_escapes() == [b"\x1b[1m"]
+    # XTPUSHSGR: push bold
+    assert restore(b"\x1b[1m", b"\x1b[#{", b"\x1b[31m") == [b"\x1b[1;31m"]
+    # XTPUSHSGR / XTPOPSGR: pop back to bold
+    out = restore(b"\x1b[1m", b"\x1b[#{", b"\x1b[31m", b"\x1b[#}")
+    assert out == [b"\x1b[1m"]
 
 
 def test_pop_with_empty_stack_is_harmless():
@@ -204,25 +198,23 @@ def test_xtsave_and_xtrestore_dec_modes():
 
 
 def test_decstr_soft_reset_is_replayed():
-    # DECSTR is replayed verbatim; it resets SGR and the modes it governs (25,
-    # 4), while non-governed modes (2004) and later deltas are kept after it
+    # DECSTR resets SGR and the modes it governs (25, 4), while non-governed
+    # modes (2004) and later deltas are kept after it
     input = [b"\x1b[1m", b"\x1b[?25l", b"\x1b[4h", b"\x1b[?2004h", b"\x1b[!p"]
-    assert restore(*input) == [b"\x1b[!p", b"\x1b[?2004h"]
+    assert restore(*input) == [b"\x1b[?2004h"]
 
 
 def test_state_after_decstr_replays_after_it():
     # a governed mode set again after the reset reappears, following the DECSTR
-    input = [b"\x1b[?25l", b"\x1b[!p", b"\x1b[?25l"]
-    assert restore(*input) == [b"\x1b[!p", b"\x1b[?25l"]
+    out = restore(b"\x1b[?25l", b"\x1b[!p", b"\x1b[?25l")
+    assert out == [b"\x1b[?25l"]
 
 
 def test_ris_replayed_as_soft_reset():
     # RIS would clear the screen, so we downgrade it to a DECSTR on restore
-    out = restore(b"\x1b[1m", b"\x1b[?25l", b"\x1b[4h", b"\x1bc")
-    assert out == [b"\x1b[!p"]
+    assert restore(b"\x1b[1m", b"\x1b[?25l", b"\x1b[4h", b"\x1bc") == []
     # state accumulated after the reset is kept, following the DECSTR
-    out = restore(b"\x1b[1m", b"\x1bc", b"\x1b[31m")
-    assert out == [b"\x1b[!p", b"\x1b[31m"]
+    assert restore(b"\x1b[1m", b"\x1bc", b"\x1b[31m") == [b"\x1b[31m"]
 
 
 def test_dec_and_ansi_modes_do_not_merge():
@@ -259,15 +251,15 @@ def test_charset_and_keypad_ordering():
 
 def test_charset_and_keypad_reset_by_decstr_and_ris():
     # DECSTR and RIS both reset character sets and keypad to defaults
-    assert restore(b"\x1b(0", b"\x1b=", b"\x1b[!p") == [b"\x1b[!p"]
-    assert restore(b"\x1b(0", b"\x1b=", b"\x1bc") == [b"\x1b[!p"]
+    assert restore(b"\x1b(0", b"\x1b=", b"\x1b[!p") == []
+    assert restore(b"\x1b(0", b"\x1b=", b"\x1bc") == []
 
 
 def test_char_protection_reset_by_decstr():
     # DECSCA (CSI Ps " q) is captured and, unlike cursor style, IS reset by a
     # soft reset, so we drop it and let the replayed DECSTR re-establish default
     assert restore(b'\x1b[1"q') == [b'\x1b[1"q']  # protect characters
-    assert restore(b'\x1b[1"q', b"\x1b[!p") == [b"\x1b[!p"]
+    assert restore(b'\x1b[1"q', b"\x1b[!p") == []
 
 
 def test_leds():
@@ -277,8 +269,8 @@ def test_leds():
     out = restore(b"\x1b[1q", b"\x1b[22q", b"\x1b[21q")
     assert out == [b"\x1b[22q", b"\x1b[21q"]
     # LEDs survive a soft reset (only RIS clears them), so replay after DECSTR
-    assert restore(b"\x1b[1q", b"\x1b[!p") == [b"\x1b[!p", b"\x1b[1q"]
-    assert restore(b"\x1b[1q", b"\x1bc") == [b"\x1b[!p"]  # RIS clears LEDs
+    assert restore(b"\x1b[1q", b"\x1b[!p") == [b"\x1b[1q"]
+    assert restore(b"\x1b[1q", b"\x1bc") == []  # RIS clears LEDs
 
 
 def test_leds_zero_clears_all():
@@ -290,8 +282,8 @@ def test_cursor_style():
     assert restore(b"\x1b[3 q") == [b"\x1b[3 q"]  # blinking underline
     assert restore(b"\x1b[3 q", b"\x1b[1 q") == [b"\x1b[1 q"]  # superceded
     # cursor style survives a soft reset (vim/neovim rely on this), not RIS
-    assert restore(b"\x1b[3 q", b"\x1b[!p") == [b"\x1b[!p", b"\x1b[3 q"]
-    assert restore(b"\x1b[3 q", b"\x1bc") == [b"\x1b[!p"]  # RIS clears it
+    assert restore(b"\x1b[3 q", b"\x1b[!p") == [b"\x1b[3 q"]
+    assert restore(b"\x1b[3 q", b"\x1bc") == []  # RIS clears it
 
 
 def test_xterm_pointer_mode():
@@ -299,5 +291,5 @@ def test_xterm_pointer_mode():
     assert restore(b"\x1b[>2p") == [b"\x1b[>2p"]
     assert restore(b"\x1b[>1p", b"\x1b[>3p") == [b"\x1b[>3p"]  # latest wins
     # survives a soft reset, cleared only by RIS
-    assert restore(b"\x1b[>2p", b"\x1b[!p") == [b"\x1b[!p", b"\x1b[>2p"]
-    assert restore(b"\x1b[>2p", b"\x1bc") == [b"\x1b[!p"]
+    assert restore(b"\x1b[>2p", b"\x1b[!p") == [b"\x1b[>2p"]
+    assert restore(b"\x1b[>2p", b"\x1bc") == []
