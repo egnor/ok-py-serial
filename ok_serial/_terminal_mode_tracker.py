@@ -66,7 +66,53 @@ SIMPLE_CODES = frozenset("decsca decscusr keypad shift xtsmpointer".split())
 # - 1048: an action (save/restore cursor), not a state
 SKIP_DEC_MODES = frozenset({2, 3, 1048})
 
-# Modes reset by DECSTR. Excludes DECAWM (?7) which terminals vary on.
+# Baseline reset state assumed at startup or after full-reset (RIS)
+# and replayed explicitly. (Alas, DECSTR soft-reset isn't universal.)
+RESET_SGR_CODES = {"RESET": b""}  # plain SGR reset (CSI m)
+
+RESET_DEC_MODES = {
+    # reset (l) modes first, then set (h), so replay collapses into two runs
+    1: b"l",  # DECCKM: normal (not application) cursor keys
+    6: b"l",  # DECOM: absolute (not origin-relative) addressing
+    9: b"l",  # X10 mouse reporting off
+    47: b"l",  # alternate screen off (legacy variant)
+    66: b"l",  # DECNKM: numeric (not application) keypad
+    1000: b"l",  # mouse click reporting off
+    1001: b"l",  # mouse highlight tracking off
+    1002: b"l",  # mouse click-and-drag reporting off
+    1003: b"l",  # mouse any-motion reporting off
+    1004: b"l",  # focus in/out reporting off
+    1005: b"l",  # UTF-8 mouse encoding off
+    1006: b"l",  # SGR mouse encoding off
+    1015: b"l",  # urxvt mouse encoding off
+    1016: b"l",  # SGR-pixel mouse encoding off
+    1047: b"l",  # alternate screen off
+    1049: b"l",  # alternate screen (with cursor save) off
+    2004: b"l",  # bracketed paste off
+    2026: b"l",  # synchronized output off (don't leave updates frozen!)
+    7: b"h",  # DECAWM: auto-wrap on
+    25: b"h",  # DECTCEM: cursor visible
+}
+
+RESET_ANSI_MODES = {
+    2: b"l",  # KAM: keyboard unlocked
+    4: b"l",  # IRM: replace (not insert) mode
+    20: b"l",  # LNM: linefeed does not imply carriage return
+}
+
+RESET_OTHER_MODES = {
+    "G0": b"\x1b(B",  # G0 charset = US-ASCII
+    "G1": b"\x1b)B",  # G1 charset = US-ASCII
+    "shift": b"\x0f",  # SI: GL = G0
+    "keypad": b"\x1b>",  # numeric keypad (DECKPNM)
+    "decscusr": b"\x1b[0 q",  # cursor style = terminal default
+    "decsca": b'\x1b[0"q',  # character protection off
+    "decll0": b"\x1b[0q",  # all keyboard LEDs off
+    "xtsmpointer": b"\x1b[>1p",  # pointer hidden while typing (xterm default)
+}
+
+# Modes reset by DECSTR, restored to baseline (or dropped) when DECSTR is seen.
+# Excludes DECAWM (?7) which terminals vary on.
 DECSTR_DEC_MODES = [1, 6, 25, 66]  # DECCKM, DECOM, DECTCEM, DECNKM
 DECSTR_ANSI_MODES = [2, 4]  # KAM, IRM
 DECSTR_OTHER_MODES = "decsca G0 G1 G2 G3 keypad shift".split()
@@ -92,6 +138,9 @@ class TerminalModeTracker:
     - GR locking shifts/single shifts, modifyOtherKeys / kitty keyboard,
       window title, palettes, or other esoteric state
 
+    Tracked state starts with explicit defaults (and returns there on reset),
+    which may not exactly match the terminal's own defaults after reset.
+
     Attributes:
     - sgr_codes: dict[str, bytes] from SGR category name to latest value
     - ansi_modes: dict[int, bytes] from ANSI mode number to b"l" or b"h"
@@ -99,14 +148,26 @@ class TerminalModeTracker:
     - other_modes: dict[str, bytes] from type to escape code for other state
     """
 
+    sgr_codes: dict[str, bytes]
+    ansi_modes: dict[int, bytes]
+    dec_modes: dict[int, bytes]
+    other_modes: dict[str, bytes]
+    save_sgr_dec: dict[str, bytes]  # DECSC/DECRC
+    save_sgr_xterm: list[dict[str, bytes]]  # XT(PUSH/POP)SGR
+    save_dec_xterm: dict[int, bytes]  # XTSAVE/XTRESTORE
+
     def __init__(self) -> None:
-        self.sgr_codes: dict[str, bytes] = {}
-        self.ansi_modes: dict[int, bytes] = {}
-        self.dec_modes: dict[int, bytes] = {}
-        self.other_modes: dict[str, bytes] = {}
-        self.save_sgr_dec: dict[str, bytes] = {}  # DECSC/DECRC
-        self.save_sgr_xterm: list[dict[str, bytes]] = []  # XT(PUSH/POP)SGR
-        self.save_dec_xterm: dict[int, bytes] = {}  # XTSAVE/XTRESTORE
+        self.reset()
+
+    def reset(self) -> None:
+        """Returns all tracked state to the explicit baseline (as RIS does)."""
+        self.sgr_codes = dict(RESET_SGR_CODES)
+        self.ansi_modes = dict(RESET_ANSI_MODES)
+        self.dec_modes = dict(RESET_DEC_MODES)
+        self.other_modes = dict(RESET_OTHER_MODES)
+        self.save_sgr_dec = dict(RESET_SGR_CODES)
+        self.save_sgr_xterm = []
+        self.save_dec_xterm = {}
 
     def add_escape(self, chunk: bytes) -> None:
         """Incorporates an escape (from TerminalChunker) into saved state."""
@@ -130,15 +191,8 @@ class TerminalModeTracker:
                 self.sgr_codes = {**self.save_sgr_dec}
             elif code == "decsc":
                 self.save_sgr_dec = {**self.sgr_codes}
-            elif code == "ris":  # full reset & clear screen; replay DECSTR
-                # TODO: need explicit reset state for non-DECSTR items?
-                self.sgr_codes.clear()
-                self.dec_modes.clear()
-                self.ansi_modes.clear()
-                self.other_modes.clear()
-                self.save_dec_xterm.clear()
-                self.save_sgr_dec.clear()
-                self.save_sgr_xterm.clear()
+            elif code == "ris":  # full reset; replay baseline (not a clear!)
+                self.reset()
 
             # CSI codes
             elif code == "decll":
@@ -151,14 +205,18 @@ class TerminalModeTracker:
                     if mode not in SKIP_DEC_MODES:
                         self.dec_modes.pop(mode, None)  # reorder to latest
                         self.dec_modes[mode] = dec_value
-            elif code == "decstr":  # soft reset: replay it, then later deltas
-                self.sgr_codes.clear()  # the replayed DECSTR resets SGR for us
+            elif code == "decstr":  # soft reset: governed state to baseline
+                self.sgr_codes = dict(RESET_SGR_CODES)
+                self.save_sgr_dec = dict(RESET_SGR_CODES)  # resets DECSC too
                 for dec_mode in DECSTR_DEC_MODES:
-                    self.dec_modes.pop(dec_mode, None)
+                    self.dec_modes[dec_mode] = RESET_DEC_MODES[dec_mode]
                 for ansi_mode in DECSTR_ANSI_MODES:
-                    self.ansi_modes.pop(ansi_mode, None)
+                    self.ansi_modes[ansi_mode] = RESET_ANSI_MODES[ansi_mode]
                 for other_mode in DECSTR_OTHER_MODES:
-                    self.other_modes.pop(other_mode, None)
+                    if reset_value := RESET_OTHER_MODES.get(other_mode):
+                        self.other_modes[other_mode] = reset_value
+                    else:
+                        self.other_modes.pop(other_mode, None)
             elif code == "sgr":
                 sgr_pos = 0
                 while sgr_pos < len(body):
@@ -182,11 +240,12 @@ class TerminalModeTracker:
                     self.sgr_codes = self.save_sgr_xterm.pop()
             elif code == "xtpushsgr":
                 self.save_sgr_xterm.append({**self.sgr_codes})
-            elif code == "xtrestore":
+            elif code == "xtrestore":  # restore saved value, else baseline
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.dec_modes.pop(mode, None)  # reorder to latest
-                    if saved_value := self.save_dec_xterm.get(mode):
-                        self.dec_modes[mode] = saved_value
+                    saved = self.save_dec_xterm.get(mode)
+                    if value := saved or RESET_DEC_MODES.get(mode):
+                        self.dec_modes[mode] = value
             elif code == "xtsave":
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.save_dec_xterm.pop(mode, None)
@@ -198,7 +257,7 @@ class TerminalModeTracker:
     def replay_escapes(self) -> list[bytes]:
         """Returns escape code(s) to restore previously accumulated state."""
 
-        out: list[bytes] = [b"\x1b[!p"]  # DECSTR: known baseline
+        out: list[bytes] = [b"\x1b[!p"]  # DECSTR first, for untracked state
         if self.sgr_codes:
             out.append(b"\x1b[" + b";".join(self.sgr_codes.values()) + b"m")
 
