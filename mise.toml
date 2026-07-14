@@ -12,7 +12,12 @@ postinstall = "uv sync"
 [tasks]
 check = ["uv sync", "ruff check", "mypy", "pytest"]
 
-[tasks.socat]
-description = "Copy between a pty (./socat.tmp) and a program (default $SHELL)"
+[tasks.socat-run]
+description = "Connect a program (default $SHELL) to a pty: ./socat.run.tmp"
 usage = 'arg "[run]" var=#true default="{{env.SHELL}}"'
-run = "socat -dd pty,raw,echo=0,link=socat.tmp exec:${usage_run},pty,stderr,setsid,ctty"
+run = "socat -dd pty,raw,echo=0,link=socat.exec.tmp exec:${usage_run},pty,stderr,setsid,ctty"
+
+[tasks.socat-ab]
+description = "Connect two ptys: ./socat.a.tmp, ./socat.b.tmp"
+usage = 'arg "[run]" var=#true default="{{env.SHELL}}"'
+run = "socat -dd pty,raw,echo=0,link=socat.a.tmp pty,raw,echo=0,link=socat.b.tmp"
