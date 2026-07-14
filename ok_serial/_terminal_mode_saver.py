@@ -111,26 +111,26 @@ class TerminalModeSaver:
     def add_escape(self, chunk: bytes) -> None:
         """Incorporates an escape (from TerminalChunker) into saved state."""
 
-        if escape_match := ESCAPE_CODE_RX.fullmatch(chunk):
-            escape = escape_match.lastgroup
-            assert escape, escape_match.group()
-            body = escape_match[escape]
+        if code_match := ESCAPE_CODE_RX.fullmatch(chunk):
+            code = code_match.lastgroup
+            assert code, code_match.groupdict()
+            body = code_match[code]
 
             # Simple modes to save
-            if escape in SIMPLE_CODES:
-                self.other_modes.pop(escape, None)  # reorder to latest
-                self.other_modes[escape] = chunk
+            if code in SIMPLE_CODES:
+                self.other_modes.pop(code, None)  # reorder to latest
+                self.other_modes[code] = chunk
 
             # ESC codes
-            elif escape == "charset":
+            elif code == "charset":
                 key = f"G{body[0] & 3:d}"  # G0-G3 charsets
                 self.other_modes.pop(key, None)  # reorder to latest
                 self.other_modes[key] = chunk
-            elif escape == "decrc":
+            elif code == "decrc":
                 self.sgr_codes = {**self.save_sgr_dec}
-            elif escape == "decsc":
+            elif code == "decsc":
                 self.save_sgr_dec = {**self.sgr_codes}
-            elif escape == "ris":  # full reset & clear screen; replay DECSTR
+            elif code == "ris":  # full reset & clear screen; replay DECSTR
                 # TODO: need explicit reset state for non-DECSTR items?
                 self.sgr_codes.clear()
                 self.dec_modes.clear()
@@ -141,17 +141,17 @@ class TerminalModeSaver:
                 self.save_sgr_xterm.clear()
 
             # CSI codes
-            elif escape == "decll":
+            elif code == "decll":
                 if (key := f"decll{body[-1]:c}") == "decll0":
                     [self.other_modes.pop(f"decll{n}", None) for n in "123"]
                 self.other_modes.pop(key, None)  # reorder to latest
                 self.other_modes[key] = chunk
-            elif dec_value := {"decrst": b"l", "decset": b"h"}.get(escape):
+            elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     if mode not in SKIP_DEC_MODES:
                         self.dec_modes.pop(mode, None)  # reorder to latest
                         self.dec_modes[mode] = dec_value
-            elif escape == "decstr":  # soft reset: replay it, then later deltas
+            elif code == "decstr":  # soft reset: replay it, then later deltas
                 self.sgr_codes.clear()  # the replayed DECSTR resets SGR for us
                 for dec_mode in DECSTR_DEC_MODES:
                     self.dec_modes.pop(dec_mode, None)
@@ -159,41 +159,41 @@ class TerminalModeSaver:
                     self.ansi_modes.pop(ansi_mode, None)
                 for other_mode in DECSTR_OTHER_MODES:
                     self.other_modes.pop(other_mode, None)
-            elif escape == "sgr":
+            elif code == "sgr":
                 sgr_pos = 0
                 while sgr_pos < len(body):
-                    code_match = SGR_SUBCODE_RX.match(body, sgr_pos)
-                    assert code_match, body[sgr_pos:]
-                    code, sgr_pos = code_match.lastgroup, code_match.end()
-                    assert code, code_match.group()
-                    code_body = code_match[code]
-                    if code == "RESET":
-                        self.sgr_codes = {"RESET": code_body}
+                    sgr_match = SGR_SUBCODE_RX.match(body, sgr_pos)
+                    assert sgr_match, body[sgr_pos:]
+                    sgr, sgr_pos = sgr_match.lastgroup, sgr_match.end()
+                    assert sgr, sgr_match.groupdict()
+                    sgr_body = sgr_match[sgr]
+                    if sgr == "RESET":
+                        self.sgr_codes = {"RESET": sgr_body}
                     else:
-                        key = code_body.decode() if code == "OTHER" else code
+                        key = sgr_body.decode() if sgr == "OTHER" else sgr
                         self.sgr_codes.pop(key, None)  # reorder to latest
-                        self.sgr_codes[key] = code_body
-            elif ansi_value := {"rm": b"l", "sm": b"h"}.get(escape):
+                        self.sgr_codes[key] = sgr_body
+            elif ansi_value := {"rm": b"l", "sm": b"h"}.get(code):
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.ansi_modes.pop(mode, None)  # reorder to latest
                     self.ansi_modes[mode] = ansi_value
-            elif escape == "xtpopsgr":
+            elif code == "xtpopsgr":
                 if self.save_sgr_xterm:
                     self.sgr_codes = self.save_sgr_xterm.pop()
-            elif escape == "xtpushsgr":
+            elif code == "xtpushsgr":
                 self.save_sgr_xterm.append({**self.sgr_codes})
-            elif escape == "xtrestore":
+            elif code == "xtrestore":
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.dec_modes.pop(mode, None)  # reorder to latest
                     if saved_value := self.save_dec_xterm.get(mode):
                         self.dec_modes[mode] = saved_value
-            elif escape == "xtsave":
+            elif code == "xtsave":
                 for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                     self.save_dec_xterm.pop(mode, None)
                     if current_value := self.dec_modes.get(mode):
                         self.save_dec_xterm[mode] = current_value
             else:
-                assert False, escape  # one named group should match
+                assert False, code  # unknown named group?
 
     def replay_escapes(self) -> list[bytes]:
         """Returns escape code(s) to restore previously accumulated state."""
