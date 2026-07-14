@@ -40,7 +40,7 @@ uv run pytest tests/test_matching.py::test_whole_word_match
   - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports
   - Supports `OK_SERIAL_SCAN_OVERRIDE` env var for testing with fake port data
 
-- **`_tracker.py`**: `SerialPortTracker` - auto-reconnecting connection manager
+- **`_monitor.py`**: `SerialConnectionMonitor` - auto-reconnecting connection manager
   - Periodically scans for matching ports and maintains connection
   - Handles disconnect/reconnect transparently
 

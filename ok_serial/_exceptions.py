@@ -48,7 +48,7 @@ class SerialScanException(SerialException):
     pass
 
 
-class SerialTrackerExhausted(SerialException):
+class SerialMonitorExhausted(SerialException):
     """Exception raised for permanent timeout or retry limit finding a port."""
 
     pass

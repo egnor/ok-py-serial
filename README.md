@@ -32,7 +32,7 @@ The `ok-serial` library uses PySerial internally but has a revised interface:
 
 - Several [port locking modes](#sharing-modes) are supported, with exclusive locking by default. _All_ of [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html), [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial), and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html) are used to avoid contention.
 
-- [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker) is an automatic reconnection helper for graceful handling of pluggable devices.
+- [`SerialConnectionMonitor`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionMonitor) is an automatic reconnection helper for graceful handling of pluggable devices.
 
 ## Installation
 
@@ -62,7 +62,7 @@ API elements worth knowing include:
 
 - [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection) - establish a connection to a specific port and perform I/O
 - [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports) - get all ports on the system, with descriptive attributes
-- [`SerialPortTracker`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPortTracker) - scan and connect to a port with automatic error retry
+- [`SerialConnectionMonitor`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionMonitor) - scan and connect to a port with automatic error retry
 
 I/O methods come in different flavors:
 
@@ -114,7 +114,7 @@ Serial port: /dev/ttyACM3
 
 ## Port matching
 
-`SerialConnection(match=...)` and `SerialPortTracker(...)` take either a **match string** or a **predicate callable** (`SerialPort -> bool`).
+`SerialConnection(match=...)` and `SerialConnectionMonitor(...)` take either a **match string** or a **predicate callable** (`SerialPort -> bool`).
 
 A match string is split on whitespace into glob tokens. Each token must match (case-insensitively, as a whole-word glob with `*` and `?` wildcards) somewhere in some attribute value. So:
 
@@ -129,7 +129,7 @@ Word boundaries treat any non-alphanumeric character (`/`, `:`, `_`, etc.) as a 
 For anything more elaborate (substring matching across attribute boundaries, regex, negation, etc.), pass a callable:
 
 ```python
-ok_serial.SerialPortTracker(
+ok_serial.SerialConnectionMonitor(
     match=lambda p: p.attr.get("manufacturer") == "Adafruit"
     and p.attr.get("serial_number", "").startswith("DF625"),
 )

@@ -19,7 +19,7 @@ from ok_serial._connection import (
 
 from ok_serial._scan import scan_serial_ports
 from ok_serial._metadata import SerialPort
-from ok_serial._tracker import SerialPortTracker, SerialTrackerOptions
+from ok_serial._monitor import SerialConnectionMonitor, SerialMonitorOptions
 from ok_serial._lock import SerialSharingType
 
 from ok_serial._exceptions import (
@@ -27,10 +27,10 @@ from ok_serial._exceptions import (
     SerialIoClosed,
     SerialIoConflict,
     SerialIoException,
+    SerialMonitorExhausted,
     SerialOpenBusy,
     SerialOpenException,
     SerialScanException,
-    SerialTrackerExhausted,
 )
 
 __all__ = [n for n in globals() if not n.startswith("_")]

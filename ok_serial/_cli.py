@@ -93,11 +93,11 @@ def term_command(
 
     match = " ".join(port_baud)
     copts = ok_serial.SerialConnectionOptions(baud=baud, sharing=sharing)
-    topts = ok_serial.SerialTrackerOptions(
+    mopts = ok_serial.SerialMonitorOptions(
         scan_timeout=wait_time,
         reconnect_limit=None if reconnect else 0,
     )
-    run_terminal(SerialTerminalOptions(match, topts, copts))
+    run_terminal(SerialTerminalOptions(match, copts, mopts))
 
 
 def format_line(port: ok_serial.SerialPort):

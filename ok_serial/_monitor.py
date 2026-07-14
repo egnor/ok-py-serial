@@ -10,20 +10,20 @@ from ok_serial._exceptions import (
     SerialException,
     SerialIoClosed,
     SerialIoException,
+    SerialMonitorExhausted,
     SerialOpenException,
     SerialScanException,
-    SerialTrackerExhausted,
 )
 from ok_serial._metadata import SerialPort, PortPredicate
 from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
-log = logging.getLogger("ok_serial.tracker")
+log = logging.getLogger("ok_serial.monitor")
 
 
 @dataclasses.dataclass(frozen=True)
-class SerialTrackerOptions:
-    """Optional parameters for `SerialPortTracker`."""
+class SerialMonitorOptions:
+    """Optional parameters for `SerialConnectionMonitor`."""
 
     scan_interval: float | int = 0.5
     """Seconds between port re-scans when waiting for a match."""
@@ -35,7 +35,7 @@ class SerialTrackerOptions:
     """Reconnection attempts before giving up permanently (None = no limit)."""
 
 
-class SerialPortTracker(contextlib.AbstractContextManager):
+class SerialConnectionMonitor(contextlib.AbstractContextManager):
     """
     Utility class to maintain a connection to a serial port of interest,
     re-scanning and re-connecting as needed after errors, with periodic retry.
@@ -48,29 +48,29 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         match: str | PortPredicate | None = None,
         *,
         baud: int = 0,
-        topts: SerialTrackerOptions = SerialTrackerOptions(),
         copts: SerialConnectionOptions = SerialConnectionOptions(),
+        mopts: SerialMonitorOptions = SerialMonitorOptions(),
     ):
         """
         Prepare to manage a serial port connection.
         - `match` selects the port of interest: a
           [match string](https://github.com/egnor/ok-py-serial#port-matching),
           a `SerialPort -> bool` callable, or `None` for any port
-        - `topts` can define parameters for tracking (eg. re-scan interval)
         - `copts` can define parameters for connecting (eg. baud rate)
           - OR `baud` can set the baud rate (as a shortcut)
+        - `mopts` can define parameters for tracking (eg. re-scan interval)
 
         Actual port scans and connections only happen when `connect_*`
         is called. Call `close` to end any open connection, and/or use
-        `SerialPortTracker` as the target of a `with` statement.
+        `SerialConnectionMonitor` as the target of a `with` statement.
         """
 
         if baud:
             copts = dataclasses.replace(copts, baud=baud)
 
         self.match = match
-        self._tracker_opts = topts
         self._conn_opts = copts
+        self._monitor_opts = mopts
 
         self._lock = threading.Lock()
         self._baseline_keys: set[str] | None = None
@@ -88,9 +88,9 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
     def __repr__(self) -> str:
         return (
-            f"SerialPortTracker({self.match!r}, "
-            f"topts={self._tracker_opts!r}, "
-            f"copts={self._conn_opts!r})"
+            f"SerialConnectionMonitor({self.match!r}, "
+            f"copts={self._conn_opts!r}), "
+            f"mopts={self._monitor_opts!r}"
         )
 
     def close(self) -> None:
@@ -111,14 +111,14 @@ class SerialPortTracker(contextlib.AbstractContextManager):
         If a connection is established and healthy, returns it immediately.
 
         Otherwise, waits up to `timeout` seconds (forever for `None`) for
-        serial port(s) to appear matching this tracker's requirements,
+        serial port(s) to appear matching this monitor's requirements,
         returning the first successful connection from among them.
 
         Returns `None` on reaching the timeout argument.
 
         Raises:
         - `SerialScanException` - System error scanning ports
-        - `SerialTrackerExhausted` - Permanent timeout or reconnect limit hit
+        - `SerialMonitorExhausted` - Permanent timeout or reconnect limit hit
         """
 
         call_deadline = to_deadline(timeout)
@@ -130,22 +130,22 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except SerialIoException as ex:
-                        if self._tracker_opts.reconnect_limit == 0:
+                        if self._monitor_opts.reconnect_limit == 0:
                             msg = f"{ex} (reconnect disabled)"
-                            raise SerialTrackerExhausted(msg) from ex
+                            raise SerialMonitorExhausted(msg) from ex
                         log_level = 20 if isinstance(ex, SerialIoClosed) else 30
                         log.log(log_level, "⛓️‍💥 %s", ex)
 
                     self._conn.close()
                     self._conn = None
                     self._reconnect_count += 1
-                    limit = self._tracker_opts.reconnect_limit
+                    limit = self._monitor_opts.reconnect_limit
                     if limit is not None and self._reconnect_count > limit:
                         msg = f"{self.match!r} reconnect limit met ({limit})"
-                        raise SerialTrackerExhausted(msg)
+                        raise SerialMonitorExhausted(msg)
 
                 if self._scan_deadline is None:
-                    scan_timeout = self._tracker_opts.scan_timeout
+                    scan_timeout = self._monitor_opts.scan_timeout
                     self._scan_deadline = to_deadline(scan_timeout)
                     if scan_timeout is None:
                         log.info("🔎 Scanning for %r (ongoing)", self.match)
@@ -172,7 +172,7 @@ class SerialPortTracker(contextlib.AbstractContextManager):
                         self._scan_matched = None
                         log.debug("%s", self._conn_error)
 
-                    wait = self._tracker_opts.scan_interval
+                    wait = self._monitor_opts.scan_interval
                     self._next_scan = to_deadline(wait)
 
                 if port := self._scan_matched:
@@ -190,11 +190,11 @@ class SerialPortTracker(contextlib.AbstractContextManager):
 
             assert self._scan_deadline is not None
             if from_deadline(self._scan_deadline) < wait:
-                scan_timeout = self._tracker_opts.scan_timeout
+                scan_timeout = self._monitor_opts.scan_timeout
                 msg = f"Can't open {self.match!r}"
                 if scan_timeout and scan_timeout > 0:
                     msg += f" ({scan_timeout:.2f}s timeout)"
-                raise SerialTrackerExhausted(msg) from self._conn_error
+                raise SerialMonitorExhausted(msg) from self._conn_error
 
             if from_deadline(call_deadline) < wait:
                 return None

@@ -1,6 +1,6 @@
 import re
 
-from ok_serial._terminal_mode_saver import TerminalModeSaver
+from ok_serial._terminal_mode_tracker import TerminalModeTracker
 
 
 INPUT_CODE_RX = re.compile(b"(?:\x1b\\[|\x9b)(?:(?P<cpr>\\d+;\\d+)R)")
@@ -25,7 +25,7 @@ class TerminalWindow:
         self.setup_needed: bool = True
         self.query_pending: bool = False
         self.cursor_xy: tuple[int, int] | None = None
-        self.terminal_mode: TerminalModeSaver = TerminalModeSaver()
+        self.saved_mode: TerminalModeTracker = TerminalModeTracker()
         self.scroll_topbot: tuple[int | None, int | None] = (None, None)
         self.window_topbot: tuple[int | None, int | None] = (None, None)
 
@@ -56,7 +56,6 @@ class TerminalWindow:
         .cursor_xy, resets .query_pending to False, and returns None.
         Otherwise, returns the original chunk for further processing.
         """
-
         if (
             self.query_pending
             and isinstance(chunk, bytes)

@@ -7,7 +7,7 @@ def chunk_all(data: bytes) -> list[str | bytes]:
     """Feeds all data in one shot at t=0 and returns the chunks."""
     chunker = TerminalChunker()
     chunker.add_data(data, 0.0)
-    return chunker.get_chunks()
+    return chunker.chunks
 
 
 def test_plain_text():
@@ -83,17 +83,17 @@ def test_split_utf8_reassembled():
     chunker = TerminalChunker()
     data = "ok😀".encode()
     chunker.add_data(data[:4], 0.0)
-    assert chunker.get_chunks() == ["ok"]  # the partial emoji is held back
+    assert chunker.chunks == ["ok"]  # the partial emoji is held back
     chunker.add_data(data[4:], 0.05)
-    assert chunker.get_chunks() == ["😀"]
+    assert chunker.chunks == ["ok", "😀"]
 
 
 def test_split_csi_reassembled():
     chunker = TerminalChunker()
     chunker.add_data(b"\x1b[1;", 0.0)
-    assert chunker.get_chunks() == []  # incomplete CSI held back
+    assert chunker.chunks == []  # incomplete CSI held back
     chunker.add_data(b"31m", 0.05)
-    assert chunker.get_chunks() == [b"\x1b[1;31m"]
+    assert chunker.chunks == [b"\x1b[1;31m"]
 
 
 def test_partial_times_out_to_bytes():
@@ -101,15 +101,15 @@ def test_partial_times_out_to_bytes():
     # deadline passes with no further data
     chunker = TerminalChunker()
     chunker.add_data(b"\x1b", 0.0)
-    assert chunker.get_chunks() == []  # held, waiting for the rest
-    chunker.add_data(b"", chunker.deadline + 1.0)  # idle past the deadline
-    assert chunker.get_chunks() == [b"\x1b"]
+    assert chunker.chunks == []  # held, waiting for the rest
+    chunker.add_data(b"", chunker.data_deadline + 1.0)  # idle past the deadline
+    assert chunker.chunks == [b"\x1b"]
 
 
 def test_deadline_advances_with_partial():
     chunker = TerminalChunker()
     chunker.add_data(b"hi", 10.0)
     # nothing pending -> a long deadline; a partial -> a short one
-    assert chunker.deadline > 100.0
+    assert chunker.data_deadline > 100.0
     chunker.add_data(b"\x1b[", 20.0)
-    assert chunker.deadline == 20.0 + CHUNK_TIMEOUT
+    assert chunker.data_deadline == 20.0 + CHUNK_TIMEOUT

@@ -50,15 +50,15 @@ class TerminalChunker:
     """Breaks VTxxx data into output characters and control sequences."""
 
     def __init__(self) -> None:
+        self.chunks: list[str | bytes] = []
+        self.data_deadline = 0.0
         self._partial = bytearray()
-        self._data_deadline = 0.0
-        self._chunks: list[str | bytes] = []
 
     def add_data(self, data: bytes, data_time: float) -> None:
         """Adds terminal data with timestamp. Use data=b"" to mark idle time."""
 
-        if not data and self._partial and data_time > self._data_deadline:
-            self._chunks.append(bytes(self._partial[:1]))
+        if not data and self._partial and data_time > self.data_deadline:
+            self.chunks.append(bytes(self._partial[:1]))
             self._partial = self._partial[1:]
 
         self._partial.extend(data)
@@ -69,38 +69,26 @@ class TerminalChunker:
             chars, char_part, esc, esc_part, other = match.groups()
             if chars:
                 # group 1 only matches well-formed UTF-8, so this can't raise
-                self._chunks.append(chars.decode())
+                self.chunks.append(chars.decode())
                 pos += len(chars)
             elif esc:
-                self._chunks.append(esc)
+                self.chunks.append(esc)
                 pos += len(esc)
             elif other:
-                self._chunks.append(other)
+                self.chunks.append(other)
                 assert len(other) == 1, other
                 pos += 1
             else:
                 self._partial = self._partial[pos:]
-                self._data_deadline = data_time + CHUNK_TIMEOUT
+                self.data_deadline = data_time + CHUNK_TIMEOUT
                 assert self._partial in (char_part, esc_part), match.groups()
                 return
 
         self._partial.clear()
-        self._data_deadline = data_time + 3600.0  # long timeout
+        self.data_deadline = data_time + 3600.0  # long timeout
 
-    def get_chunks(self) -> list[str | bytes]:
-        """Returns accumulated data so far:
-        - str for well formed UTF-8 strings
-        - bytes for control characters, escape sequences, or invalid data
 
-        Partial but otherwise valid UTF-8 or terminal codes stay buffered
-        more data arrives they time out so they can be returned as one chunk.
-        """
-        out, self._chunks = self._chunks, []
-        return out
-
-    @property
-    def deadline(self) -> float:
-        """Timeout deadline for buffered input; call add_data() with no data
-        after this time if there's no further input."""
-
-        return self._data_deadline
+def chunk_to_bytes(chunk: str | bytes):
+    """Returns the data-stream bytes for a TerminalChunker-type chunk."""
+    assert isinstance(chunk, (str, bytes)), chunk
+    return chunk if isinstance(chunk, bytes) else chunk.encode()

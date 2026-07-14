@@ -17,8 +17,8 @@ from ok_serial._timeout_math import from_deadline
 @dataclasses.dataclass(frozen=True)
 class SerialTerminalOptions:
     match: str
-    topts: ok_serial.SerialTrackerOptions
     copts: ok_serial.SerialConnectionOptions
+    mopts: ok_serial.SerialMonitorOptions
     raw: bool = False
 
 
@@ -28,7 +28,7 @@ def run_terminal(opts: SerialTerminalOptions):
 
 
 async def run_terminal_async(opts: SerialTerminalOptions):
-    """Runs an interactive terminal communicating with a serial tracker"""
+    """Runs an interactive terminal communicating with a serial monitor"""
     await _TerminalSession().run(opts)
 
 
@@ -53,7 +53,7 @@ class _TerminalSession:
 
             task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
             task_group.create_task(self._read_from_stdin())
-            task_group.create_task(self._run_serial_tracker(opts))
+            task_group.create_task(self._run_serial_monitor(opts))
             await self._main_loop()
 
     async def _main_loop(self) -> None:
@@ -108,19 +108,21 @@ class _TerminalSession:
             chunker = TerminalChunker()
             while True:
                 try:
-                    async with asyncio.timeout(from_deadline(chunker.deadline)):
+                    timeout = from_deadline(chunker.data_deadline)
+                    async with asyncio.timeout(timeout):
                         chunker.add_data(await inp.read(256), time.monotonic())
                 except TimeoutError:
                     chunker.add_data(b"", time.monotonic())
-                if chunks := chunker.get_chunks():
-                    self._from_stdin.extend(chunks)
+                if chunker.chunks:
+                    self._from_stdin.extend(chunker.chunks)
                     self._new_data_event.set()
+                    chunker.chunks.clear()
 
-    async def _run_serial_tracker(self, opts: SerialTerminalOptions):
-        SPT = ok_serial.SerialPortTracker
-        with SPT(opts.match, topts=opts.topts, copts=opts.copts) as tracker:
+    async def _run_serial_monitor(self, opts: SerialTerminalOptions):
+        SCM = ok_serial.SerialConnectionMonitor
+        with SCM(opts.match, copts=opts.copts, mopts=opts.mopts) as monitor:
             while True:
-                self._serial = await tracker.connect_async()
+                self._serial = await monitor.connect_async()
                 self._new_data_event.set()
                 try:
                     await self._read_from_serial()
@@ -133,15 +135,17 @@ class _TerminalSession:
         chunker = TerminalChunker()
         while True:
             try:
-                async with asyncio.timeout(from_deadline(chunker.deadline)):
+                timeout = from_deadline(chunker.data_deadline)
+                async with asyncio.timeout(timeout):
                     data = await self._serial.read_async()
                     chunker.add_data(data, data.monotonic_time)
             except TimeoutError:
                 chunker.add_data(b"", time.monotonic())
 
-            if chunks := chunker.get_chunks():
-                self._from_serial.extend(chunks)
+            if chunker.chunks:
+                self._from_serial.extend(chunker.chunks)
                 self._new_data_event.set()
+                chunker.chunks.clear()
 
     def _capture_stderr(self, data: str):
         async def in_loop(data: str):
