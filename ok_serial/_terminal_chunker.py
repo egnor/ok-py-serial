@@ -51,15 +51,18 @@ class TerminalChunker:
 
     def __init__(self) -> None:
         self.chunks: list[str | bytes] = []
-        self.data_deadline = 0.0
+        self.data_deadline: float | None = None
         self._partial = bytearray()
 
     def add_data(self, data: bytes, data_time: float) -> None:
         """Adds terminal data with timestamp. Use data=b"" to mark idle time."""
 
-        if not data and self._partial and data_time > self.data_deadline:
-            self.chunks.append(bytes(self._partial[:1]))
-            self._partial = self._partial[1:]
+        if not data:
+            if self.data_deadline and data_time > self.data_deadline:
+                self.chunks.append(bytes(self._partial))
+                self.data_deadline = None
+                self._partial.clear()
+            return
 
         self._partial.extend(data)
         pos = 0
@@ -68,8 +71,7 @@ class TerminalChunker:
             assert match, self._partial[pos:]
             chars, char_part, esc, esc_part, other = match.groups()
             if chars:
-                # group 1 only matches well-formed UTF-8, so this can't raise
-                self.chunks.append(chars.decode())
+                self.chunks.append(chars.decode())  # regexp enforces validity
                 pos += len(chars)
             elif esc:
                 self.chunks.append(esc)
@@ -79,13 +81,13 @@ class TerminalChunker:
                 assert len(other) == 1, other
                 pos += 1
             else:
-                self._partial = self._partial[pos:]
-                self.data_deadline = data_time + CHUNK_TIMEOUT
+                del self._partial[:pos]
                 assert self._partial in (char_part, esc_part), match.groups()
+                self.data_deadline = data_time + CHUNK_TIMEOUT
                 return
 
         self._partial.clear()
-        self.data_deadline = data_time + 3600.0  # long timeout
+        self.data_deadline = None  # no timeout
 
 
 def chunk_to_bytes(chunk: str | bytes):

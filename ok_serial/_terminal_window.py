@@ -22,33 +22,37 @@ class TerminalWindow:
     """
 
     def __init__(self) -> None:
-        self.setup_needed: bool = True
-        self.query_pending: bool = False
-        self.cursor_xy: tuple[int, int] | None = None
-        self.saved_mode: TerminalModeTracker = TerminalModeTracker()
-        self.scroll_topbot: tuple[int | None, int | None] = (None, None)
-        self.window_topbot: tuple[int | None, int | None] = (None, None)
+        self.chunks_to_transmit: list[bytes | str] = []
+        self.chunks_to_receive: list[bytes | str] = []
 
-    def translate_window_chunk(self, chunk: bytes | str) -> list[bytes | str]:
-        """Transforms output that should be contained within the window.
-        Updates .scroll_topbot and .saved_mode; resets .cursor_xy to None.
-        Returns chunks to send to the terminal:
-        - setup/restore cursor/mode/scroll-region if .setup_needed
-        - the original chunk with transformed coordinates
-        """
-        out: list[bytes | str] = []
-        # TODO XXX
-        return out
+        self._query_pending: bool = False
+        self._window_setup_needed: bool = True
+        self._window_cursor_xy: tuple[int, int] | None = None
+        self._window_scroll_topbot: tuple[int | None, int | None] = (None, None)
+        self._window_terminal_mode: TerminalModeTracker = TerminalModeTracker()
+        self._window_topbot: tuple[int | None, int | None] = (None, None)
 
-    def capture_window_state(self) -> list[bytes | str]:
+    def add_window_chunk(self, chunk: bytes | str) -> None:
+        """Collects a window-boxed chunk for transmission to the terminal."""
+        if self._window_setup_needed:
+            # TODO: set up scrolling region
+            # TODO: move cursor
+            mode_setup = self._window_terminal_mode.mode_chunks()
+            self.chunks_to_transmit.extend(mode_setup)
+            self._window_setup_neede = False
+        # TODO: translate absolute to relative position
+        self.chunks_to_transmit.append(chunk)
+
+    def save_window_state(self) -> None:
         """Queries cursor position for restoration after
         - Returns chunks to send to the terminal to query the cursor (DSR 6)
         - Sets .setup_needed so the next .translate_window_chunk(...) will
           restore cursor/mode/scroll-region
         """
-        self.setup_needed = True
-        self.query_pending = not self.cursor_xy
-        return [b"\x1b[6n"] if self.query_pending else []
+        self._setup_needed = True
+        if not self._cursor_xy and not self._query_pending:
+            self._query_pending = True
+            self.chunks_to_transmit.append(b"\x1b[6n")
 
     def handle_input_chunk(self, chunk: bytes | str) -> bytes | str | None:
         """Handles a chunk received from the terminal.
@@ -56,18 +60,20 @@ class TerminalWindow:
         .cursor_xy, resets .query_pending to False, and returns None.
         Otherwise, returns the original chunk for further processing.
         """
-        if (
-            self.query_pending
-            and isinstance(chunk, bytes)
-            and (match := INPUT_CODE_RX.match(chunk))
-        ):
-            code = match.lastgroup
-            if code == "cpr":
-                row, col = map(int, match[code].split(b";"))
-                self.cursor_xy = (col, row)
-                self.query_pending = False
-                return None
-            else:
-                assert False, (code, match.groupdict())  # unknown named group?
+        if not self._query_pending:
+            return chunk
+        if not isinstance(chunk, bytes):
+            return chunk
+        if not (match := INPUT_CODE_RX.match(chunk)):
+            return chunk
+
+        code = match.lastgroup
+        if code == "cpr":
+            row, col = map(int, match[code].split(b";"))
+            self._cursor_xy = (col, row)
+            self._query_pending = False
+            return None
+        else:
+            assert False, (code, match.groupdict())  # unknown named group?
 
         return chunk

@@ -2,7 +2,7 @@ import re
 
 # regexp to match relevant terminal escape sequences
 # https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-ESCAPE_CODE_RX = re.compile(
+ESCAPE_RX = re.compile(
     # single-byte codes
     b"(?P<shift>[\x0e\x0f]|\x1b[no])|"  # GL locking shift: SI/SO/LS2/LS3
     # ESC codes
@@ -138,7 +138,7 @@ class TerminalModeTracker:
     - GR locking shifts/single shifts, modifyOtherKeys / kitty keyboard,
       window title, palettes, or other esoteric state
 
-    Tracked state starts with explicit defaults (and returns there on reset),
+    State starts with explicit defaults and returns there on reset,
     which may not exactly match the terminal's own defaults after reset.
 
     Attributes:
@@ -152,9 +152,9 @@ class TerminalModeTracker:
     ansi_modes: dict[int, bytes]
     dec_modes: dict[int, bytes]
     other_modes: dict[str, bytes]
-    save_sgr_dec: dict[str, bytes]  # DECSC/DECRC
-    save_sgr_xterm: list[dict[str, bytes]]  # XT(PUSH/POP)SGR
-    save_dec_xterm: dict[int, bytes]  # XTSAVE/XTRESTORE
+    _save_sgr_dec: dict[str, bytes]  # DECSC/DECRC
+    _save_sgr_xterm: list[dict[str, bytes]]  # XT(PUSH/POP)SGR
+    _save_dec_xterm: dict[int, bytes]  # XTSAVE/XTRESTORE
 
     def __init__(self) -> None:
         self.reset()
@@ -165,97 +165,101 @@ class TerminalModeTracker:
         self.ansi_modes = dict(RESET_ANSI_MODES)
         self.dec_modes = dict(RESET_DEC_MODES)
         self.other_modes = dict(RESET_OTHER_MODES)
-        self.save_sgr_dec = dict(RESET_SGR_CODES)
-        self.save_sgr_xterm = []
-        self.save_dec_xterm = {}
+        self._save_sgr_dec = dict(RESET_SGR_CODES)
+        self._save_sgr_xterm = []
+        self._save_dec_xterm = {}
 
-    def add_escape(self, chunk: bytes) -> None:
-        """Incorporates an escape (from TerminalChunker) into saved state."""
+    def add_chunk(self, chunk: bytes | str) -> None:
+        """Incorporates a chunk (from TerminalChunker) into saved state."""
 
-        if code_match := ESCAPE_CODE_RX.fullmatch(chunk):
-            code = code_match.lastgroup
-            assert code, code_match.groupdict()
-            body = code_match[code]
+        if not isinstance(chunk, bytes):
+            return
+        if not (match := ESCAPE_RX.fullmatch(chunk)):
+            return
 
-            # Simple modes to save
-            if code in SIMPLE_CODES:
-                self.other_modes.pop(code, None)  # reorder to latest
-                self.other_modes[code] = chunk
+        code = match.lastgroup
+        assert code, match.groupdict()
+        body = match[code]
 
-            # ESC codes
-            elif code == "charset":
-                key = f"G{body[0] & 3:d}"  # G0-G3 charsets
-                self.other_modes.pop(key, None)  # reorder to latest
-                self.other_modes[key] = chunk
-            elif code == "decrc":
-                self.sgr_codes = {**self.save_sgr_dec}
-            elif code == "decsc":
-                self.save_sgr_dec = {**self.sgr_codes}
-            elif code == "ris":  # full reset; replay baseline (not a clear!)
-                self.reset()
+        # Simple modes to save
+        if code in SIMPLE_CODES:
+            self.other_modes.pop(code, None)  # reorder to latest
+            self.other_modes[code] = chunk
 
-            # CSI codes
-            elif code == "decll":
-                if (key := f"decll{body[-1]:c}") == "decll0":
-                    [self.other_modes.pop(f"decll{n}", None) for n in "123"]
-                self.other_modes.pop(key, None)  # reorder to latest
-                self.other_modes[key] = chunk
-            elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
-                for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                    if mode not in SKIP_DEC_MODES:
-                        self.dec_modes.pop(mode, None)  # reorder to latest
-                        self.dec_modes[mode] = dec_value
-            elif code == "decstr":  # soft reset: governed state to baseline
-                self.sgr_codes = dict(RESET_SGR_CODES)
-                self.save_sgr_dec = dict(RESET_SGR_CODES)  # resets DECSC too
-                for dec_mode in DECSTR_DEC_MODES:
-                    self.dec_modes[dec_mode] = RESET_DEC_MODES[dec_mode]
-                for ansi_mode in DECSTR_ANSI_MODES:
-                    self.ansi_modes[ansi_mode] = RESET_ANSI_MODES[ansi_mode]
-                for other_mode in DECSTR_OTHER_MODES:
-                    if reset_value := RESET_OTHER_MODES.get(other_mode):
-                        self.other_modes[other_mode] = reset_value
-                    else:
-                        self.other_modes.pop(other_mode, None)
-            elif code == "sgr":
-                sgr_pos = 0
-                while sgr_pos < len(body):
-                    sgr_match = SGR_SUBCODE_RX.match(body, sgr_pos)
-                    assert sgr_match, body[sgr_pos:]
-                    sgr, sgr_pos = sgr_match.lastgroup, sgr_match.end()
-                    assert sgr, sgr_match.groupdict()
-                    sgr_body = sgr_match[sgr]
-                    if sgr == "RESET":
-                        self.sgr_codes = {"RESET": sgr_body}
-                    else:
-                        key = sgr_body.decode() if sgr == "OTHER" else sgr
-                        self.sgr_codes.pop(key, None)  # reorder to latest
-                        self.sgr_codes[key] = sgr_body
-            elif ansi_value := {"rm": b"l", "sm": b"h"}.get(code):
-                for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                    self.ansi_modes.pop(mode, None)  # reorder to latest
-                    self.ansi_modes[mode] = ansi_value
-            elif code == "xtpopsgr":
-                if self.save_sgr_xterm:
-                    self.sgr_codes = self.save_sgr_xterm.pop()
-            elif code == "xtpushsgr":
-                self.save_sgr_xterm.append({**self.sgr_codes})
-            elif code == "xtrestore":  # restore saved value, else baseline
-                for mode in (int(m) for m in body.split(b";") if m.isdigit()):
+        # ESC codes
+        elif code == "charset":
+            key = f"G{body[0] & 3:d}"  # G0-G3 charsets
+            self.other_modes.pop(key, None)  # reorder to latest
+            self.other_modes[key] = chunk
+        elif code == "decrc":
+            self.sgr_codes = {**self._save_sgr_dec}
+        elif code == "decsc":
+            self._save_sgr_dec = {**self.sgr_codes}
+        elif code == "ris":  # full reset; replay baseline (not a clear!)
+            self.reset()
+
+        # CSI codes
+        elif code == "decll":
+            if (key := f"decll{body[-1]:c}") == "decll0":
+                [self.other_modes.pop(f"decll{n}", None) for n in "123"]
+            self.other_modes.pop(key, None)  # reorder to latest
+            self.other_modes[key] = chunk
+        elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
+            for mode in (int(m) for m in body.split(b";") if m.isdigit()):
+                if mode not in SKIP_DEC_MODES:
                     self.dec_modes.pop(mode, None)  # reorder to latest
-                    saved = self.save_dec_xterm.get(mode)
-                    if value := saved or RESET_DEC_MODES.get(mode):
-                        self.dec_modes[mode] = value
-            elif code == "xtsave":
-                for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                    self.save_dec_xterm.pop(mode, None)
-                    if current_value := self.dec_modes.get(mode):
-                        self.save_dec_xterm[mode] = current_value
-            else:
-                assert False, code  # unknown named group?
+                    self.dec_modes[mode] = dec_value
+        elif code == "decstr":  # soft reset: governed state to baseline
+            self.sgr_codes = dict(RESET_SGR_CODES)
+            self._save_sgr_dec = dict(RESET_SGR_CODES)  # resets DECSC too
+            for dec_mode in DECSTR_DEC_MODES:
+                self.dec_modes[dec_mode] = RESET_DEC_MODES[dec_mode]
+            for ansi_mode in DECSTR_ANSI_MODES:
+                self.ansi_modes[ansi_mode] = RESET_ANSI_MODES[ansi_mode]
+            for other_mode in DECSTR_OTHER_MODES:
+                if reset_value := RESET_OTHER_MODES.get(other_mode):
+                    self.other_modes[other_mode] = reset_value
+                else:
+                    self.other_modes.pop(other_mode, None)
+        elif code == "sgr":
+            sgr_pos = 0
+            while sgr_pos < len(body):
+                sgr_match = SGR_SUBCODE_RX.match(body, sgr_pos)
+                assert sgr_match, body[sgr_pos:]
+                sgr, sgr_pos = sgr_match.lastgroup, sgr_match.end()
+                assert sgr, sgr_match.groupdict()
+                sgr_body = sgr_match[sgr]
+                if sgr == "RESET":
+                    self.sgr_codes = {"RESET": sgr_body}
+                else:
+                    key = sgr_body.decode() if sgr == "OTHER" else sgr
+                    self.sgr_codes.pop(key, None)  # reorder to latest
+                    self.sgr_codes[key] = sgr_body
+        elif ansi_value := {"rm": b"l", "sm": b"h"}.get(code):
+            for mode in (int(m) for m in body.split(b";") if m.isdigit()):
+                self.ansi_modes.pop(mode, None)  # reorder to latest
+                self.ansi_modes[mode] = ansi_value
+        elif code == "xtpopsgr":
+            if self._save_sgr_xterm:
+                self.sgr_codes = self._save_sgr_xterm.pop()
+        elif code == "xtpushsgr":
+            self._save_sgr_xterm.append({**self.sgr_codes})
+        elif code == "xtrestore":  # restore saved value, else baseline
+            for mode in (int(m) for m in body.split(b";") if m.isdigit()):
+                self.dec_modes.pop(mode, None)  # reorder to latest
+                saved = self._save_dec_xterm.get(mode)
+                if value := saved or RESET_DEC_MODES.get(mode):
+                    self.dec_modes[mode] = value
+        elif code == "xtsave":
+            for mode in (int(m) for m in body.split(b";") if m.isdigit()):
+                self._save_dec_xterm.pop(mode, None)
+                if current_value := self.dec_modes.get(mode):
+                    self._save_dec_xterm[mode] = current_value
+        else:
+            assert False, code  # unknown named group?
 
-    def replay_escapes(self) -> list[bytes]:
-        """Returns escape code(s) to restore previously accumulated state."""
+    def mode_chunks(self) -> list[bytes]:
+        """Returns escape code(s) to restore accumulated state."""
 
         out: list[bytes] = [b"\x1b[!p"]  # DECSTR first, for untracked state
         if self.sgr_codes:

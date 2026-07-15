@@ -13,7 +13,7 @@ def track(*escapes: bytes) -> TerminalModeTracker:
     """Feeds escapes to a fresh tracker and returns it for inspection."""
     tracker = TerminalModeTracker()
     for escape in escapes:
-        tracker.add_escape(escape)
+        tracker.add_chunk(escape)
     return tracker
 
 
@@ -40,9 +40,9 @@ def test_baseline_state():
     assert tracker.dec_modes == RESET_DEC_MODES
     assert tracker.ansi_modes == RESET_ANSI_MODES
     assert tracker.other_modes == RESET_OTHER_MODES
-    assert tracker.save_sgr_dec == RESET_SGR_CODES
-    assert tracker.save_sgr_xterm == []
-    assert tracker.save_dec_xterm == {}
+    assert tracker._save_sgr_dec == RESET_SGR_CODES
+    assert tracker._save_sgr_xterm == []
+    assert tracker._save_dec_xterm == {}
 
 
 def test_single_attribute_kept():
@@ -221,9 +221,7 @@ def test_mouse_protocol_modes_keep_set_order():
 
 def test_xtsave_and_xtrestore_dec_modes():
     # save the current value, change it, then restore the saved one
-    assert track(b"\x1b[?1049h", b"\x1b[?1049s").save_dec_xterm == {
-        1049: b"h"
-    }
+    assert track(b"\x1b[?1049h", b"\x1b[?1049s")._save_dec_xterm == {1049: b"h"}
     out = dec(b"\x1b[?1049h", b"\x1b[?1049s", b"\x1b[?1049l", b"\x1b[?1049r")
     assert out == {**RESET_DEC_MODES, 1049: b"h"}
     # restoring a mode that was never saved falls back to the baseline
@@ -372,7 +370,7 @@ def test_xterm_pointer_mode():
 
 
 #
-# Serialization: how the state dicts are rendered by replay_escapes()
+# Serialization: how the state dicts are rendered by mode_chunks()
 #
 
 BASELINE_DEC_L_RUN = (
@@ -383,7 +381,7 @@ BASELINE_DEC_L_RUN = (
 
 def test_baseline_replay():
     # a fresh tracker replays DECSTR plus the explicit baseline
-    assert TerminalModeTracker().replay_escapes() == [
+    assert TerminalModeTracker().mode_chunks() == [
         b"\x1b[!p",  # DECSTR, for untracked state
         b"\x1b[m",  # SGR reset
         BASELINE_DEC_L_RUN,  # DEC mode resets, batched into one CSI
@@ -406,7 +404,7 @@ def test_serialization_of_dicts():
     tracker.dec_modes = {1000: b"h", 1006: b"h", 7: b"l", 25: b"h"}
     tracker.ansi_modes = {4: b"h", 20: b"h"}
     tracker.other_modes = {"G0": b"\x1b(0", "keypad": b"\x1b="}
-    assert tracker.replay_escapes() == [
+    assert tracker.mode_chunks() == [
         b"\x1b[!p",  # DECSTR always leads
         b"\x1b[;1m",  # SGR values joined into one escape
         b"\x1b[?1000;1006h",  # consecutive same-action DEC modes batch...
@@ -424,13 +422,13 @@ def test_empty_dicts_serialize_to_just_decstr():
     tracker.dec_modes = {}
     tracker.ansi_modes = {}
     tracker.other_modes = {}
-    assert tracker.replay_escapes() == [b"\x1b[!p"]
+    assert tracker.mode_chunks() == [b"\x1b[!p"]
 
 
 def test_end_to_end_replay():
     # tracked changes replace their baseline entries and replay after them
     tracker = track(b"\x1b[1m", b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[4h")
-    assert tracker.replay_escapes() == [
+    assert tracker.mode_chunks() == [
         b"\x1b[!p",
         b"\x1b[;1m",  # reset, then bold
         b"\x1b[?1;6;9;47;66;1001;1002;1003;1004;1005;1006;1015;1016;"

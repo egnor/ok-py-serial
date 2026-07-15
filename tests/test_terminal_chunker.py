@@ -100,16 +100,15 @@ def test_partial_times_out_to_bytes():
     # a lone ESC (or any stuck partial) is flushed a byte at a time once the
     # deadline passes with no further data
     chunker = TerminalChunker()
-    chunker.add_data(b"\x1b", 0.0)
+    chunker.add_data(b"\x1b[", 0.0)
     assert chunker.chunks == []  # held, waiting for the rest
     chunker.add_data(b"", chunker.data_deadline + 1.0)  # idle past the deadline
-    assert chunker.chunks == [b"\x1b"]
+    assert chunker.chunks == [b"\x1b["]
 
 
 def test_deadline_advances_with_partial():
     chunker = TerminalChunker()
     chunker.add_data(b"hi", 10.0)
-    # nothing pending -> a long deadline; a partial -> a short one
-    assert chunker.data_deadline > 100.0
+    assert chunker.data_deadline is None  # nothing pending -> no deadline
     chunker.add_data(b"\x1b[", 20.0)
-    assert chunker.data_deadline == 20.0 + CHUNK_TIMEOUT
+    assert chunker.data_deadline == 20.0 + CHUNK_TIMEOUT  # partial pending
