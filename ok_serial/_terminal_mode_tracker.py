@@ -2,7 +2,7 @@ import re
 
 # regexp to match relevant terminal escape sequences
 # https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-ESCAPE_RX = re.compile(
+ESCAPE_CODE_RX = re.compile(
     # single-byte codes
     b"(?P<shift>[\x0e\x0f]|\x1b[no])|"  # GL locking shift: SI/SO/LS2/LS3
     # ESC codes
@@ -34,7 +34,7 @@ ESCAPE_RX = re.compile(
 
 # regexp to match individual SGR content codes, each ending in ; or m
 # codes in the same category supercede (latest wins)
-SGR_SUBCODE_RX = re.compile(
+SGR_CODE_RX = re.compile(
     b"(?:"
     b"(?P<RESET>0?)|"  # 0 or empty parameter: reset all attributes
     b"(?P<weight>1|2|22)|"  # bold / faint / normal intensity
@@ -67,7 +67,6 @@ SIMPLE_CODES = frozenset("decsca decscusr keypad shift xtsmpointer".split())
 SKIP_DEC_MODES = frozenset({2, 3, 1048})
 
 # Baseline reset state assumed at startup or after full-reset (RIS)
-# and replayed explicitly. (Alas, DECSTR soft-reset isn't universal.)
 RESET_SGR_CODES = {"RESET": b""}  # plain SGR reset (CSI m)
 
 RESET_DEC_MODES = {
@@ -174,7 +173,7 @@ class TerminalModeTracker:
 
         if not isinstance(chunk, bytes):
             return
-        if not (match := ESCAPE_RX.fullmatch(chunk)):
+        if not (match := ESCAPE_CODE_RX.fullmatch(chunk)):
             return
 
         code = match.lastgroup
@@ -224,7 +223,7 @@ class TerminalModeTracker:
         elif code == "sgr":
             sgr_pos = 0
             while sgr_pos < len(body):
-                sgr_match = SGR_SUBCODE_RX.match(body, sgr_pos)
+                sgr_match = SGR_CODE_RX.match(body, sgr_pos)
                 assert sgr_match, body[sgr_pos:]
                 sgr, sgr_pos = sgr_match.lastgroup, sgr_match.end()
                 assert sgr, sgr_match.groupdict()
@@ -261,7 +260,8 @@ class TerminalModeTracker:
     def mode_chunks(self) -> list[bytes]:
         """Returns escape code(s) to restore accumulated state."""
 
-        out: list[bytes] = [b"\x1b[!p"]  # DECSTR first, for untracked state
+        # Note, DECSTR would reset scrolling margins, etc; avoid it
+        out: list[bytes] = []
         if self.sgr_codes:
             out.append(b"\x1b[" + b";".join(self.sgr_codes.values()) + b"m")
 

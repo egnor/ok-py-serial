@@ -382,7 +382,6 @@ BASELINE_DEC_L_RUN = (
 def test_baseline_replay():
     # a fresh tracker replays DECSTR plus the explicit baseline
     assert TerminalModeTracker().mode_chunks() == [
-        b"\x1b[!p",  # DECSTR, for untracked state
         b"\x1b[m",  # SGR reset
         BASELINE_DEC_L_RUN,  # DEC mode resets, batched into one CSI
         b"\x1b[?7;25h",  # DEC mode sets, likewise
@@ -405,7 +404,6 @@ def test_serialization_of_dicts():
     tracker.ansi_modes = {4: b"h", 20: b"h"}
     tracker.other_modes = {"G0": b"\x1b(0", "keypad": b"\x1b="}
     assert tracker.mode_chunks() == [
-        b"\x1b[!p",  # DECSTR always leads
         b"\x1b[;1m",  # SGR values joined into one escape
         b"\x1b[?1000;1006h",  # consecutive same-action DEC modes batch...
         b"\x1b[?7l",  # ...runs break when the action changes...
@@ -416,20 +414,19 @@ def test_serialization_of_dicts():
     ]
 
 
-def test_empty_dicts_serialize_to_just_decstr():
+def test_empty_dicts_serialize_to_nothing():
     tracker = TerminalModeTracker()
     tracker.sgr_codes = {}
     tracker.dec_modes = {}
     tracker.ansi_modes = {}
     tracker.other_modes = {}
-    assert tracker.mode_chunks() == [b"\x1b[!p"]
+    assert tracker.mode_chunks() == []
 
 
 def test_end_to_end_replay():
     # tracked changes replace their baseline entries and replay after them
     tracker = track(b"\x1b[1m", b"\x1b[?25l", b"\x1b[?1000h", b"\x1b[4h")
     assert tracker.mode_chunks() == [
-        b"\x1b[!p",
         b"\x1b[;1m",  # reset, then bold
         b"\x1b[?1;6;9;47;66;1001;1002;1003;1004;1005;1006;1015;1016;"
         b"1047;1049;2004;2026l",  # baseline resets, minus the changed 1000

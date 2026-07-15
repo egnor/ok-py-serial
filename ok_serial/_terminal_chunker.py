@@ -1,4 +1,5 @@
 import re
+from threading import TIMEOUT_MAX
 
 CHUNK_RX = re.compile(
     # group 1: well-formed UTF-8 code points -- what str.decode() accepts
@@ -47,28 +48,39 @@ CHUNK_TIMEOUT = 0.1  # seconds to pause before giving up on partial data
 
 
 class TerminalChunker:
-    """Breaks VTxxx data into output characters and control sequences."""
+    """Breaks VTxxx data into output characters and control sequences.
+
+    Attributes:
+    - chunks: received escape codes (bytes) or text (str); remove as processed
+    - data_deadline: when to call add_data(b"", now) if nothing received
+    """
 
     def __init__(self) -> None:
         self.chunks: list[str | bytes] = []
-        self.data_deadline: float | None = None
-        self._partial = bytearray()
+        self.data_deadline = TIMEOUT_MAX
+        self._buffer = bytearray()
 
     def add_data(self, data: bytes, data_time: float) -> None:
-        """Adds terminal data with timestamp. Use data=b"" to mark idle time."""
+        """Accepts terminal data to be chunked:
+        - data: bytes to process; use b"" if nothing received
+        - data_time: data timestamp in seconds (arbitrary epoch)
+        """
 
-        if not data:
-            if self.data_deadline and data_time > self.data_deadline:
-                self.chunks.append(bytes(self._partial))
-                self.data_deadline = None
-                self._partial.clear()
-            return
+        if data:
+            self.data_deadline = data_time + CHUNK_TIMEOUT
+            self._buffer.extend(data)
+            self._process_buffer()
 
-        self._partial.extend(data)
+        while self.data_deadline and data_time > self.data_deadline:
+            self.chunks.append(bytes(self._buffer[:1]))
+            del self._buffer[:1]
+            self._process_buffer()
+
+    def _process_buffer(self) -> None:
         pos = 0
-        while pos < len(self._partial):
-            match = CHUNK_RX.match(self._partial, pos)
-            assert match, self._partial[pos:]
+        while pos < len(self._buffer):
+            match = CHUNK_RX.match(self._buffer, pos)
+            assert match, self._buffer[pos:]
             chars, char_part, esc, esc_part, other = match.groups()
             if chars:
                 self.chunks.append(chars.decode())  # regexp enforces validity
@@ -81,13 +93,12 @@ class TerminalChunker:
                 assert len(other) == 1, other
                 pos += 1
             else:
-                del self._partial[:pos]
-                assert self._partial in (char_part, esc_part), match.groups()
-                self.data_deadline = data_time + CHUNK_TIMEOUT
-                return
+                assert self._buffer[pos:] in (char_part, esc_part)
+                break
 
-        self._partial.clear()
-        self.data_deadline = None  # no timeout
+        del self._buffer[:pos]
+        if not self._buffer:
+            self.data_deadline = TIMEOUT_MAX
 
 
 def chunk_to_bytes(chunk: str | bytes):

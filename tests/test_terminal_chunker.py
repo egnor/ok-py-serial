@@ -97,18 +97,19 @@ def test_split_csi_reassembled():
 
 
 def test_partial_times_out_to_bytes():
-    # a lone ESC (or any stuck partial) is flushed a byte at a time once the
-    # deadline passes with no further data
+    # a lone ESC (or any stuck partial) is flushed as a byte
     chunker = TerminalChunker()
     chunker.add_data(b"\x1b[", 0.0)
     assert chunker.chunks == []  # held, waiting for the rest
-    chunker.add_data(b"", chunker.data_deadline + 1.0)  # idle past the deadline
-    assert chunker.chunks == [b"\x1b["]
+    chunker.add_data(b"", chunker.data_deadline - 0.01)  # just before deadline
+    assert chunker.chunks == []  # still waiting for the rest
+    chunker.add_data(b"", chunker.data_deadline + 0.01)  # just past deadline
+    assert chunker.chunks == [b"\x1b", "["]  # remainder is re-parsed as usual
 
 
 def test_deadline_advances_with_partial():
     chunker = TerminalChunker()
     chunker.add_data(b"hi", 10.0)
-    assert chunker.data_deadline is None  # nothing pending -> no deadline
+    assert chunker.data_deadline > 1e6  # nothing pending -> long deadline
     chunker.add_data(b"\x1b[", 20.0)
     assert chunker.data_deadline == 20.0 + CHUNK_TIMEOUT  # partial pending
