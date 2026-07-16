@@ -59,13 +59,19 @@ SGR_CODE_RX = re.compile(
 )
 
 # Escape codes that can be directly captured as a single mode
-SAVE_CODES = ["decsace", "decsca", "decscusr", "keypad", "shift", "xtsmpointer"]
+SIMPLE_CODES = "decsace decsca decscusr keypad shift xtsmpointer".split()
 
 # DEC private modes (CSI ? Pm h/l) we do NOT capture for replay:
 # - 2 (DECANM): reset switches to VT52 mode and changes the escape grammar
 # - 3 (DECCOLM): set/reset clears the screen and resizes as a side effect
 # - 1048: an action (save/restore cursor), not a state
 SKIP_DEC_MODES = frozenset({2, 3, 1048})
+
+# DEC private mode families which can have at most one member set
+ONEHOT_DEC_MODE_SETS = (
+    frozenset({9, 1000, 1001, 1002, 1003}),  # mouse protocol selection
+    frozenset({1005, 1006, 1015, 1016}),  # mouse coordinate encoding
+)
 
 # Baseline reset state assumed at startup or after full-reset (RIS)
 RESET_SGR_CODES = {"RESET": b""}  # plain SGR reset (CSI m)
@@ -113,6 +119,18 @@ RESET_OTHER_MODES = {
     "xtsmpointer": b"\x1b[>1p",  # pointer hidden while typing (xterm default)
 }
 
+# Per-LED off codes used when decomposing the all-off decll0 state; LEDs are
+# tracked either as decll0 alone (all off) or all of decll1-3 explicitly, so
+# equal dict values always imply equal LED state
+DECLL_OFF_CODES = {f"decll{n}": b"\x1b[2%dq" % n for n in (1, 2, 3)}
+
+# Undo codes for other_modes keys with no baseline entry (a diff base may
+# have designated G2/G3, which the baseline replay deliberately omits)
+UNSET_OTHER_MODES = {
+    "G2": b"\x1b*B",  # G2 charset = US-ASCII
+    "G3": b"\x1b+B",  # G3 charset = US-ASCII
+}
+
 # Modes reset by DECSTR, restored to baseline (or dropped) when DECSTR is seen.
 # Excludes DECAWM (?7) which terminals vary on.
 DECSTR_DEC_MODES = [1, 6, 25, 66]  # DECCKM, DECOM, DECTCEM, DECNKM
@@ -142,6 +160,12 @@ class TerminalModeTracker:
 
     State starts with explicit defaults and returns there on reset,
     which may not exactly match the terminal's own defaults after reset.
+
+    State is normalized where modes interact, so equal dict values imply
+    equal terminal state (which mode_chunks diffing relies on): shared
+    register DEC mode families (mouse protocol/encoding) keep at most one
+    member set, and keyboard LEDs are either all-off (decll0) or all
+    tracked individually (decll1-3).
 
     Attributes:
     - sgr_codes: dict[str, bytes] from SGR category name to latest value
@@ -184,7 +208,7 @@ class TerminalModeTracker:
         body = match[code]
 
         # Simple modes to save with no further processing
-        if code in SAVE_CODES:
+        if code in SIMPLE_CODES:
             self.other_modes.pop(code, None)  # reorder to latest
             self.other_modes[code] = chunk
 
@@ -202,15 +226,32 @@ class TerminalModeTracker:
 
         # CSI codes
         elif code == "decll":
-            if (key := f"decll{body[-1]:c}") == "decll0":
-                [self.other_modes.pop(f"decll{n}", None) for n in "123"]
-            self.other_modes.pop(key, None)  # reorder to latest
-            self.other_modes[key] = chunk
+            param = int(body)
+            if (led := param % 10) == 0:  # all off: use the compact form
+                for n in range(1, 10):
+                    self.other_modes.pop(f"decll{n}", None)
+                self.other_modes.pop("decll0", None)  # reorder to latest
+                self.other_modes["decll0"] = RESET_OTHER_MODES["decll0"]
+            else:
+                if led <= 3 and "decll0" in self.other_modes:
+                    del self.other_modes["decll0"]  # decompose all-off state
+                    self.other_modes.update(DECLL_OFF_CODES)
+                key = f"decll{led}"
+                self.other_modes.pop(key, None)  # reorder to latest
+                self.other_modes[key] = b"\x1b[%dq" % param  # canonical form
+                led_state = {
+                    k: v
+                    for k, v in self.other_modes.items()
+                    if k.startswith("decll")
+                }
+                if led_state == DECLL_OFF_CODES:  # all off again: collapse
+                    for k in DECLL_OFF_CODES:
+                        del self.other_modes[k]
+                    self.other_modes["decll0"] = RESET_OTHER_MODES["decll0"]
         elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                 if mode not in SKIP_DEC_MODES:
-                    self.dec_modes.pop(mode, None)  # reorder to latest
-                    self.dec_modes[mode] = dec_value
+                    self._set_dec_mode(mode, dec_value)
         elif code == "decstr":  # soft reset: governed state to baseline
             self.sgr_codes = dict(RESET_SGR_CODES)
             self._save_sgr_dec = dict(RESET_SGR_CODES)  # resets DECSC too
@@ -248,10 +289,11 @@ class TerminalModeTracker:
             self._save_sgr_xterm.append({**self.sgr_codes})
         elif code == "xtrestore":  # restore saved value, else baseline
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                self.dec_modes.pop(mode, None)  # reorder to latest
                 saved = self._save_dec_xterm.get(mode)
                 if value := saved or RESET_DEC_MODES.get(mode):
-                    self.dec_modes[mode] = value
+                    self._set_dec_mode(mode, value)
+                else:
+                    self.dec_modes.pop(mode, None)
         elif code == "xtsave":
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                 self._save_dec_xterm.pop(mode, None)
@@ -260,23 +302,59 @@ class TerminalModeTracker:
         else:
             assert False, code  # unknown named group?
 
-    def mode_chunks(self) -> list[bytes]:
-        """Returns escape code(s) to restore accumulated state."""
+    def _set_dec_mode(self, mode: int, value: bytes) -> None:
+        """Records a DEC mode value, normalizing shared-register families."""
+        for onehot_set in ONEHOT_DEC_MODE_SETS:
+            if mode in onehot_set:
+                self.dec_modes.update((m, b"l") for m in onehot_set)
+        self.dec_modes.pop(mode, None)  # reorder to latest
+        self.dec_modes[mode] = value
+
+    def mode_chunks(
+        self, base: "TerminalModeTracker | None" = None
+    ) -> list[bytes]:
+        """Returns escape code(s) that encode the accumulated state.
+        - base: output diffs from this base state (output full setup if None)
+
+        State tracked only by the base is returned to an assumed default:
+        reset ("l") for DEC/ANSI modes, US-ASCII for G2/G3 designations.
+        """
 
         # Note, DECSTR would reset scrolling margins, etc; avoid it
         out: list[bytes] = []
-        if self.sgr_codes:
+
+        # Emit full SGR if different from base, instead of trying to be clever
+        if self.sgr_codes != (base.sgr_codes if base else {}):
             out.append(b"\x1b[" + b";".join(self.sgr_codes.values()) + b"m")
 
-        prefix_store = (b"\x1b[?", self.dec_modes), (b"\x1b[", self.ansi_modes)
-        for prefix, store in prefix_store:
+        for prefix, attr in (b"\x1b[?", "dec_modes"), (b"\x1b[", "ansi_modes"):
+            store = getattr(self, attr)
+            base_store = getattr(base, attr) if base else {}
             run_suffix = None  # reset per store so the two never merge together
             for mode, suffix in store.items():
-                if suffix == run_suffix:  # extend the run we just emitted
+                if suffix == base_store.get(mode):
+                    pass
+                elif suffix == run_suffix:  # extend the run we just emitted
                     out[-1] = b"%s;%d%s" % (out[-1][:-1], mode, suffix)
                 else:
                     out.append(b"%s%d%s" % (prefix, mode, suffix))
                     run_suffix = suffix
+            # base-only modes: assume untracked modes are reset by default
+            for mode, suffix in base_store.items():
+                if suffix == b"h" and mode not in store:
+                    if run_suffix == b"l":  # extend the run we just emitted
+                        out[-1] = b"%s;%dl" % (out[-1][:-1], mode)
+                    else:
+                        out.append(b"%s%dl" % (prefix, mode))
+                        run_suffix = b"l"
 
-        out.extend(self.other_modes.values())
+        for mode, value in self.other_modes.items():
+            if not (base and value == base.other_modes.get(mode)):
+                out.append(value)
+        if base:  # base-only state is undone where a default is known
+            for mode in base.other_modes:
+                if mode not in self.other_modes:
+                    if undo := UNSET_OTHER_MODES.get(mode):
+                        out.append(undo)
+
         return out

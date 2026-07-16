@@ -38,6 +38,7 @@ class _TerminalSession:
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
             self._serial: ok_serial.SerialConnection | None = None
+            self._serial_signals: ok_serial.SerialControlSignals | None = None
             self._from_stdin: list[bytes | str] = []
             self._from_serial: list[bytes | str] = []
             self._stderr_capture: list[str] = []
@@ -129,18 +130,24 @@ class _TerminalSession:
                 except ok_serial.SerialIoException as ex:
                     logging.warning("%s", ex)
                     self._serial = None
+                    self._serial_signals = None
                     self._new_data_event.set()
 
     async def _read_from_serial(self):
         chunker = TerminalChunker()
         while True:
             try:
-                timeout = from_deadline(chunker.data_deadline)
+                # cap timeout to 0.2s for control signal polling
+                timeout = min(0.2, from_deadline(chunker.data_deadline))
                 async with asyncio.timeout(timeout):
                     data = await self._serial.read_async()
                     chunker.add_data(data, data.monotonic_time)
             except TimeoutError:
                 chunker.add_data(b"", time.monotonic())
+
+            if (signals := self._serial.get_signals()) != self._serial_signals:
+                self._serial_signals = signals
+                self._new_data_event.set()
 
             if chunker.chunks:
                 self._from_serial.extend(chunker.chunks)

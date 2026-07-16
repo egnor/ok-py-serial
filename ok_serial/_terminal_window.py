@@ -64,11 +64,12 @@ class TerminalWindow:
         """
         assert time >= 0.0, time
         self._setup_needed = True
-        if self._window_cursor_rowcol or self._query_deadline:
+        if self._window_cursor_rowcol:
             return []
-        else:
-            self._query_deadline = time + QUERY_TIMEOUT
-            return [b"\x1b[6n"]
+        if self._query_deadline and time < self._query_deadline:
+            return []
+        self._query_deadline = time + QUERY_TIMEOUT
+        return [b"\x1b[6n"]
 
     def is_output_ready(self, time: float) -> bool:
         """Returns .convert_output_chunk() is ready (no query in flight, etc).
@@ -76,9 +77,9 @@ class TerminalWindow:
 
         If False, pause output but continue calling .convert_input_chunk().
         """
-        return (
+        return bool(
             not self._setup_needed
-            or self._window_cursor_rowcol is not None
+            or self._window_cursor_rowcol
             or not self._query_deadline
             or time >= self._query_deadline
         )
@@ -86,7 +87,8 @@ class TerminalWindow:
     def convert_output_chunk(
         self, chunk: bytes | str, time: float
     ) -> list[bytes | str]:
-        """Transforms a chunk to stay within the window region.
+        """Transforms a chunk to stay in the window region.
+        REQUIRES .is_output_ready().
         - chunk: escape code or text to window-restrict
         - time: current clock time (some consistent epoch)
 
@@ -94,7 +96,6 @@ class TerminalWindow:
         - prepends codes to setup/restore cursor position and mode
         - transforms/clips absolute cursor positioning for window position
         - other chunks are returned as-is
-        REQUIRES .is_output_ready() is True
         """
         assert self.is_output_ready(time), (time, self._query_deadline)
         out: list[bytes | str] = []
@@ -103,10 +104,9 @@ class TerminalWindow:
             out.append(b"\x1b[%sr" % b";".join(reg))  # DECSTBM - set margins
             out.extend(self._window_terminal_mode.mode_chunks())
             if self._window_cursor_rowcol:
-                row, col = self._window_cursor_rowcol
-                row = self._window_to_terminal_row(row)
-                cup_args = [b"" if v <= 1 else b"%d" % v for v in (row, col)]
-                out.append(b"\x1b[" + b";".join(cup_args))  # CUP - move cursor
+                w_row, col = self._window_cursor_rowcol
+                t_row = self._terminal_row_from_window(w_row)
+                out.append(b"\x1b[%d;%dH" % (t_row, col))  # CUP - move cursor
 
             self._setup_needed = False
 
@@ -134,21 +134,21 @@ class TerminalWindow:
 
         code = match.lastgroup
         if code == "cpr":
-            row, col = [int(v) for v in match[code].split(b";")]
-            row = self._terminal_to_window_row(row)
+            t_row, col = [int(v) for v in match[code].split(b";")]
+            w_row = self._window_row_from_terminal(t_row)
             if self._query_deadline is not None:
-                self._window_cursor_rowcol = (row, col)
+                self._window_cursor_rowcol = (w_row, col)
                 self._query_deadline = None
                 return []
             else:
-                return [b"\x1b[%d;%dR" % (row, col)]
+                return [b"\x1b[%d;%dR" % (w_row, col)]
         else:
             assert False, (code, match.groupdict())  # unknown named group?
 
-    def _window_to_terminal_row(self, row: int) -> int:
+    def _terminal_row_from_window(self, row: int) -> int:
         w_top, w_bot = self._window_topbot
         w_top, w_bot = w_top or 1, w_bot or 9999
-        if self._terminal_mode_tracker.dec_modes[6] == "h":  # DECOM set
+        if self._window_terminal_mode.dec_modes[6] == "h":  # DECOM set
             t_top, t_bot = self._window_scroll_topbot
             t_top, t_bot = t_top or w_top, t_bot or w_bot
         else:
@@ -157,5 +157,6 @@ class TerminalWindow:
         t_row = row + w_top - t_top
         return max(1, min(w_bot - w_top + 1, t_bot - t_top + 1, t_row))
 
-    def _terminal_to_window_row(self, row: int) -> int:
-        pass
+    def _window_row_from_terminal(self, row: int) -> int:
+        # TODO: implement
+        return row
