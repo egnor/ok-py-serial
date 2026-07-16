@@ -15,20 +15,21 @@ ESCAPE_CODE_RX = re.compile(
     b")|"
     # CSI codes
     b"(?:\x1b\\[|\x9b)(?:"
-    b"(?P<decll>2?\\d)q|"  # DEC load LEDs
-    b"\\?(?P<decrst>[\\d;]*)l|"  # DEC mode reset
-    b'(?P<decsca>\\d)"q|'  # DEC set character protection attribute
-    b"(?P<decscusr>\\d) q|"  # DEC set cursor style
-    b"\\?(?P<decset>[\\d;]*)h|"  # DEC mode set
+    b"(?P<decll>2?[0-9])q|"  # DEC load LEDs
+    b"\\?(?P<decrst>[0-9;]*)l|"  # DEC mode reset
+    b"(?P<decsace>[0-9])\\*x|"  # DEC select attribute change extent
+    b'(?P<decsca>[0-9])"q|'  # DEC set character protection attribute
+    b"(?P<decscusr>[0-9]) q|"  # DEC set cursor style
+    b"\\?(?P<decset>[0-9;]*)h|"  # DEC mode set
     b"(?P<decstr>!)p|"  # Soft terminal reset
     b"(?P<sgr>.*m)|"  # Set Graphics Rendition (capture 'm' as terminator)
-    b"(?P<sm>[\\d;]*)h|"  # ANSI mode set
-    b"(?P<rm>[\\d;]*)l|"  # ANSI mode reset
-    b">(?P<xtsmpointer>\\d)p|"  # XTerm pointer visibility
+    b"(?P<sm>[0-9;]*)h|"  # ANSI mode set
+    b"(?P<rm>[0-9;]*)l|"  # ANSI mode reset
+    b">(?P<xtsmpointer>[0-9])p|"  # XTerm pointer visibility
     b"#(?P<xtpopsgr>[}q])|"  # XTerm Pop SGR state
     b"#(?P<xtpushsgr>[{p])|"  # XTerm Push SGR state
-    b"\\?(?P<xtrestore>[\\d;]*)r|"  # XTerm restore DEC modes
-    b"\\?(?P<xtsave>[\\d;]*)s"  # XTerm save DEC modes
+    b"\\?(?P<xtrestore>[0-9;]*)r|"  # XTerm restore DEC modes
+    b"\\?(?P<xtsave>[0-9;]*)s"  # XTerm save DEC modes
     b")"
 )
 
@@ -39,7 +40,7 @@ SGR_CODE_RX = re.compile(
     b"(?P<RESET>0?)|"  # 0 or empty parameter: reset all attributes
     b"(?P<weight>1|2|22)|"  # bold / faint / normal intensity
     b"(?P<slant>3|20|23)|"  # italic / Fraktur / neither (23 cancels both)
-    b"(?P<under>4(?::\\d+)?|21|24)|"  # single (or 4:n styled) / double / off
+    b"(?P<under>4(?::[0-9]+)?|21|24)|"  # single (or 4:n styled) / double / off
     b"(?P<blink>5|6|25)|"  # slow / rapid / off
     b"(?P<inverse>7|27)|"  # reverse video / off
     b"(?P<hidden>8|28)|"  # conceal / reveal
@@ -48,17 +49,17 @@ SGR_CODE_RX = re.compile(
     b"(?P<prop>26|50)|"  # proportional spacing on / off
     b"(?P<frame>5[12]|54)|"  # framed / encircled / off
     b"(?P<over>53|55)|"  # overlined / off
-    b"(?P<ideoline>6[0-5])|"  # CJK side/under/over lines (60-64) / off (65)
-    b"(?P<fg>3[0-79]|9[0-7]|38;5;\\d+|38;2;\\d+;\\d+;\\d+|38:[\\d:]*)|"
-    b"(?P<bg>4[0-79]|10[0-7]|48;5;\\d+|48;2;\\d+;\\d+;\\d+|48:[\\d:]*)|"
-    b"(?P<ul>58;5;\\d+|58;2;\\d+;\\d+;\\d+|58:[\\d:]*|59)|"  # underline color
-    b"(?P<baseline>7[345])|"  # super- / sub-script / off
-    b"(?P<OTHER>[\\d:]+)"
+    b"(?P<ideoline>6[0-9])|"  # CJK side/under/over lines (60-64) / off (65)
+    b"(?P<fg>3[0-79]|9[0-9]|38;5;[0-9]+|38;2;[0-9]+;[0-9]+;[0-9]+|38:[0-9:]*)|"
+    b"(?P<bg>4[0-79]|10[0-9]|48;5;[0-9]+|48;2;[0-9]+;[0-9]+;[0-9]+|48:[0-9:]*)|"
+    b"(?P<ul>58;5;[0-9]+|58;2;[0-9]+;[0-9]+;[0-9]+|58:[0-9:]*|59)|"
+    b"(?P<baseline>7[0-9])|"  # super- / sub-script / off
+    b"(?P<OTHER>[0-9:]+)"
     b")[;m]"
 )
 
 # Escape codes that can be directly captured as a single mode
-SIMPLE_CODES = frozenset("decsca decscusr keypad shift xtsmpointer".split())
+SAVE_CODES = ["decsace", "decsca", "decscusr", "keypad", "shift", "xtsmpointer"]
 
 # DEC private modes (CSI ? Pm h/l) we do NOT capture for replay:
 # - 2 (DECANM): reset switches to VT52 mode and changes the escape grammar
@@ -70,7 +71,7 @@ SKIP_DEC_MODES = frozenset({2, 3, 1048})
 RESET_SGR_CODES = {"RESET": b""}  # plain SGR reset (CSI m)
 
 RESET_DEC_MODES = {
-    # reset (l) modes first, then set (h), so replay collapses into two runs
+    # "l" modes first for run-efficiency
     1: b"l",  # DECCKM: normal (not application) cursor keys
     6: b"l",  # DECOM: absolute (not origin-relative) addressing
     9: b"l",  # X10 mouse reporting off
@@ -89,6 +90,7 @@ RESET_DEC_MODES = {
     1049: b"l",  # alternate screen (with cursor save) off
     2004: b"l",  # bracketed paste off
     2026: b"l",  # synchronized output off (don't leave updates frozen!)
+    # "h" modes next
     7: b"h",  # DECAWM: auto-wrap on
     25: b"h",  # DECTCEM: cursor visible
 }
@@ -100,13 +102,14 @@ RESET_ANSI_MODES = {
 }
 
 RESET_OTHER_MODES = {
+    "decll0": b"\x1b[0q",  # all keyboard LEDs off
+    "decsace": b"\x1b[0*x",  # stream mode for DECCARA / DECRARA
+    "decsca": b'\x1b[0"q',  # character protection off
+    "decscusr": b"\x1b[0 q",  # cursor style = terminal default
     "G0": b"\x1b(B",  # G0 charset = US-ASCII
     "G1": b"\x1b)B",  # G1 charset = US-ASCII
-    "shift": b"\x0f",  # SI: GL = G0
     "keypad": b"\x1b>",  # numeric keypad (DECKPNM)
-    "decscusr": b"\x1b[0 q",  # cursor style = terminal default
-    "decsca": b'\x1b[0"q',  # character protection off
-    "decll0": b"\x1b[0q",  # all keyboard LEDs off
+    "shift": b"\x0f",  # SI: GL = G0
     "xtsmpointer": b"\x1b[>1p",  # pointer hidden while typing (xterm default)
 }
 
@@ -114,7 +117,7 @@ RESET_OTHER_MODES = {
 # Excludes DECAWM (?7) which terminals vary on.
 DECSTR_DEC_MODES = [1, 6, 25, 66]  # DECCKM, DECOM, DECTCEM, DECNKM
 DECSTR_ANSI_MODES = [2, 4]  # KAM, IRM
-DECSTR_OTHER_MODES = "decsca G0 G1 G2 G3 keypad shift".split()
+DECSTR_OTHER_MODES = ["decsca", "G0", "G1", "G2", "G3", "keypad", "shift"]
 
 
 class TerminalModeTracker:
@@ -180,8 +183,8 @@ class TerminalModeTracker:
         assert code, match.groupdict()
         body = match[code]
 
-        # Simple modes to save
-        if code in SIMPLE_CODES:
+        # Simple modes to save with no further processing
+        if code in SAVE_CODES:
             self.other_modes.pop(code, None)  # reorder to latest
             self.other_modes[code] = chunk
 

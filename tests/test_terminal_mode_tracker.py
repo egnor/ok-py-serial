@@ -52,8 +52,8 @@ def test_single_attribute_kept():
 
 def test_combined_params_in_one_escape():
     # one CSI carrying several ;-separated codes
-    expected = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
-    assert sgr(b"\x1b[1;31m") == expected
+    expect = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
+    assert sgr(b"\x1b[1;31m") == expect
 
 
 def test_latest_in_category_wins():
@@ -121,8 +121,8 @@ def test_new_groups_do_not_shadow_colors():
 
 def test_unknown_multidigit_code_accumulates():
     # genuinely unknown codes (56/57 are reserved) still accumulate by value
-    expected = {**RESET_SGR_CODES, "56": b"56", "57": b"57"}
-    assert sgr(b"\x1b[56m", b"\x1b[57m") == expected
+    expect = {**RESET_SGR_CODES, "56": b"56", "57": b"57"}
+    assert sgr(b"\x1b[56m", b"\x1b[57m") == expect
 
 
 def test_8bit_csi_introducer():
@@ -145,8 +145,8 @@ def test_non_style_escapes_ignored():
 
 def test_dec_save_and_restore():
     # ESC 7 snapshots the style, ESC 8 restores it
-    expected = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
-    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[31m") == expected
+    expect = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
+    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[31m") == expect
     out = sgr(b"\x1b[1m", b"\x1b7", b"\x1b[31m", b"\x1b8")
     assert out == {**RESET_SGR_CODES, "weight": b"1"}
     # ESC 8 without a prior ESC 7 restores the baseline
@@ -155,8 +155,8 @@ def test_dec_save_and_restore():
 
 def test_xterm_push_and_pop_sgr():
     # XTPUSHSGR: push bold
-    expected = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
-    assert sgr(b"\x1b[1m", b"\x1b[#{", b"\x1b[31m") == expected
+    expect = {**RESET_SGR_CODES, "weight": b"1", "fg": b"31"}
+    assert sgr(b"\x1b[1m", b"\x1b[#{", b"\x1b[31m") == expect
     # XTPUSHSGR / XTPOPSGR: pop back to bold
     out = sgr(b"\x1b[1m", b"\x1b[#{", b"\x1b[31m", b"\x1b[#}")
     assert out == {**RESET_SGR_CODES, "weight": b"1"}
@@ -178,8 +178,8 @@ def test_dec_mode_latest_action_wins():
 
 def test_dec_modes_combined_in_one_escape():
     # one DECSET carrying several ;-separated modes
-    expected = {**RESET_DEC_MODES, 1: b"h", 25: b"h", 2004: b"h"}
-    assert dec(b"\x1b[?1;25;2004h") == expected
+    expect = {**RESET_DEC_MODES, 1: b"h", 25: b"h", 2004: b"h"}
+    assert dec(b"\x1b[?1;25;2004h") == expect
 
 
 def test_unknown_dec_mode_accumulates():
@@ -271,11 +271,8 @@ def test_charset_designation_per_slot():
     assert other(b"\x1b(0") == {**RESET_OTHER_MODES, "G0": b"\x1b(0"}
     assert other(b"\x1b(0", b"\x1b(B") == RESET_OTHER_MODES  # latest G0 wins
     # G0 and G1 are independent slots
-    assert other(b"\x1b(0", b"\x1b)0") == {
-        **RESET_OTHER_MODES,
-        "G0": b"\x1b(0",
-        "G1": b"\x1b)0",
-    }
+    expect = {**RESET_OTHER_MODES, "G0": b"\x1b(0", "G1": b"\x1b)0"}
+    assert other(b"\x1b(0", b"\x1b)0") == expect
     # the 96-set designator (-) targets the same slot (G1) as ), latest wins
     assert other(b"\x1b)0", b"\x1b-A") == {**RESET_OTHER_MODES, "G1": b"\x1b-A"}
 
@@ -306,25 +303,15 @@ def test_char_protection_reset_by_decstr():
 
 
 def test_leds():
-    assert other(b"\x1b[1q") == {  # num lock on
-        **RESET_OTHER_MODES,
-        "decll1": b"\x1b[1q",
-    }
-    assert other(b"\x1b[1q", b"\x1b[22q") == {  # +num, -caps
-        **RESET_OTHER_MODES,
-        "decll1": b"\x1b[1q",
-        "decll2": b"\x1b[22q",
-    }
-    assert other(b"\x1b[1q", b"\x1b[22q", b"\x1b[21q") == {
-        **RESET_OTHER_MODES,
-        "decll1": b"\x1b[21q",
-        "decll2": b"\x1b[22q",
-    }
+    expect = {**RESET_OTHER_MODES, "decll1": b"\x1b[1q"}
+    assert other(b"\x1b[1q") == expect  # num lock on
+    expect = {**RESET_OTHER_MODES, "decll1": b"\x1b[1q", "decll2": b"\x1b[22q"}
+    assert other(b"\x1b[1q", b"\x1b[22q") == expect  # +num, -caps
+    expect = {**RESET_OTHER_MODES, "decll1": b"\x1b[21q", "decll2": b"\x1b[22q"}
+    assert other(b"\x1b[1q", b"\x1b[22q", b"\x1b[21q") == expect
     # LEDs survive a soft reset (only RIS clears them)
-    assert other(b"\x1b[1q", b"\x1b[!p") == {
-        **RESET_OTHER_MODES,
-        "decll1": b"\x1b[1q",
-    }
+    expect = {**RESET_OTHER_MODES, "decll1": b"\x1b[1q"}
+    assert other(b"\x1b[1q", b"\x1b[!p") == expect
     assert other(b"\x1b[1q", b"\x1bc") == RESET_OTHER_MODES
 
 
@@ -334,38 +321,37 @@ def test_leds_zero_clears_all():
     assert other(b"\x1b[1q", b"\x1b[2q", b"\x1b[0q") == RESET_OTHER_MODES
 
 
+def test_attribute_change_extent():
+    expect = {**RESET_OTHER_MODES, "decsace": b"\x1b[2*x"}
+    assert other(b"\x1b[2*x") == expect  # rectangle mode
+    expect = {**RESET_OTHER_MODES, "decsace": b"\x1b[1*x"}
+    assert other(b"\x1b[2*x", b"\x1b[1*x") == expect  # superceded
+    # survives a soft reset, cleared only by RIS
+    expect = {**RESET_OTHER_MODES, "decsace": b"\x1b[2*x"}
+    assert other(b"\x1b[2*x", b"\x1b[!p") == expect
+    assert other(b"\x1b[2*x", b"\x1bc") == RESET_OTHER_MODES
+
+
 def test_cursor_style():
-    assert other(b"\x1b[3 q") == {  # blinking underline
-        **RESET_OTHER_MODES,
-        "decscusr": b"\x1b[3 q",
-    }
-    assert other(b"\x1b[3 q", b"\x1b[1 q") == {  # superceded
-        **RESET_OTHER_MODES,
-        "decscusr": b"\x1b[1 q",
-    }
+    expect = {**RESET_OTHER_MODES, "decscusr": b"\x1b[3 q"}
+    assert other(b"\x1b[3 q") == expect  # blinking underline
+    expect = {**RESET_OTHER_MODES, "decscusr": b"\x1b[1 q"}
+    assert other(b"\x1b[3 q", b"\x1b[1 q") == expect  # superceded
     # cursor style survives a soft reset (vim/neovim rely on this), not RIS
-    assert other(b"\x1b[3 q", b"\x1b[!p") == {
-        **RESET_OTHER_MODES,
-        "decscusr": b"\x1b[3 q",
-    }
+    expect = {**RESET_OTHER_MODES, "decscusr": b"\x1b[3 q"}
+    assert other(b"\x1b[3 q", b"\x1b[!p") == expect
     assert other(b"\x1b[3 q", b"\x1bc") == RESET_OTHER_MODES
 
 
 def test_xterm_pointer_mode():
     # XTSMPOINTER (CSI > Ps p) selects when the mouse pointer auto-hides
-    assert other(b"\x1b[>2p") == {
-        **RESET_OTHER_MODES,
-        "xtsmpointer": b"\x1b[>2p",
-    }
-    assert other(b"\x1b[>1p", b"\x1b[>3p") == {  # latest wins
-        **RESET_OTHER_MODES,
-        "xtsmpointer": b"\x1b[>3p",
-    }
+    expect = {**RESET_OTHER_MODES, "xtsmpointer": b"\x1b[>2p"}
+    assert other(b"\x1b[>2p") == expect
+    expect = {**RESET_OTHER_MODES, "xtsmpointer": b"\x1b[>3p"}
+    assert other(b"\x1b[>1p", b"\x1b[>3p") == expect  # superceded
     # survives a soft reset, cleared only by RIS
-    assert other(b"\x1b[>2p", b"\x1b[!p") == {
-        **RESET_OTHER_MODES,
-        "xtsmpointer": b"\x1b[>2p",
-    }
+    expect = {**RESET_OTHER_MODES, "xtsmpointer": b"\x1b[>2p"}
+    assert other(b"\x1b[>2p", b"\x1b[!p") == expect
     assert other(b"\x1b[>2p", b"\x1bc") == RESET_OTHER_MODES
 
 
@@ -386,13 +372,14 @@ def test_baseline_replay():
         BASELINE_DEC_L_RUN,  # DEC mode resets, batched into one CSI
         b"\x1b[?7;25h",  # DEC mode sets, likewise
         b"\x1b[2;4;20l",  # ANSI mode resets
+        b"\x1b[0q",  # keyboard LEDs off
+        b"\x1b[0*x",  # stream mode for rectangle operations
+        b'\x1b[0"q',  # character protection off
+        b"\x1b[0 q",  # default cursor style
         b"\x1b(B",  # G0 = US-ASCII
         b"\x1b)B",  # G1 = US-ASCII
-        b"\x0f",  # SI: GL = G0
         b"\x1b>",  # numeric keypad
-        b"\x1b[0 q",  # default cursor style
-        b'\x1b[0"q',  # character protection off
-        b"\x1b[0q",  # keyboard LEDs off
+        b"\x0f",  # SI: GL = G0
         b"\x1b[>1p",  # default pointer hiding
     ]
 
@@ -435,12 +422,13 @@ def test_end_to_end_replay():
         b"\x1b[?1000h",
         b"\x1b[2;20l",  # ANSI baseline, minus the changed 4
         b"\x1b[4h",
+        b"\x1b[0q",
+        b"\x1b[0*x",
+        b'\x1b[0"q',
+        b"\x1b[0 q",
         b"\x1b(B",
         b"\x1b)B",
-        b"\x0f",
         b"\x1b>",
-        b"\x1b[0 q",
-        b'\x1b[0"q',
-        b"\x1b[0q",
+        b"\x0f",
         b"\x1b[>1p",
     ]

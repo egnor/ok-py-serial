@@ -90,7 +90,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         Example:
         ```
-        with SerialConnection(match="0403:6001", baud=115200, sharing="polite") as p:
+        with SerialConnection(match="xyz", baud=115200, sharing="polite") as p:
             ... interact with `p` ...
             # automatically closed on exit from block
         ```

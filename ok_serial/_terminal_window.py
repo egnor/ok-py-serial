@@ -2,11 +2,32 @@ import re
 
 from ok_serial._terminal_mode_tracker import TerminalModeTracker
 
-
-INPUT_CODE_RX = re.compile(b"(?:\x1b\\[|\x9b)(?:(?P<cpr>\\d+;\\d+)R)")
-
+# regexp to match vtxxx command codes with absolute row numbers
+# https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 OUTPUT_CODE_RX = re.compile(
-    b"(?:\x1b\\[|\x9b)(?:(?P<cup>\\d*;?\\d*)H|(?P<decstbm>\\d*;?\\d*)r)"
+    b"(?:\x1b\\[|\x9b)(?:"  # CSI
+    b"(?P<cup>[0-9;]*)H|"
+    b"(?P<decxxra>[0-9;]*(?:\\$[rtvxz{]|\\*y))|"
+    b"(?P<decsed>\\?[0123]?)J|"
+    b"(?P<decstbm>[0-9;]*)r|"
+    b"(?P<ed>[0123]?)J|"
+    b"(?P<vpa>[0-9;]*)d|"
+    b"(?P<hvp>[0-9;]*)f|"
+    b"(?P<xtreportsgr>[0-9;]*)#\\|"
+    b")"
+)
+
+# regexp to match vtxxx response codes with absolute row numbers
+INPUT_CODE_RX = re.compile(
+    # CSI codes
+    b"(?:\x1b\\[|\x9b)(?:"  # CSI
+    b"(?P<cpr>[0-9]+;[0-9]+)R|"
+    b'(?P<decrpde>[0-9]+;[0-9]+;[0-9]+;[0-9]+;[0-9]+)"w'
+    b")"
+    # DCS codes
+    b"(?:\x1bP|\x90)(?:"  # DCS
+    b"(?P<decrpss_decstbm>1\\$r[0-9]+;[0-9]+r)"
+    b")(?:\x07|\x1b\\\\|\x9c)"  # ST
 )
 
 QUERY_TIMEOUT = 1.0  # seconds from DSR to CPR
@@ -28,7 +49,7 @@ class TerminalWindow:
     def __init__(self) -> None:
         self._query_deadline: float | None = None
         self._setup_needed: bool = True
-        self._window_cursor_xy: tuple[int, int] | None = None
+        self._window_cursor_rowcol: tuple[int, int] | None = None
         self._window_scroll_topbot: tuple[int | None, int | None] = (None, None)
         self._window_terminal_mode: TerminalModeTracker = TerminalModeTracker()
         self._window_topbot: tuple[int | None, int | None] = (None, None)
@@ -43,7 +64,7 @@ class TerminalWindow:
         """
         assert time >= 0.0, time
         self._setup_needed = True
-        if self.is_output_ready(time):
+        if self._window_cursor_rowcol or self._query_deadline:
             return []
         else:
             self._query_deadline = time + QUERY_TIMEOUT
@@ -55,7 +76,12 @@ class TerminalWindow:
 
         If False, pause output but continue calling .convert_input_chunk().
         """
-        return not (self._query_deadline and time < self._query_deadline)
+        return (
+            not self._setup_needed
+            or self._window_cursor_rowcol is not None
+            or not self._query_deadline
+            or time >= self._query_deadline
+        )
 
     def convert_output_chunk(
         self, chunk: bytes | str, time: float
@@ -71,17 +97,24 @@ class TerminalWindow:
         REQUIRES .is_output_ready() is True
         """
         assert self.is_output_ready(time), (time, self._query_deadline)
-        out = []
-        if self._window_setup_needed:
+        out: list[bytes | str] = []
+        if self._setup_needed:
             reg = [b"" if v is None else b"%d" % v for v in self._window_topbot]
             out.append(b"\x1b[%sr" % b";".join(reg))  # DECSTBM - set margins
-            # TODO: move cursor
             out.extend(self._window_terminal_mode.mode_chunks())
-            self._window_setup_needed = False
+            if self._window_cursor_rowcol:
+                row, col = self._window_cursor_rowcol
+                row = self._window_to_terminal_row(row)
+                cup_args = [b"" if v <= 1 else b"%d" % v for v in (row, col)]
+                out.append(b"\x1b[" + b";".join(cup_args))  # CUP - move cursor
+
+            self._setup_needed = False
 
         # TODO: translate absolute to relative position
         # TODO: handle DECSTBM in output stream
-        self._window_cursor_xy = None
+        # TODO: handle clear-screen
+
+        self._window_cursor_rowcol = None
         out.append(chunk)
         return out
 
@@ -101,15 +134,28 @@ class TerminalWindow:
 
         code = match.lastgroup
         if code == "cpr":
-            row, col = map(int, match[code].split(b";"))
-            top, bot = self._window_topbot
-            row = min(row, bot) if bot is not None else row
-            row = max(1, row - top + 1) if top is not None else row
-            if self._query_pending is not None:
-                self._window_cursor_xy = (col, row)
-                self._query_pending = None
+            row, col = [int(v) for v in match[code].split(b";")]
+            row = self._terminal_to_window_row(row)
+            if self._query_deadline is not None:
+                self._window_cursor_rowcol = (row, col)
+                self._query_deadline = None
                 return []
             else:
                 return [b"\x1b[%d;%dR" % (row, col)]
         else:
             assert False, (code, match.groupdict())  # unknown named group?
+
+    def _window_to_terminal_row(self, row: int) -> int:
+        w_top, w_bot = self._window_topbot
+        w_top, w_bot = w_top or 1, w_bot or 9999
+        if self._terminal_mode_tracker.dec_modes[6] == "h":  # DECOM set
+            t_top, t_bot = self._window_scroll_topbot
+            t_top, t_bot = t_top or w_top, t_bot or w_bot
+        else:
+            t_top, t_bot = 1, 9999
+
+        t_row = row + w_top - t_top
+        return max(1, min(w_bot - w_top + 1, t_bot - t_top + 1, t_row))
+
+    def _terminal_to_window_row(self, row: int) -> int:
+        pass
