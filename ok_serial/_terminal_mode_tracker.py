@@ -2,7 +2,7 @@ import re
 
 # regexp to match relevant terminal escape sequences
 # https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-ESCAPE_CODE_RX = re.compile(
+CODE_RX = re.compile(
     # single-byte codes
     b"(?P<shift>[\x0e\x0f]|\x1b[no])|"  # GL locking shift: SI/SO/LS2/LS3
     # ESC codes
@@ -194,14 +194,12 @@ class TerminalModeTracker:
     def add_chunk(self, chunk: bytes | str) -> None:
         """Incorporates a chunk (from TerminalChunker) into saved state."""
 
-        if not isinstance(chunk, bytes):
-            return
-        if not (match := ESCAPE_CODE_RX.fullmatch(chunk)):
+        if not (isinstance(chunk, bytes) and (rxm := CODE_RX.fullmatch(chunk))):
             return
 
-        code = match.lastgroup
-        assert code, match.groupdict()
-        body = match[code]
+        code = rxm.lastgroup
+        assert code, rxm.groupdict()
+        body = rxm[code]
 
         # Simple modes to save with no further processing
         if code in SIMPLE_CODES:
@@ -234,8 +232,7 @@ class TerminalModeTracker:
             self.other_modes[key] = b"\x1b[%dq" % param  # canonical form
         elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
-                if mode not in SKIP_DEC_MODES:
-                    self._set_dec_mode(mode, dec_value)
+                self._set_dec_mode(mode, dec_value)
         elif code == "decstr":  # soft reset: governed state to baseline
             self.sgr_codes = dict(RESET_SGR_CODES)
             self._save_sgr_dec = dict(RESET_SGR_CODES)  # resets DECSC too
@@ -251,11 +248,11 @@ class TerminalModeTracker:
         elif code == "sgr":
             sgr_pos = 0
             while sgr_pos < len(body):
-                sgr_match = SGR_CODE_RX.match(body, sgr_pos)
-                assert sgr_match, body[sgr_pos:]
-                sgr, sgr_pos = sgr_match.lastgroup, sgr_match.end()
-                assert sgr, sgr_match.groupdict()
-                sgr_body = sgr_match[sgr]
+                sgr_rxm = SGR_CODE_RX.match(body, sgr_pos)
+                assert sgr_rxm, body[sgr_pos:]
+                sgr, sgr_pos = sgr_rxm.lastgroup, sgr_rxm.end()
+                assert sgr, sgr_rxm.groupdict()
+                sgr_body = sgr_rxm[sgr]
                 if sgr == "RESET":
                     self.sgr_codes = {"RESET": sgr_body}
                 else:
@@ -288,6 +285,8 @@ class TerminalModeTracker:
 
     def _set_dec_mode(self, mode: int, value: bytes) -> None:
         """Records a DEC mode value, normalizing shared-register families."""
+        if mode in SKIP_DEC_MODES:
+            return
         for onehot_set in ONEHOT_DEC_MODE_SETS:
             if mode in onehot_set:
                 self.dec_modes.update((m, b"l") for m in onehot_set)
