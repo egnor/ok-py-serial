@@ -119,11 +119,6 @@ RESET_OTHER_MODES = {
     "xtsmpointer": b"\x1b[>1p",  # pointer hidden while typing (xterm default)
 }
 
-# Per-LED off codes used when decomposing the all-off decll0 state; LEDs are
-# tracked either as decll0 alone (all off) or all of decll1-3 explicitly, so
-# equal dict values always imply equal LED state
-DECLL_OFF_CODES = {f"decll{n}": b"\x1b[2%dq" % n for n in (1, 2, 3)}
-
 # Undo codes for other_modes keys with no baseline entry (a diff base may
 # have designated G2/G3, which the baseline replay deliberately omits)
 UNSET_OTHER_MODES = {
@@ -226,28 +221,16 @@ class TerminalModeTracker:
 
         # CSI codes
         elif code == "decll":
-            param = int(body)
-            if (led := param % 10) == 0:  # all off: use the compact form
+            led = (param := int(body)) % 10
+            key = f"decll{led}"
+            if led == 0:  # single all-off code
                 for n in range(1, 10):
                     self.other_modes.pop(f"decll{n}", None)
-                self.other_modes.pop("decll0", None)  # reorder to latest
-                self.other_modes["decll0"] = RESET_OTHER_MODES["decll0"]
-            else:
-                if led <= 3 and "decll0" in self.other_modes:
-                    del self.other_modes["decll0"]  # decompose all-off state
-                    self.other_modes.update(DECLL_OFF_CODES)
-                key = f"decll{led}"
-                self.other_modes.pop(key, None)  # reorder to latest
-                self.other_modes[key] = b"\x1b[%dq" % param  # canonical form
-                led_state = {
-                    k: v
-                    for k, v in self.other_modes.items()
-                    if k.startswith("decll")
-                }
-                if led_state == DECLL_OFF_CODES:  # all off again: collapse
-                    for k in DECLL_OFF_CODES:
-                        del self.other_modes[k]
-                    self.other_modes["decll0"] = RESET_OTHER_MODES["decll0"]
+            elif self.other_modes.pop("decll0", None):  # decompose all-off
+                for n in (1, 2, 3):
+                    self.other_modes[f"decll{n}"] = b"\x1b[2%dq" % n
+            self.other_modes.pop(key, None)  # reorder to latest
+            self.other_modes[key] = b"\x1b[%dq" % param  # canonical form
         elif dec_value := {"decrst": b"l", "decset": b"h"}.get(code):
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                 if mode not in SKIP_DEC_MODES:
@@ -314,10 +297,7 @@ class TerminalModeTracker:
         self, base: "TerminalModeTracker | None" = None
     ) -> list[bytes]:
         """Returns escape code(s) that encode the accumulated state.
-        - base: output diffs from this base state (output full setup if None)
-
-        State tracked only by the base is returned to an assumed default:
-        reset ("l") for DEC/ANSI modes, US-ASCII for G2/G3 designations.
+        - base: if not None, output diffs from this base state
         """
 
         # Note, DECSTR would reset scrolling margins, etc; avoid it
@@ -330,27 +310,21 @@ class TerminalModeTracker:
         for prefix, attr in (b"\x1b[?", "dec_modes"), (b"\x1b[", "ansi_modes"):
             store = getattr(self, attr)
             base_store = getattr(base, attr) if base else {}
-            run_suffix = None  # reset per store so the two never merge together
-            for mode, suffix in store.items():
-                if suffix == base_store.get(mode):
+            run_value = None  # reset per store; the two never merge
+            for mode in {**store, **base_store}:  # union of keys
+                value, base_value = store.get(mode, b"l"), base_store.get(mode)
+                if value == base_value:
                     pass
-                elif suffix == run_suffix:  # extend the run we just emitted
-                    out[-1] = b"%s;%d%s" % (out[-1][:-1], mode, suffix)
+                elif value == run_value:  # extend the run we just emitted
+                    out[-1] = b"%s;%d%s" % (out[-1][:-1], mode, value)
                 else:
-                    out.append(b"%s%d%s" % (prefix, mode, suffix))
-                    run_suffix = suffix
-            # base-only modes: assume untracked modes are reset by default
-            for mode, suffix in base_store.items():
-                if suffix == b"h" and mode not in store:
-                    if run_suffix == b"l":  # extend the run we just emitted
-                        out[-1] = b"%s;%dl" % (out[-1][:-1], mode)
-                    else:
-                        out.append(b"%s%dl" % (prefix, mode))
-                        run_suffix = b"l"
+                    out.append(b"%s%d%s" % (prefix, mode, value))
+                    run_value = value
 
         for mode, value in self.other_modes.items():
             if not (base and value == base.other_modes.get(mode)):
                 out.append(value)
+
         if base:  # base-only state is undone where a default is known
             for mode in base.other_modes:
                 if mode not in self.other_modes:

@@ -364,9 +364,7 @@ def test_leds():
 
 
 def test_leds_collapse_to_all_off():
-    # extinguishing the last lit LED collapses back to compact decll0
-    assert other(b"\x1b[1q", b"\x1b[21q") == RESET_OTHER_MODES
-    # CSI 0 q also collapses, superseding any still-lit LEDs
+    # CSI 0 q collapses to all-off decll0, superseding any still-lit LEDs
     assert other(b"\x1b[1q", b"\x1b[2q", b"\x1b[0q") == RESET_OTHER_MODES
 
 
@@ -415,7 +413,7 @@ BASELINE_DEC_L_RUN = (
 
 
 def test_baseline_replay():
-    # a fresh tracker replays DECSTR plus the explicit baseline
+    # a fresh tracker replays the explicit baseline
     assert TerminalModeTracker().mode_chunks() == [
         b"\x1b[m",  # SGR reset
         BASELINE_DEC_L_RUN,  # DEC mode resets, batched into one CSI
