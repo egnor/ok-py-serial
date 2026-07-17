@@ -114,14 +114,15 @@ RESET_OTHER_MODES = {
     "decscusr": b"\x1b[0 q",  # cursor style = terminal default
     "G0": b"\x1b(B",  # G0 charset = US-ASCII
     "G1": b"\x1b)B",  # G1 charset = US-ASCII
+    # Omit G2 and G3 here; see REVERT_OTHER_MODES below
     "keypad": b"\x1b>",  # numeric keypad (DECKPNM)
     "shift": b"\x0f",  # SI: GL = G0
     "xtsmpointer": b"\x1b[>1p",  # pointer hidden while typing (xterm default)
 }
 
-# Undo codes for other_modes keys with no baseline entry (a diff base may
-# have designated G2/G3, which the baseline replay deliberately omits)
-UNSET_OTHER_MODES = {
+# These are NOT part of initial reset, only used when set in a prior state
+REVERT_OTHER_MODES = {
+    # G2/G3 support and defaults vary by terminal
     "G2": b"\x1b*B",  # G2 charset = US-ASCII
     "G3": b"\x1b+B",  # G3 charset = US-ASCII
 }
@@ -150,7 +151,7 @@ class TerminalModeTracker:
     Does not capture:
     - Cursor position, scrolling, or other non-mode-setting codes
     - Modes without restorable boolean semantics (see SKIP_DEC_MODES)
-    - GR locking shifts/single shifts, modifyOtherKeys / kitty keyboard,
+    - Single shifts, GR locking shifts, modifyOtherKeys / kitty keyboard,
       window title, palettes, or other esoteric state
 
     State starts with explicit defaults and returns there on reset,
@@ -325,10 +326,10 @@ class TerminalModeTracker:
             if not (base and value == base.other_modes.get(mode)):
                 out.append(value)
 
-        if base:  # base-only state is undone where a default is known
-            for mode in base.other_modes:
-                if mode not in self.other_modes:
-                    if undo := UNSET_OTHER_MODES.get(mode):
-                        out.append(undo)
+        # restore G2/G3 to ASCII only if it had been modified
+        if base:
+            for mode, revert in REVERT_OTHER_MODES.items():
+                if mode in base.other_modes and mode not in self.other_modes:
+                    out.append(revert)
 
         return out
