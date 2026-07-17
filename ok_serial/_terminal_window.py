@@ -58,80 +58,108 @@ class TerminalWindow:
 
     def __init__(self) -> None:
         self._query_deadlines: list[float] = []
-        self._setup_needed: bool = True
-        self._virt_rowcol: tuple[int, int] | Literal["unk", "wait"] = "unk"
+        self._virt_rowcol: tuple[int | None, int | None] = (None, None)
         self._virt_scroll_topbot: tuple[int | None, int | None] = (None, None)
         self._virt_terminal_mode: TerminalModeTracker = TerminalModeTracker()
+        self._window_state: Literal["active", "querying", "saved"] = "active"
         self._window_topbot: tuple[int | None, int | None] = (None, None)
 
-    def save_cursor_state(self, time: float) -> list[bytes | str]:
-        """Saves window cursor position and terminal mode (but not content).
+    def checkpoint_state(
+        self,
+        time: float,
+        topbot: tuple[int | None, int | None] | None = None,
+    ) -> list[bytes | str]:
+        """Saves and optionally reconfigures window state for later restoration.
         - time: clock time in seconds (any consistent epoch)
+        - topbot: if not None, new (top, bottom) of window (1-based, inclusive)
 
-        Call before making outside terminal writes (eg. status bar update).
-        Returns chunks (if any) to send to the terminal (eg. cursor query).
-        The next .convert_output_chunk() will restore the saved state.
+        Returns chunks for direct terminal output (eg. cursor query) if any.
+        The next .convert_window_chunk() will restore saved terminal state.
         """
         assert time >= 0.0, time
-        self._setup_needed = True
-        if self._virt_rowcol == "unk":
-            self._query_deadlines.append(time + QUERY_TIMEOUT)
-            self._virt_rowcol = "wait"
-            return [b"\x1b[6n"]
+        self._window_topbot = topbot or self._window_topbot
+        if self._window_state == "active":
+            if all(self._virt_rowcol):
+                self._window_state = "saved"
+            else:
+                self._window_state = "querying"
+                self._query_deadlines.append(time + QUERY_TIMEOUT)
+                return [b"\x1b[6n"]
         return []
 
-    def is_output_ready(self, time: float) -> bool:
-        """Returns .convert_output_chunk() readiness (no query in flight, etc).
+    def is_window_ready(self, time: float) -> bool:
+        """Returns .convert_window_chunk(...) readiness (no query in flight).
         - time: clock time in seconds (any consistent epoch)
 
-        If False, pause output but continue calling .convert_input_chunk().
+        Return value
+        - True: free to call .convert_window_chunk() / .convert_input_chunk().
+        - False: pause output, but keep calling .convert_input_chunk().
         """
         while self._query_deadlines and self._query_deadlines[0] < time:
             del self._query_deadlines[0]
-        return self._virt_rowcol != "wait" or not self._query_deadlines
+        if self._window_state == "querying" and not self._query_deadlines:
+            self._window_state = "saved"  # timed out
+        return self._window_state != "querying"
 
-    def convert_output_chunk(
+    def convert_window_chunk(
         self, chunk: bytes | str, time: float
     ) -> list[bytes | str]:
         """Transforms a chunk to stay in the window region.
-        REQUIRES .is_output_ready().
+        REQUIRES .is_window_ready().
         - chunk: escape code or text to window-restrict
         - time: clock time in seconds (any consistent epoch)
 
-        Returns a list of chunks for direct output:
-        - prepends codes to setup/restore cursor position and mode
-        - transforms/clips absolute cursor positioning for window position
+        Returns a list of chunks for direct terminal output:
+        - codes to setup/restore cursor position and mode if needed
+        - absolute cursor positioning transformed/clipped for the window
         - other chunks are returned as-is
         """
-        assert self.is_output_ready(time), (time, self._query_deadlines)
+        assert self._window_state != "querying", self._window_state
+
+        out: list[bytes | str] = []
+        if self._window_state != "active":
+            arg = [b"" if v is None else b"%d" % v for v in self._window_topbot]
+            out.append(b"\x1b[%sr" % b";".join(arg))
+
+            save_origin_mode = self._virt_terminal_mode.dec_modes[6]
+            self._virt_terminal_mode.dec_modes[6] = b"l"
+            out.extend(self._virt_terminal_mode.mode_chunks())
+            self._virt_terminal_mode.dec_modes[6] = save_origin_mode
+
+            w_row, col = self._virt_rowcol
+            if w_row and col:
+                t_row = self._terminal_row_from_window(w_row)
+                out.append(b"\x1b[%d;%dH" % (t_row, col))  # CUP
+
+            self._window_state = "active"
+
         self._virt_terminal_mode.add_chunk(chunk)
 
-        out: list[bytes | str] = [chunk]
         if isinstance(chunk, bytes) and (rxm := OUT_CODE_RX.fullmatch(chunk)):
             code = rxm.lastgroup
             assert code, rxm.groupdict()
             # body = rxm[code]
 
             if code == "ris":
-                self._setup_needed = True
-                self._virt_rowcol = (0, 0)
+                self._virt_rowcol = (1, 1)
                 self._virt_scroll_topbot = (None, None)
-                out.append(b"\x1b[2J")  # clear screen
+                out = [b"\x1b[2J"]  # no setup; clear screen; re-init after
+                out.extend(self.checkpoint_state(time))  # trigger re-setup
             elif code == "cup":
                 # TODO: modify coordinates
                 pass
             elif code == "decom":
                 pass  # recorded in _virt_terminal_mode, NOT passed through
             elif code in ("decsed", "ed"):
-                out.extend(self.save_cursor_state(time))
+                out.extend(self.checkpoint_state(time))  # save cursor
                 # TODO: emulate screen erase with line erase
             elif code == "decstbm":
-                # TODO: emulate margins (and move cursor!)
-                self._setup_needed = True
-                self._virt_rowcol = (0, 0)
+                self._virt_rowcol = (1, 1)
+                # TODO: set self._virt_scroll_topbot to new margins
+                out = self.checkpoint_state(time)  # re-setup with new settings
             elif code == "decstr":
                 self._virt_scroll_topbot = (None, None)
-                out.extend(self.save_cursor_state(time))  # re-setup w/ reset
+                out = self.checkpoint_state(time)  # re-setup with new settings
             elif code in ("decxxra", "xtreportsgr"):
                 # TODO: modify coordinates
                 pass
@@ -144,12 +172,8 @@ class TerminalWindow:
             else:
                 assert False, code  # unknown named group?
         else:
-            self._virt_rowcol = "unk"  # cannot predict, invalidate
+            self._virt_rowcol = (None, None)  # cannot predict, invalidate
             out.append(chunk)  # pass through
-
-        if self._setup_needed:
-            out = self._terminal_setup_chunks() + out
-            self._setup_needed = False
 
         return out
 
@@ -157,9 +181,9 @@ class TerminalWindow:
         """Processes a chunk received from the terminal.
         - chunk: escape code or text received from terminal
 
-        Returns a list of chunks (if any) to be handled by application:
+        Returns a list of chunks (if any) to be handled by the caller:
         - locally generated cursor query replies are consumed
-        - other cursor query replies are translated to window coordinates
+        - other cursor query replies translated to window coordinates
         - other chunks are returned as-is
         """
         if isinstance(chunk, bytes) and (rxm := IN_CODE_RX.fullmatch(chunk)):
@@ -167,30 +191,17 @@ class TerminalWindow:
             if code == "cpr":
                 t_row, col = [int(v) for v in rxm[code].split(b";")]
                 w_row = self._virt_row_from_terminal(t_row)
-                del self._query_deadlines[:1]
-                if self._virt_rowcol == "wait" and not self._query_deadlines:
-                    self._virt_rowcol = (w_row, col)
-                    return []
+                if pending := len(self._query_deadlines):
+                    del self._query_deadlines[:1]
+                    if self._window_state == "querying" and pending == 1:
+                        self._window_state = "saved"
+                        self._virt_rowcol = (w_row, col)
+                        return []  # swallow response to our query
                 return [b"\x1b[%d;%dR" % (w_row, col)]
             else:
                 assert False, (code, rxm.groupdict())  # unknown named group?
         else:
             return [chunk]  # pass through
-
-    def _terminal_setup_chunks(self) -> list[bytes | str]:
-        margins = [b"" if v is None else b"%d" % v for v in self._window_topbot]
-        out: list[bytes | str] = [b"\x1b[%sr" % b";".join(margins)]  # DECSTBM
-
-        save_origin_mode = self._virt_terminal_mode.dec_modes[6]
-        self._virt_terminal_mode.dec_modes[6] = b"l"
-        out.extend(self._virt_terminal_mode.mode_chunks())
-        self._virt_terminal_mode.dec_modes[6] = save_origin_mode
-
-        if isinstance(self._virt_rowcol, tuple):
-            w_row, col = self._virt_rowcol
-            t_row = self._terminal_row_from_window(w_row)
-            out.append(b"\x1b[%d;%dH" % (t_row, col))  # CUP
-        return out
 
     def _terminal_row_from_window(self, row: int) -> int:
         w_top, w_bot = self._window_topbot
