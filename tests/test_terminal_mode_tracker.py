@@ -418,7 +418,7 @@ def test_baseline_replay():
         b"\x1b[m",  # SGR reset
         BASELINE_DEC_L_RUN,  # DEC mode resets, batched into one CSI
         b"\x1b[?7;25h",  # DEC mode sets, likewise
-        b"\x1b[2;4;20l",  # ANSI mode resets
+        b"\x1b[2;4;12;20l",  # ANSI mode resets
         b"\x1b[0q",  # keyboard LEDs off
         b"\x1b[0*x",  # stream mode for rectangle operations
         b'\x1b[0"q',  # character protection off
@@ -463,64 +463,64 @@ def test_empty_dicts_serialize_to_nothing():
 
 
 def test_diff_between_fresh_trackers_is_empty():
-    assert TerminalModeTracker().mode_chunks(TerminalModeTracker()) == []
+    assert TerminalModeTracker().mode_chunks(base=TerminalModeTracker()) == []
 
 
 def test_diff_against_self_is_empty():
     tracker = track(b"\x1b[1;31m", b"\x1b[?25l", b"\x1b[4h", b"\x1b(0")
-    assert tracker.mode_chunks(tracker) == []
+    assert tracker.mode_chunks(base=tracker) == []
 
 
 def test_diff_emits_only_changed_dec_modes():
     base = track(b"\x1b[?25l")
     target = track(b"\x1b[?25l", b"\x1b[?2004h")
-    assert target.mode_chunks(base) == [b"\x1b[?2004h"]
+    assert target.mode_chunks(base=base) == [b"\x1b[?2004h"]
 
 
 def test_diff_returns_changed_dec_mode_to_baseline():
     # the target never touched ?25, so the diff undoes the base's change
     base = track(b"\x1b[?25l")
-    assert TerminalModeTracker().mode_chunks(base) == [b"\x1b[?25h"]
+    assert TerminalModeTracker().mode_chunks(base=base) == [b"\x1b[?25h"]
 
 
 def test_diff_unknown_dec_mode():
     # a mode outside the baseline still diffs by value
     target = track(b"\x1b[?1234h")
-    assert target.mode_chunks(TerminalModeTracker()) == [b"\x1b[?1234h"]
+    assert target.mode_chunks(base=TerminalModeTracker()) == [b"\x1b[?1234h"]
 
 
 def test_diff_batches_changed_modes_across_unchanged_ones():
     # 2004 matches the base and is skipped; 1049 and 69 join one h run anyway
     base = track(b"\x1b[?2004h")
     target = track(b"\x1b[?1049h", b"\x1b[?2004h", b"\x1b[?69h")
-    assert target.mode_chunks(base) == [b"\x1b[?1049;69h"]
+    assert target.mode_chunks(base=base) == [b"\x1b[?1049;69h"]
 
 
 def test_diff_reemits_full_sgr_on_any_change():
     # SGR isn't diffed code-by-code; any difference replays the whole state
     base = track(b"\x1b[1m")
     target = track(b"\x1b[1m", b"\x1b[31m")
-    assert target.mode_chunks(base) == [b"\x1b[;1;31m"]
+    assert target.mode_chunks(base=base) == [b"\x1b[;1;31m"]
 
 
 def test_diff_sgr_compares_values_not_order():
     # categories are independent, so equal values in a different order match
     base = track(b"\x1b[1m", b"\x1b[31m")
     target = track(b"\x1b[31m", b"\x1b[1m")
-    assert target.mode_chunks(base) == []
+    assert target.mode_chunks(base=base) == []
 
 
 def test_diff_ansi_modes():
     base = track(b"\x1b[4h")
     target = track(b"\x1b[4h", b"\x1b[20h")
-    assert target.mode_chunks(base) == [b"\x1b[20h"]
+    assert target.mode_chunks(base=base) == [b"\x1b[20h"]
 
 
 def test_diff_other_modes():
     # changed entries replay; the base's cursor style is undone to the default
     base = track(b"\x1b(0", b"\x1b[3 q")
     target = track(b"\x1b(0", b"\x1b=")
-    assert target.mode_chunks(base) == [b"\x1b[0 q", b"\x1b="]
+    assert target.mode_chunks(base=base) == [b"\x1b[0 q", b"\x1b="]
 
 
 def test_diff_mouse_protocol_switch():
@@ -528,49 +528,47 @@ def test_diff_mouse_protocol_switch():
     # the diff resets the base's protocol, then sets the target's
     base = track(b"\x1b[?1000h", b"\x1b[?1002h")  # button-motion tracking
     target = track(b"\x1b[?1002h", b"\x1b[?1000h")  # click-only tracking
-    assert target.mode_chunks(base) == [b"\x1b[?1002l", b"\x1b[?1000h"]
+    assert target.mode_chunks(base=base) == [b"\x1b[?1002l", b"\x1b[?1000h"]
 
 
 def test_diff_leds():
     lit = track(b"\x1b[1q")
     dark = TerminalModeTracker()
     # dark -> lit: the decomposed entries all replay (the base lacks them)
-    assert lit.mode_chunks(dark) == [b"\x1b[22q", b"\x1b[23q", b"\x1b[1q"]
+    assert lit.mode_chunks(base=dark) == [b"\x1b[22q", b"\x1b[23q", b"\x1b[1q"]
     # lit -> dark: decll0 has no counterpart in the base, so all-off replays
-    assert dark.mode_chunks(lit) == [b"\x1b[0q"]
+    assert dark.mode_chunks(base=lit) == [b"\x1b[0q"]
 
 
 def test_diff_assumes_unknown_base_modes_reset():
     # modes only the base tracked are assumed to default to reset...
     base = track(b"\x1b[?1234h", b"\x1b[?5678h")
-    assert TerminalModeTracker().mode_chunks(base) == [b"\x1b[?1234;5678l"]
+    assert TerminalModeTracker().mode_chunks(base=base) == [b"\x1b[?1234;5678l"]
     # ...so a base-only mode already reset needs no transition at all
-    assert TerminalModeTracker().mode_chunks(track(b"\x1b[?4321l")) == []
+    assert TerminalModeTracker().mode_chunks(base=track(b"\x1b[?4321l")) == []
     # ANSI modes get the same treatment
     base = track(b"\x1b[34h")
-    assert TerminalModeTracker().mode_chunks(base) == [b"\x1b[34l"]
+    assert TerminalModeTracker().mode_chunks(base=base) == [b"\x1b[34l"]
 
 
 def test_diff_base_only_modes_join_runs():
     base = track(b"\x1b[?1234h")
     target = track(b"\x1b[?7l")  # auto-wrap off
-    assert target.mode_chunks(base) == [b"\x1b[?7;1234l"]
+    assert target.mode_chunks(base=base) == [b"\x1b[?7;1234l"]
 
 
 def test_diff_undoes_base_only_charset_designations():
     # G2/G3 aren't in the baseline, but have a known default to return to
     base = track(b"\x1b*0", b"\x1b+0")  # G2/G3 = DEC special graphics
-    assert TerminalModeTracker().mode_chunks(base) == [b"\x1b*B", b"\x1b+B"]
+    expect = [b"\x1b*B", b"\x1b+B"]
+    assert TerminalModeTracker().mode_chunks(base=base) == expect
 
 
 def test_diff_combined_stores():
     base = track(b"\x1b[?1049h", b"\x1b[?25l")
     target = track(b"\x1b[1m", b"\x1b[?1049h", b"\x1b[4h")
-    assert target.mode_chunks(base) == [
-        b"\x1b[;1m",  # SGR re-emitted in full
-        b"\x1b[?25h",  # base's hidden cursor undone; shared 1049 untouched
-        b"\x1b[4h",  # insert mode set
-    ]
+    expect = [b"\x1b[;1m", b"\x1b[?25h", b"\x1b[4h"]
+    assert target.mode_chunks(base=base) == expect
 
 
 def test_end_to_end_replay():
@@ -583,7 +581,7 @@ def test_end_to_end_replay():
         b"\x1b[?7h",  # baseline, no longer joined by 25
         b"\x1b[?25l",  # changed modes moved to the end, in change order
         b"\x1b[?1000h",
-        b"\x1b[2;20l",  # ANSI baseline, minus the changed 4
+        b"\x1b[2;12;20l",  # ANSI baseline, minus the changed 4
         b"\x1b[4h",
         b"\x1b[0q",
         b"\x1b[0*x",

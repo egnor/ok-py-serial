@@ -27,6 +27,7 @@ from ok_serial._exceptions import (
     SerialIoClosed,
     SerialIoConflict,
     SerialIoException,
+    SerialIoUnsupported,
     SerialMonitorExhausted,
     SerialOpenBusy,
     SerialOpenException,

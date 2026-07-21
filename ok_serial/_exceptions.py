@@ -30,6 +30,12 @@ class SerialIoConflict(SerialIoException):
     pass
 
 
+class SerialIoUnsupported(SerialIoException):
+    """Exception raised for an operation not implemented by the serial port."""
+
+    pass
+
+
 class SerialOpenException(SerialIoException):
     """Exception raised for system errors opening a serial port."""
 

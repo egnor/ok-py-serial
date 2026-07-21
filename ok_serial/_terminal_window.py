@@ -17,7 +17,7 @@ OUT_CODE_RX = re.compile(
     b"(?P<decom>\\?6[hl]|"  # DEC origin mode
     b"(?P<decsed>\\?[0123]?)J|"  # DEC selective erase
     b"(?P<decstbm>[0-9;]*)r|"  # DEC set top and bottom margins
-    b"(?P<decstr>!)p|"  # DEC soft terminal reset
+    b"(?P<decstr>)!p|"  # DEC soft terminal reset
     b"(?P<decxxra>[0-9;]*(?:\\$[rtvxz{]|\\*y))|"  # DEC rectangular area ops
     b"(?P<ed>[0123]?)J|"  # erase display
     b"(?P<vpa>[0-9;]*)d|"  # vertical position absolute

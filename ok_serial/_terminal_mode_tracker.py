@@ -1,3 +1,4 @@
+import copy
 import re
 
 # regexp to match relevant terminal escape sequences
@@ -8,10 +9,10 @@ CODE_RX = re.compile(
     # ESC codes
     b"\x1b(?:"
     b"(?P<charset>[\x28-\x2b\x2e\x2f\x2d][\x20-\x2f]*[\x30-\x7e])|"
-    b"(?P<decrc>8)|"  # DEC Restore Cursor (and attributes)
-    b"(?P<decsc>7)|"  # DEC Save Cursor (and attributes)
+    b"(?P<decrc>)8|"  # DEC Restore Cursor (and attributes)
+    b"(?P<decsc>)7|"  # DEC Save Cursor (and attributes)
     b"(?P<keypad>[=>])|"  # application (=) / numeric (>) keypad
-    b"(?P<ris>c)"  # Reset to Initial State (RIS), a full reset
+    b"(?P<ris>)c"  # Reset to Initial State (RIS), a full reset
     b")|"
     # CSI codes
     b"(?:\x1b\\[|\x9b)(?:"
@@ -21,7 +22,7 @@ CODE_RX = re.compile(
     b'(?P<decsca>[0-9])"q|'  # DEC set character protection attribute
     b"(?P<decscusr>[0-9]) q|"  # DEC set cursor style
     b"\\?(?P<decset>[0-9;]*)h|"  # DEC mode set
-    b"(?P<decstr>!)p|"  # Soft terminal reset
+    b"(?P<decstr>)!p|"  # Soft terminal reset
     b"(?P<sgr>.*m)|"  # Set Graphics Rendition (capture 'm' as terminator)
     b"(?P<sm>[0-9;]*)h|"  # ANSI mode set
     b"(?P<rm>[0-9;]*)l|"  # ANSI mode reset
@@ -104,6 +105,7 @@ RESET_DEC_MODES = {
 RESET_ANSI_MODES = {
     2: b"l",  # KAM: keyboard unlocked
     4: b"l",  # IRM: replace (not insert) mode
+    12: b"l",  # SRM: local echo off
     20: b"l",  # LNM: linefeed does not imply carriage return
 }
 
@@ -180,6 +182,9 @@ class TerminalModeTracker:
 
     def __init__(self) -> None:
         self.reset()
+
+    def copy(self) -> "TerminalModeTracker":
+        return copy.deepcopy(self)
 
     def reset(self) -> None:
         """Returns all tracked state to the explicit baseline (as RIS does)."""
@@ -294,7 +299,7 @@ class TerminalModeTracker:
         self.dec_modes[mode] = value
 
     def mode_chunks(
-        self, base: "TerminalModeTracker | None" = None
+        self, *, base: "TerminalModeTracker | None" = None
     ) -> list[bytes]:
         """Returns escape code(s) that encode the accumulated state.
         - base: if not None, output diffs from this base state

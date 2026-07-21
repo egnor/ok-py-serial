@@ -312,9 +312,11 @@ class SerialConnection(contextlib.AbstractContextManager):
                     self._io.pyserial.break_condition = send_break
             except OSError as ex:
                 msg, dev = "Can't set control signals", self._io.pyserial.port
-                self._io.exception = _exceptions.SerialIoException(msg, dev)
-                self._io.exception.__cause__ = ex
-                raise self._io.exception
+                if ex.errno == errno.ENOTTY:  # could be pty; don't poison
+                    raise _exceptions.SerialIoUnsupported(msg, dev) from ex
+                exc = _exceptions.SerialIoException(msg, dev)
+                exc.__cause__ = ex
+                raise exc
 
     def get_signals(self) -> SerialControlSignals:
         """
@@ -340,7 +342,9 @@ class SerialConnection(contextlib.AbstractContextManager):
                     sending_break=self._io.pyserial.break_condition,
                 )
             except OSError as ex:
-                msg, dev = "Can't get control signals", self._io.pyserial.port
+                msg, dev = ("Can't get control signals", self._io.pyserial.port)
+                if ex.errno == errno.ENOTTY:  # could be pty; don't poison
+                    raise _exceptions.SerialIoUnsupported(msg, dev) from ex
                 self._io.exception = _exceptions.SerialIoException(msg, dev)
                 self._io.exception.__cause__ = ex
                 raise self._io.exception

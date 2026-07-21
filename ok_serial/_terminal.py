@@ -145,9 +145,14 @@ class _TerminalSession:
             except TimeoutError:
                 chunker.add_data(b"", time.monotonic())
 
-            if (signals := self._serial.get_signals()) != self._serial_signals:
-                self._serial_signals = signals
-                self._new_data_event.set()
+            try:
+                signals = self._serial.get_signals()
+            except ok_serial.SerialIoUnsupported:
+                pass  # could be a pty
+            else:
+                if signals != self._serial_signals:
+                    self._serial_signals = signals
+                    self._new_data_event.set()
 
             if chunker.chunks:
                 self._from_serial.extend(chunker.chunks)
