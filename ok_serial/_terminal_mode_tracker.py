@@ -197,6 +197,9 @@ class TerminalModeTracker:
     def copy(self) -> "TerminalModeTracker":
         return copy.deepcopy(self)
 
+    def __repr__(self) -> str:
+        return f"TerminalModeTracker{self.mode_chunks()!r}"
+
     def reset(self) -> None:
         """Returns all tracked state to the explicit baseline (as RIS does)."""
         self.sgr_codes = dict(_RESET_SGR_CODES)

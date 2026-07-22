@@ -166,9 +166,10 @@ class TerminalDecorator:
                 b"\x1b[%dA" % len(self.add_above),  # move back up
                 b"\x1b[%dL" % len(self.add_above),  # insert rows
             )
-            for above_line in self.add_above:
+            self._emit(b"\r", *self.add_above[0], b"\n")
+            for next_line in self.add_above[1:]:
                 self._switch_terminal_mode(self._new_decoration_mode())
-                self._emit(b"\r", *above_line, b"\n")  # ends at base row
+                self._emit(b"\r", *next_line, b"\n")  # ends at base row
             self.add_above.clear()
 
         # insert lines below if requested
@@ -179,10 +180,10 @@ class TerminalDecorator:
             self._switch_terminal_mode(self._new_decoration_mode())
             self._prepare_cursor_to_roam(time)  # adding content moves cursor
             self._emit(*([b"\n"] * skip_lines))
-            for below_line in self.set_below[skip_lines:]:
+            for next_line in self.set_below[skip_lines:]:
                 self._switch_terminal_mode(self._new_decoration_mode())
-                self._emit(b"\r", b"\n", *below_line)
-                self._now_below.append(below_line[:])
+                self._emit(b"\r", b"\n", *next_line)
+                self._now_below.append(next_line[:])
             self._emit(b"\x1b[%dA" % len(self.set_below))  # ends at base row
 
         # for aesthetics, leave the cursor at base pos, if possible

@@ -1,7 +1,7 @@
 import re
 from threading import TIMEOUT_MAX
 
-CHUNK_RX = re.compile(
+_CHUNK_RX = re.compile(
     # group 1: well-formed UTF-8 code points -- what str.decode() accepts
     # Grammar: https://datatracker.ietf.org/doc/html/rfc3629#section-4
     b"((?:"
@@ -44,7 +44,9 @@ CHUNK_RX = re.compile(
     b"([\x00-\xff])"
 )
 
-CHUNK_TIMEOUT = 0.1  # seconds to pause before giving up on partial data
+_CHUNK_TIMEOUT = 0.1  # seconds to pause before giving up on partial data
+
+_VALID_TEXT_RX = re.compile("[^\x00-\x1f]+")  # non-control text
 
 
 class TerminalChunker:
@@ -67,7 +69,7 @@ class TerminalChunker:
         """
 
         if data:
-            self.data_deadline = data_time + CHUNK_TIMEOUT
+            self.data_deadline = data_time + _CHUNK_TIMEOUT
             self._buffer.extend(data)
             self._process_buffer()
 
@@ -79,7 +81,7 @@ class TerminalChunker:
     def _process_buffer(self) -> None:
         pos = 0
         while pos < len(self._buffer):
-            match = CHUNK_RX.match(self._buffer, pos)
+            match = _CHUNK_RX.match(self._buffer, pos)
             assert match, self._buffer[pos:]
             chars, char_part, esc, esc_part, other = match.groups()
             if chars:
@@ -104,4 +106,8 @@ class TerminalChunker:
 def chunk_to_bytes(chunk: str | bytes):
     """Returns the data-stream bytes for a TerminalChunker-type chunk."""
     assert isinstance(chunk, (str, bytes)), chunk
-    return chunk if isinstance(chunk, bytes) else chunk.encode()
+    if isinstance(chunk, bytes):
+        return chunk
+    else:
+        assert _VALID_TEXT_RX.fullmatch(chunk), chunk
+        return chunk.encode()

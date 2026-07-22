@@ -10,7 +10,8 @@ import termios
 import time
 import typing
 
-from ok_serial._terminal_chunker import TerminalChunker
+from ok_serial._terminal_chunker import TerminalChunker, chunk_to_bytes
+from ok_serial._terminal_decorator import TerminalDecorator
 from ok_serial._timeout_math import from_deadline
 
 
@@ -35,26 +36,32 @@ async def run_terminal_async(opts: SerialTerminalOptions):
 class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
         async with contextlib.AsyncExitStack() as cleanup:
+            self._opts = opts
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
+
+            self._decorator: TerminalDecorator | None = None
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
-            self._from_stdin: list[bytes | str] = []
-            self._from_serial: list[bytes | str] = []
-            self._stderr_capture: list[str] = []
+            self._stdin_chunks: list[bytes | str] = []
+            self._serial_chunks: list[bytes | str] = []
+            self._stderr_buffer: str = ""
 
-            # Inject stderr shim before putting tty in raw mode
-            if os.isatty(2) and os.stat(1) == os.stat(2):
-                stderr_patch_args = (sys.stderr, "write", self._capture_stderr)
-                stderr_patch_context = _monkeypatch_context(*stderr_patch_args)
-                cleanup.enter_context(stderr_patch_context)
+            # if stdin and stdout are the same terminal, do Fancy Terminal Stuff
+            if os.isatty(1) and os.stat(0) == os.stat(1):
+                if os.stat(1) == os.stat(2):
+                    patch_args = (sys.stderr, "write", self._capture_stderr)
+                    patch_context = _monkeypatch_context(*patch_args)
+                    cleanup.enter_context(patch_context)  # before raw mode!
 
-            self._stdin_is_tty = cleanup.enter_context(_raw_tty_context(0))
-            self._stdout_is_tty = cleanup.enter_context(_raw_tty_context(1))
+                cleanup.enter_context(_raw_tty_context(0))
+                cleanup.enter_context(_raw_tty_context(1))
+                self._decorator = TerminalDecorator()
+                cleanup.callback(self._shutdown_decorator)
 
             task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
             task_group.create_task(self._read_from_stdin())
-            task_group.create_task(self._run_serial_monitor(opts))
+            task_group.create_task(self._run_serial_monitor())
             await self._main_loop()
 
     async def _main_loop(self) -> None:
@@ -66,74 +73,84 @@ class _TerminalSession:
             except TimeoutError:
                 pass
 
+            await asyncio.sleep(0)  # let logs updates, etc. happen
             self._new_data_event.clear()
-            from_stdin, self._from_stdin = self._from_stdin, []
-            from_serial, self._from_serial = self._from_serial, []
-            stderr_capture, self._stderr_capture = self._stderr_capture, []
 
-            for chunk in from_stdin:
-                self._on_stdin_chunk(chunk)
+            # use Fancy Terminal if available, else relay raw data directly
+            if self._decorator:
+                self._update_decorator_terminal()
+            else:
+                if self._serial and self._stdin_chunks:
+                    chunks, self._stdin_chunks = self._stdin_chunks, []
+                    stdin_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
+                    self._serial.write(stdin_bytes)
+                if self._serial_chunks:
+                    chunks, self._serial_chunks = self._serial_chunks, []
+                    serial_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
+                    sys.stdout.buffer.write(serial_bytes)
+                    sys.stdout.flush()
 
-            for chunk in from_serial:
-                self._on_serial_chunk(chunk)
+    def _update_decorator_terminal(self) -> None:
+        # use the decorator for "fancy" terminal output
+        assert self._decorator
+        decor = self._decorator
+        stdin_chunks, self._stdin_chunks = self._stdin_chunks, []
+        serial_chunks, self._serial_chunks = self._serial_chunks, []
 
-            for chunk in stderr_capture:
-                self._on_stderr_capture(chunk)
+        decor.add_from_terminal.extend(stdin_chunks)
+        decor.add_base.extend(serial_chunks)
+        decor.update(timestamp := time.monotonic())
 
-    def _on_stdin_chunk(self, chunk: bytes | str):
-        # TODO: look for menu escape key
-        # TODO: if in menu mode, interpret menu commands
-        if self._serial:
-            chunk_bytes = chunk if isinstance(chunk, bytes) else chunk.encode()
-            self._serial.write(chunk_bytes)
-        else:
-            # TODO: beep, show text indicating connection closed?
-            pass
+        from_term, decor.out_from_terminal = decor.out_from_terminal, []
+        for chunk in from_term:
+            # TODO: check for menu keys, etc.
+            if self._serial:
+                self._serial.write(chunk_to_bytes(chunk))
 
-    def _on_serial_chunk(self, chunk: bytes | str):
-        # TODO: clean up pending typeahead / menu
-        # TODO: restore terminal context, move to newline if not
-        if isinstance(chunk, str):
-            sys.stdout.write(chunk)
-        else:
-            # TODO: handle various escape codes, incl. newline variants
-            sys.stdout.buffer.write(chunk)
+        decor.update(timestamp)  # pick up output from input
 
+        to_term, decor.out_to_terminal = decor.out_to_terminal, []
+        sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in to_term))
         sys.stdout.flush()
 
-    def _on_stderr_capture(self, chunk: str):
-        sys.stdout.write(chunk.replace("\n", "\r\n"))
-
-    async def _read_from_stdin(self):
+    async def _read_from_stdin(self) -> None:
         async with _async_reader_context(sys.stdin) as inp:
             chunker = TerminalChunker()
             while True:
                 try:
                     timeout = from_deadline(chunker.data_deadline)
                     async with asyncio.timeout(timeout):
-                        chunker.add_data(await inp.read(256), time.monotonic())
+                        if not (data := await inp.read(256)):
+                            raise EOFError("Input closed")
+                        chunker.add_data(data, time.monotonic())
                 except TimeoutError:
                     chunker.add_data(b"", time.monotonic())
                 if chunker.chunks:
-                    self._from_stdin.extend(chunker.chunks)
+                    self._stdin_chunks.extend(chunker.chunks)
                     self._new_data_event.set()
                     chunker.chunks.clear()
 
-    async def _run_serial_monitor(self, opts: SerialTerminalOptions):
-        SCM = ok_serial.SerialConnectionMonitor
-        with SCM(opts.match, copts=opts.copts, mopts=opts.mopts) as monitor:
+    async def _run_serial_monitor(self) -> None:
+        with ok_serial.SerialConnectionMonitor(
+            self._opts.match, copts=self._opts.copts, mopts=self._opts.mopts
+        ) as monitor:
             while True:
                 self._serial = await monitor.connect_async()
+                name = self._serial.port_name
+                msg = f"Connected to {name} ({self._opts.copts.baud}bps)"
+                self._add_decor(b"\x1b[1;37;42m", f"► {msg}", b"\x1b[K")
                 self._new_data_event.set()
                 try:
                     await self._read_from_serial()
                 except ok_serial.SerialIoException as ex:
-                    logging.warning("%s", ex)
+                    msg = f"Connection lost: {ex}"
+                    self._add_decor(b"\x1b[1;37;41m", f"► {msg}", b"\x1b[K")
                     self._serial = None
                     self._serial_signals = None
                     self._new_data_event.set()
 
-    async def _read_from_serial(self):
+    async def _read_from_serial(self) -> None:
+        assert self._serial
         chunker = TerminalChunker()
         while True:
             try:
@@ -155,16 +172,41 @@ class _TerminalSession:
                     self._new_data_event.set()
 
             if chunker.chunks:
-                self._from_serial.extend(chunker.chunks)
+                self._serial_chunks.extend(chunker.chunks)
                 self._new_data_event.set()
                 chunker.chunks.clear()
 
-    def _capture_stderr(self, data: str):
-        async def in_loop(data: str):
-            self._stderr_capture.append(data)
+    def _capture_stderr(self, data: str) -> None:
+        async def in_loop() -> None:
+            self._stderr_buffer, buffer = "", self._stderr_buffer + data
+            for line in buffer.splitlines(keepends=True):
+                if not line.endswith(("\n", "\r")):
+                    self._stderr_buffer += line
+                elif self._decorator:
+                    fancy: list[bytes | str]
+                    fancy = [b"\x1b[47;30m", "▸ ", line.rstrip(), b"\x1b[K"]
+                    self._decorator.add_above.append(fancy)
             self._new_data_event.set()
 
-        asyncio.run_coroutine_threadsafe(in_loop(data), self._event_loop)
+        asyncio.run_coroutine_threadsafe(in_loop(), self._event_loop)
+
+    def _add_decor(self, *chunks: bytes | str) -> None:
+        async def in_loop():
+            if self._decorator:
+                self._decorator.add_above.append(chunks)
+            self._new_data_event.set()
+
+        asyncio.run_coroutine_threadsafe(in_loop(), self._event_loop)
+
+    def _shutdown_decorator(self) -> None:
+        assert self._decorator
+        try:
+            self._decorator.shutdown()
+            for chunk in self._decorator.out_to_terminal:
+                sys.stdout.buffer.write(chunk_to_bytes(chunk))
+            sys.stdout.flush()
+        except OSError:
+            pass  # ignore output write errors in shutdown
 
 
 @contextlib.asynccontextmanager

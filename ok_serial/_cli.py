@@ -53,7 +53,7 @@ def list_command(
         else:
             ok_logging_setup.exit("❌ No serial ports found")
 
-    logging.info("🔌 %d serial port%s found", num, "" if num == 1 else "s")
+    logging.info("✅ %d serial port%s found", num, "" if num == 1 else "s")
 
     if one and num != 1:
         ok_logging_setup.exit(
@@ -73,16 +73,16 @@ def list_command(
 
 @main.command()
 @click.argument("port_baud", metavar="PORT/BAUD", nargs=-1, required=True)
-@click.option("--wait-time", "-w", default=0.0)
 @click.option("--reconnect", "-r", is_flag=True)
+@click.option("--scan-time", "-s", default=0.0)
 @click.option("--oblivious", "sharing", flag_value="oblivious")
 @click.option("--polite", "sharing", flag_value="polite")
 @click.option("--exclusive", "sharing", flag_value="exclusive", default=True)
 @click.option("--stomp", "sharing", flag_value="stomp")
 def term_command(
     port_baud: tuple[str, ...],
-    wait_time: float = 0.0,
     reconnect: bool = False,
+    scan_time: float = 0.0,
     sharing: ok_serial.SerialSharingType = "exclusive",
 ):
     """Start an interactive terminal on a serial port"""
@@ -94,7 +94,7 @@ def term_command(
     match = " ".join(port_baud)
     copts = ok_serial.SerialConnectionOptions(baud=baud, sharing=sharing)
     mopts = ok_serial.SerialMonitorOptions(
-        scan_timeout=wait_time,
+        scan_timeout=scan_time,
         reconnect_limit=None if reconnect else 0,
     )
     run_terminal(SerialTerminalOptions(match, copts, mopts))

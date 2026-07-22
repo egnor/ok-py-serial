@@ -178,7 +178,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                 if port := self._scan_matched:
                     try:
                         opts = self._conn_opts
-                        msg = "🔗 Connecting to %s (%dbps)"
+                        msg = "🔌 Connecting to %s (%dbps)"
                         log.info(msg, port.name, opts.baud)
                         self._conn = SerialConnection(port=port, opts=opts)
                         self._conn_error = None
