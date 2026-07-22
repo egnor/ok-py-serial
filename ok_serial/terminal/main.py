@@ -59,8 +59,8 @@ class _TerminalSession:
                 self._decorator = TerminalDecorator()
 
                 intro_chunks: list[bytes | str] = [
-                    b"\x1b[46;30m",
-                    f"» okserial term {ok_serial.__version__} ┊ ",
+                    b"\x1b[30;46m",
+                    f"▸ {ok_serial.__package__} v{ok_serial.__version__} ┊ ",
                     *[b"\x1b[1m", "ctrl-]", b"\x1b[22m", " for menu ┊ "],
                     *[b"\x1b[1m", "ctrl-\\", b"\x1b[22m", " to quit "],
                     b"\x1b[K",
@@ -133,8 +133,35 @@ class _TerminalSession:
                     b"\x1b[K",
                 ]
                 decor.add_above.append(chunks)
+            self._last_serial = self._serial
 
-        self._last_serial = self._serial
+        if self._serial_signals and self._serial_signals != self._last_signals:
+
+            def tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
+                name = name.upper() if v else name.lower()
+                fg, bg, bold, style = (fg, bg, 1, 29) if v else (37, 40, 2, 9)
+                return [
+                    *[b"\x1b[37;%dm" % bg, "▌"],
+                    *[b"\x1b[%d;%d;%d;%dm" % (bold, style, fg, bg), name],
+                    *[b"\x1b[22;29;37;%dm" % bg, "▐"],
+                    b"\x1b[30;47m",
+                ]
+
+            sig = self._last_signals = self._serial_signals
+            chunks: list[bytes | str] = [
+                b"\x1b[30;47m",
+                "▸ out ",
+                *tag(30, 46, "dtr", sig.dtr),
+                *tag(30, 46, "rts", sig.rts),
+                *tag(30, 46, "break", sig.sending_break),
+                " ┊ in ",
+                *tag(37, 44, "dsr", sig.dsr),
+                *tag(37, 44, "cts", sig.cts),
+                *tag(37, 44, "ri", sig.ri),
+                *tag(37, 44, "cd", sig.cd),
+                b"\x1b[K",
+            ]
+            decor.add_above.append(chunks)
 
         decor.add_from_terminal.extend(stdin_chunks)
         decor.add_base.extend(serial_chunks)
@@ -145,9 +172,9 @@ class _TerminalSession:
             if chunk == b"\x1d":  # ctrl-]
                 pass  # TODO: menu
             elif chunk == b"\x1c":  # ctrl-\
-                msg = "▶ Quit (ctrl-\\ pressed)"
-                color, clear = b"\x1b[1;37;41m", b"\x1b[K"
-                decor.add_above.append([color, msg, clear])
+                decor.add_above.append(
+                    [b"\x1b[1;37;41m", "▶ Quit (ctrl-\\ pressed)", b"\x1b[K"]
+                )
                 raise SystemExit(0)
             elif self._serial:
                 self._serial.write(chunk_to_bytes(chunk))
@@ -180,7 +207,7 @@ class _TerminalSession:
                     self._stderr_buffer += line  # partial line
                 elif self._decorator:
                     msg = _NONPRINT_RX.sub(esc_char, "▸ " + line.rstrip())
-                    color, clear = b"\x1b[47;30m", b"\x1b[K"
+                    color, clear = b"\x1b[30;47m", b"\x1b[K"
                     self._decorator.add_above.append([color, msg, clear])
             self._new_data_event.set()
 
