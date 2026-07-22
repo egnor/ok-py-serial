@@ -64,10 +64,9 @@ class _TerminalSession:
             await self._main_loop()
 
     async def _main_loop(self) -> None:
-        echo_deadline: float | None = None
         while True:
             try:
-                async with asyncio.timeout(from_deadline(echo_deadline)):
+                async with asyncio.timeout(0.25):
                     await self._new_data_event.wait()
             except TimeoutError:
                 pass
@@ -122,6 +121,7 @@ class _TerminalSession:
         except OSError:
             pass  # ignore output write errors in shutdown
 
+    # stderr log prefixes to VTxxx SGR colors, for fancy log rendering
     STDERR_COLORS = {"🔴": b"1;37;41", "🟢": b"1;37;42"}
 
     def _tsafe_decor_stderr(self, data: str) -> None:
