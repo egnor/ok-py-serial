@@ -1,12 +1,10 @@
-"""Unit tests for ok_serial._lock."""
-
 import os
 from pathlib import Path
 
 import pytest
 import signal
 
-from ok_serial import _exceptions
+import ok_serial
 from ok_serial import _lock
 
 
@@ -73,7 +71,7 @@ def test_polite_creates_sidecar_only(fs):
 def test_polite_fails_when_lock_file_held(fs):
     fs.create_dir("/var/lock")
     Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")  # init
-    with pytest.raises(_exceptions.SerialOpenBusy):
+    with pytest.raises(ok_serial.SerialOpenBusy):
         with _lock.PortLock("/dev/ttyTEST0", sharing="polite"):
             pass
 
@@ -81,7 +79,7 @@ def test_polite_fails_when_lock_file_held(fs):
 def test_polite_fails_when_other_polite_present(fs):
     fs.create_dir("/var/lock")
     Path("/var/lock/LCK..ttyTEST0.polite").write_text("         1\n")
-    with pytest.raises(_exceptions.SerialOpenBusy):
+    with pytest.raises(ok_serial.SerialOpenBusy):
         with _lock.PortLock("/dev/ttyTEST0", sharing="polite"):
             pass
 
@@ -114,7 +112,7 @@ def test_exclusive_raises_when_port_busy(fs):
     # PID 1 (init/systemd) always exists
     lock_path.write_text("         1\n")
 
-    with pytest.raises(_exceptions.SerialOpenBusy):
+    with pytest.raises(ok_serial.SerialOpenBusy):
         with _lock.PortLock("/dev/ttyTEST0", sharing="exclusive"):
             pass
 
@@ -183,7 +181,7 @@ def test_polite_fails_when_flock_held(fs, mocker):
     mocker.patch("fcntl.ioctl")
 
     with _lock.PortLock("/dev/test", sharing="polite") as lock:
-        with pytest.raises(_exceptions.SerialOpenBusy):
+        with pytest.raises(ok_serial.SerialOpenBusy):
             lock.attach_fd(fd=999)
 
 
@@ -213,7 +211,7 @@ def test_exclusive_fails_when_flock_held(fs, mocker):
     mocker.patch("fcntl.ioctl")
 
     with _lock.PortLock("/dev/test", sharing="exclusive") as lock:
-        with pytest.raises(_exceptions.SerialOpenBusy):
+        with pytest.raises(ok_serial.SerialOpenBusy):
             lock.attach_fd(fd=999)
 
 
@@ -237,5 +235,5 @@ def test_check_detects_lock_file_appearing(fs, mocker):
         # Someone else creates the regular LCK..* file. Use PID 1 (init) so
         # `_lock_file_owner` sees a live owner that isn't us.
         Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")
-        with pytest.raises(_exceptions.SerialIoConflict):
+        with pytest.raises(ok_serial.SerialIoConflict):
             lock.check()

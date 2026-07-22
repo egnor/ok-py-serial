@@ -15,7 +15,7 @@ except ModuleNotFoundError:
     raise
 
 import ok_serial
-from ok_serial._terminal import run_terminal, SerialTerminalOptions
+from ok_serial.terminal.main import run_terminal, SerialTerminalOptions
 
 ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException
 ok_logging_setup.install()

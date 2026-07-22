@@ -102,7 +102,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
 
         assert (match is not None) + (port is not None) == 1
-        opts = dataclasses.replace(opts, **kwargs)
+        self.opts = dataclasses.replace(opts, **kwargs)
 
         if match is not None:
             if not (found := scan_serial_ports(match)):
@@ -120,19 +120,20 @@ class SerialConnection(contextlib.AbstractContextManager):
             port = port.name
 
         with contextlib.ExitStack() as cleanup:
-            port_lock = cleanup.enter_context(PortLock(port, opts.sharing))
+            port_lock = cleanup.enter_context(PortLock(port, self.opts.sharing))
 
             try:
                 # (If "polite", wake the readloop periodically for checks.)
+                timeout = 0.5 if self.opts.sharing == "polite" else None
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
-                        baudrate=opts.baud,
+                        baudrate=self.opts.baud,
                         write_timeout=0.1,
-                        timeout=(0.5 if opts.sharing == "polite" else None),
+                        timeout=timeout,
                     )
                 )
-                log.debug("Opened %s %s", port, opts)
+                log.debug("Opened %s %s", port, self.opts)
             except OSError as ex:
                 if ex.errno == errno.EBUSY:
                     msg = "Serial port busy (EBUSY)"

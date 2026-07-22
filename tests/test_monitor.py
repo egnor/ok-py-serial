@@ -1,5 +1,3 @@
-"""Unit tests for ok_serial._monitor.ok_serial.SerialConnectionMonitor."""
-
 import asyncio
 import threading
 import time

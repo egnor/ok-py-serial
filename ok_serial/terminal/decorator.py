@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Literal
 
-from ok_serial._terminal_mode_tracker import TerminalModeTracker
+from ok_serial.terminal.mode_tracker import TerminalModeTracker
 
 QUERY_PASSTHRU_TIMEOUT = 1.0  # seconds
 QUERY_WARNING_TIMEOUT = 10.0  # warn if a cursor query takes this long

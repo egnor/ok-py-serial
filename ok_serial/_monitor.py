@@ -69,8 +69,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
             copts = dataclasses.replace(copts, baud=baud)
 
         self.match = match
-        self._conn_opts = copts
-        self._monitor_opts = mopts
+        self.copts = copts
+        self.mopts = mopts
 
         self._lock = threading.Lock()
         self._baseline_keys: set[str] | None = None
@@ -89,8 +89,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
     def __repr__(self) -> str:
         return (
             f"SerialConnectionMonitor({self.match!r}, "
-            f"copts={self._conn_opts!r}), "
-            f"mopts={self._monitor_opts!r}"
+            f"copts={self.copts!r}), "
+            f"mopts={self.mopts!r}"
         )
 
     def close(self) -> None:
@@ -130,7 +130,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except SerialIoException as ex:
-                        if self._monitor_opts.reconnect_limit == 0:
+                        if self.mopts.reconnect_limit == 0:
                             msg = f"{ex} (reconnect disabled)"
                             raise SerialMonitorExhausted(msg) from ex
                         log_level = 20 if isinstance(ex, SerialIoClosed) else 30
@@ -139,13 +139,13 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                     self._conn.close()
                     self._conn = None
                     self._reconnect_count += 1
-                    limit = self._monitor_opts.reconnect_limit
+                    limit = self.mopts.reconnect_limit
                     if limit is not None and self._reconnect_count > limit:
                         msg = f"{self.match!r} reconnect limit met ({limit})"
                         raise SerialMonitorExhausted(msg)
 
                 if self._scan_deadline is None:
-                    scan_timeout = self._monitor_opts.scan_timeout
+                    scan_timeout = self.mopts.scan_timeout
                     self._scan_deadline = to_deadline(scan_timeout)
                     if scan_timeout is None:
                         log.info("🔎 Scanning for %r (ongoing)", self.match)
@@ -172,16 +172,15 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                         self._scan_matched = None
                         log.debug("%s", self._conn_error)
 
-                    wait = self._monitor_opts.scan_interval
+                    wait = self.mopts.scan_interval
                     self._next_scan = to_deadline(wait)
 
                 if port := self._scan_matched:
                     try:
-                        opts = self._conn_opts
                         msg = "🔌 Connecting to %s (%dbps)"
-                        log.info(msg, port.name, opts.baud)
-                        self._conn = SerialConnection(port=port, opts=opts)
-                        self._conn_error = None
+                        log.info(msg, port.name, self.copts.baud)
+                        conn = SerialConnection(port=port, opts=self.copts)
+                        self._conn, self._conn_error = conn, None
                         self._scan_deadline = None  # reset for next scan
                         return self._conn
                     except SerialOpenException as ex:
@@ -191,7 +190,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
 
             assert self._scan_deadline is not None
             if from_deadline(self._scan_deadline) < wait:
-                scan_timeout = self._monitor_opts.scan_timeout
+                scan_timeout = self.mopts.scan_timeout
                 msg = f"Can't open {self.match!r}"
                 if scan_timeout and scan_timeout > 0:
                     msg += f" ({scan_timeout:.2f}s timeout)"

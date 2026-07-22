@@ -1,5 +1,3 @@
-"""Unit tests for ok_serial.SerialConnection."""
-
 import asyncio
 import termios
 import threading

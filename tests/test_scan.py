@@ -1,12 +1,9 @@
-"""Unit tests for ok_serial._scan."""
-
 import json
 import pytest
 from serial.tools import list_ports
 from serial.tools import list_ports_common
 
 import ok_serial
-from ok_serial import SerialPort
 
 
 def test_scan_ports(mocker):
@@ -28,8 +25,10 @@ def test_scan_ports(mocker):
     list_ports.comports.return_value = [bare_port, full_port]
 
     assert ok_serial.scan_serial_ports() == [
-        SerialPort(name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}),
-        SerialPort(
+        ok_serial.SerialPort(
+            name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}
+        ),
+        ok_serial.SerialPort(
             name="/dev/zzfull",
             attr={
                 "device": "/dev/zzfull",
@@ -67,6 +66,8 @@ def test_scan_ports_with_override(monkeypatch, tmp_path):
     override_path.write_text(json.dumps(override))
 
     assert ok_serial.scan_serial_ports() == [
-        SerialPort(name="port1", attr={"aname": "avalue", "bname": "bvalue"}),
-        SerialPort(name="port2", attr={}),
+        ok_serial.SerialPort(
+            name="port1", attr={"aname": "avalue", "bname": "bvalue"}
+        ),
+        ok_serial.SerialPort(name="port2", attr={}),
     ]

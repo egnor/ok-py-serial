@@ -27,7 +27,11 @@ from ok_serial._exceptions import (
     SerialScanException,
 )
 
+import importlib.metadata
+
 __all__ = [n for n in globals() if not n.startswith("_")]
+
+__version__ = importlib.metadata.version(__package__)
 
 for _name in __all__:
     globals()[_name].__module__ = "ok_serial"

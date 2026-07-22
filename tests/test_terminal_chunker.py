@@ -1,6 +1,4 @@
-"""Unit tests for ok_serial._terminal_chunker."""
-
-from ok_serial._terminal_chunker import TerminalChunker
+from ok_serial.terminal.chunker import TerminalChunker
 
 
 def chunk_all(data: bytes) -> list[str | bytes]:

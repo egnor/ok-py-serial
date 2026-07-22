@@ -1,7 +1,6 @@
-"""Unit tests for ok_serial._terminal_mode_tracker."""
-
-from ok_serial._terminal_mode_tracker import TerminalModeTracker
 from typing import Literal
+
+from ok_serial.terminal.mode_tracker import TerminalModeTracker
 
 RESET = TerminalModeTracker()
 

@@ -1,8 +1,6 @@
-"""Unit tests for ok_serial._terminal_decorator."""
-
 import logging
 
-from ok_serial._terminal_decorator import TerminalDecorator
+from ok_serial.terminal.decorator import TerminalDecorator
 
 # the decoration mode differs from the default base mode only by DECAWM,
 # so mode switches show up in the output as these two escapes
@@ -60,11 +58,16 @@ def test_above_decoration_inserts_lines():
     deco.add_above += [["one"], ["two"]]
     assert to_term(deco) == [
         WRAP_OFF,  # switch to decoration mode
-        b"\n", b"\n",  # scroll down to make room
+        b"\n",
+        b"\n",  # scroll down to make room
         b"\x1b[2A",  # move back up
         b"\x1b[2L",  # insert rows
-        b"\r", "one", b"\n",
-        b"\r", "two", b"\n",  # ends at the base row
+        b"\r",
+        "one",
+        b"\n",
+        b"\r",
+        "two",
+        b"\n",  # ends at the base row
         b"\x1b[1G",  # return the cursor to the base column
     ]
     assert deco.add_above == []
@@ -75,8 +78,12 @@ def test_below_decoration_inserts_and_truncates():
     deco.set_below = [["aaa"], ["bbb"]]
     assert to_term(deco) == [
         WRAP_OFF,
-        b"\r", b"\n", "aaa",
-        b"\r", b"\n", "bbb",
+        b"\r",
+        b"\n",
+        "aaa",
+        b"\r",
+        b"\n",
+        "bbb",
         b"\x1b[2A",  # back up to the base row
         b"\x1b[1G",
     ]
@@ -126,7 +133,12 @@ def test_base_content_deferred_until_query_answered():
     to_term(deco)
     deco.set_below = [["status"]]
     assert to_term(deco) == [
-        WRAP_OFF, b"\x1b[6n", b"\r", b"\n", "status", b"\x1b[1A",
+        WRAP_OFF,
+        b"\x1b[6n",
+        b"\r",
+        b"\n",
+        "status",
+        b"\x1b[1A",
     ]
 
     # more base content can't be placed until the query resolves
@@ -137,13 +149,17 @@ def test_base_content_deferred_until_query_answered():
     # the reply arrives: clear the decoration, add base, redecorate
     deco.add_from_terminal += [b"\x1b[9;6R"]
     assert to_term(deco, time=0.2) == [
-        b"\x1b[1B", b"\x1b[1M", b"\x1b[1A",  # delete the below decoration
+        b"\x1b[1B",
+        b"\x1b[1M",
+        b"\x1b[1A",  # delete the below decoration
         b"\x1b[6G",  # return to the reported base column
         WRAP_ON,  # back to base mode
         "world",
         WRAP_OFF,  # decoration mode again
         b"\x1b[6n",  # new base content => new query
-        b"\r", b"\n", "status",  # below decoration redrawn
+        b"\r",
+        b"\n",
+        "status",  # below decoration redrawn
         b"\x1b[1A",
     ]
 
@@ -159,8 +175,12 @@ def test_base_style_restored_after_decoration():
         b"\x1b[m",  # reset the base's bold for the decoration
         WRAP_OFF,
         b"\x1b[6n",
-        b"\n", b"\x1b[1A", b"\x1b[1L",
-        b"\r", "note", b"\n",
+        b"\n",
+        b"\x1b[1A",
+        b"\x1b[1L",
+        b"\r",
+        "note",
+        b"\n",
     ]
 
     deco.add_from_terminal += [b"\x1b[2;5R"]
@@ -179,8 +199,13 @@ def test_decoration_style_reset_for_base():
     deco.add_above += [[b"\x1b[31m", "red note"]]
     assert to_term(deco) == [
         WRAP_OFF,
-        b"\n", b"\x1b[1A", b"\x1b[1L",
-        b"\r", b"\x1b[31m", "red note", b"\n",
+        b"\n",
+        b"\x1b[1A",
+        b"\x1b[1L",
+        b"\r",
+        b"\x1b[31m",
+        "red note",
+        b"\n",
         b"\x1b[1G",
     ]
 

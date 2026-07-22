@@ -1,5 +1,3 @@
-"""Unit tests for ok_serial._timeout_math."""
-
 import time
 
 from ok_serial import _timeout_math
