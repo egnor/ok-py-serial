@@ -4,13 +4,6 @@ with improved port discovery and I/O semantics.
 [(Usage guide)](https://github.com/egnor/ok-py-serial#readme)
 """
 
-try:
-    from beartype.claw import beartype_this_package as _beartype_me
-except ImportError:
-    pass
-else:
-    _beartype_me()
-
 from ok_serial._connection import (
     SerialConnection,
     SerialConnectionOptions,

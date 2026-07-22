@@ -24,7 +24,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-  "beartype",
   "mypy",
   "pdoc",
   "pyfakefs",

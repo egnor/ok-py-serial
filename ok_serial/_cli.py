@@ -73,6 +73,7 @@ def list_command(
 
 @main.command()
 @click.argument("port_baud", metavar="PORT/BAUD", nargs=-1, required=True)
+@click.option("--plain", "-p", is_flag=True)
 @click.option("--reconnect", "-r", is_flag=True)
 @click.option("--scan-time", "-s", default=0.0)
 @click.option("--oblivious", "sharing", flag_value="oblivious")
@@ -81,6 +82,7 @@ def list_command(
 @click.option("--stomp", "sharing", flag_value="stomp")
 def term_command(
     port_baud: tuple[str, ...],
+    plain: bool = False,
     reconnect: bool = False,
     scan_time: float = 0.0,
     sharing: ok_serial.SerialSharingType = "exclusive",
@@ -97,7 +99,10 @@ def term_command(
         scan_timeout=scan_time,
         reconnect_limit=None if reconnect else 0,
     )
-    run_terminal(SerialTerminalOptions(match, copts, mopts))
+    topts = SerialTerminalOptions(
+        match=match, copts=copts, mopts=mopts, plain=plain
+    )
+    run_terminal(topts)
 
 
 def format_line(port: ok_serial.SerialPort):

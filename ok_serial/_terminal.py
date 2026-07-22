@@ -20,7 +20,7 @@ class SerialTerminalOptions:
     match: str
     copts: ok_serial.SerialConnectionOptions
     mopts: ok_serial.SerialMonitorOptions
-    raw: bool = False
+    plain: bool = False
 
 
 def run_terminal(opts: SerialTerminalOptions):
@@ -36,32 +36,31 @@ async def run_terminal_async(opts: SerialTerminalOptions):
 class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
         async with contextlib.AsyncExitStack() as cleanup:
-            self._opts = opts
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
-
-            self._decorator: TerminalDecorator | None = None
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
+
+            self._decorator: TerminalDecorator | None = None
             self._stdin_chunks: list[bytes | str] = []
             self._serial_chunks: list[bytes | str] = []
-            self._stderr_buffer: str = ""
+            self._stderr_buffer = ""
 
             # if stdin and stdout are the same terminal, do Fancy Terminal Stuff
-            if os.isatty(1) and os.stat(0) == os.stat(1):
+            if not opts.plain and os.isatty(1) and os.stat(0) == os.stat(1):
+                self._decorator = TerminalDecorator()
                 if os.stat(1) == os.stat(2):
-                    patch_args = (sys.stderr, "write", self._capture_stderr)
+                    patch_args = (sys.stderr, "write", self._tsafe_decor_stderr)
                     patch_context = _monkeypatch_context(*patch_args)
                     cleanup.enter_context(patch_context)  # before raw mode!
 
                 cleanup.enter_context(_raw_tty_context(0))
                 cleanup.enter_context(_raw_tty_context(1))
-                self._decorator = TerminalDecorator()
                 cleanup.callback(self._shutdown_decorator)
 
             task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
             task_group.create_task(self._read_from_stdin())
-            task_group.create_task(self._run_serial_monitor())
+            task_group.create_task(self._run_serial_monitor(opts))
             await self._main_loop()
 
     async def _main_loop(self) -> None:
@@ -113,6 +112,37 @@ class _TerminalSession:
         sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in to_term))
         sys.stdout.flush()
 
+    def _shutdown_decorator(self) -> None:
+        assert self._decorator
+        try:
+            self._decorator.shutdown()
+            for chunk in self._decorator.out_to_terminal:
+                sys.stdout.buffer.write(chunk_to_bytes(chunk))
+            sys.stdout.flush()
+        except OSError:
+            pass  # ignore output write errors in shutdown
+
+    STDERR_COLORS = {"🔴": b"1;37;41", "🟢": b"1;37;42"}
+
+    def _tsafe_decor_stderr(self, data: str) -> None:
+        def add_line(line: str) -> None:
+            above = self._decorator.add_above if self._decorator else []
+            if color := _TerminalSession.STDERR_COLORS.get(line[0]):
+                above.append([b"\x1b[%sm" % color, "▶", line[1:], b"\x1b[K"])
+            else:
+                above.append([b"\x1b[47;30m", "▸ ", line, b"\x1b[K"])
+
+        async def in_loop() -> None:
+            buffer, self._stderr_buffer = self._stderr_buffer + data, ""
+            for line in buffer.splitlines(keepends=True):
+                if line.endswith(("\n", "\r")):
+                    add_line(line.rstrip())
+                else:
+                    self._stderr_buffer += line  # partial line
+            self._new_data_event.set()
+
+        asyncio.run_coroutine_threadsafe(in_loop(), self._event_loop)
+
     async def _read_from_stdin(self) -> None:
         async with _async_reader_context(sys.stdin) as inp:
             chunker = TerminalChunker()
@@ -130,21 +160,19 @@ class _TerminalSession:
                     self._new_data_event.set()
                     chunker.chunks.clear()
 
-    async def _run_serial_monitor(self) -> None:
+    async def _run_serial_monitor(self, opts: SerialTerminalOptions) -> None:
         with ok_serial.SerialConnectionMonitor(
-            self._opts.match, copts=self._opts.copts, mopts=self._opts.mopts
+            opts.match, copts=opts.copts, mopts=opts.mopts
         ) as monitor:
             while True:
                 self._serial = await monitor.connect_async()
-                name = self._serial.port_name
-                msg = f"Connected to {name} ({self._opts.copts.baud}bps)"
-                self._add_decor(b"\x1b[1;37;42m", f"► {msg}", b"\x1b[K")
+                name, bps = self._serial.port_name, opts.copts.baud
+                logging.info("🟢 Connected to %s (%dbps)", name, bps)
                 self._new_data_event.set()
                 try:
                     await self._read_from_serial()
                 except ok_serial.SerialIoException as ex:
-                    msg = f"Connection lost: {ex}"
-                    self._add_decor(b"\x1b[1;37;41m", f"► {msg}", b"\x1b[K")
+                    logging.warning("🔴 Connection lost: %s", ex)
                     self._serial = None
                     self._serial_signals = None
                     self._new_data_event.set()
@@ -175,38 +203,6 @@ class _TerminalSession:
                 self._serial_chunks.extend(chunker.chunks)
                 self._new_data_event.set()
                 chunker.chunks.clear()
-
-    def _capture_stderr(self, data: str) -> None:
-        async def in_loop() -> None:
-            self._stderr_buffer, buffer = "", self._stderr_buffer + data
-            for line in buffer.splitlines(keepends=True):
-                if not line.endswith(("\n", "\r")):
-                    self._stderr_buffer += line
-                elif self._decorator:
-                    fancy: list[bytes | str]
-                    fancy = [b"\x1b[47;30m", "▸ ", line.rstrip(), b"\x1b[K"]
-                    self._decorator.add_above.append(fancy)
-            self._new_data_event.set()
-
-        asyncio.run_coroutine_threadsafe(in_loop(), self._event_loop)
-
-    def _add_decor(self, *chunks: bytes | str) -> None:
-        async def in_loop():
-            if self._decorator:
-                self._decorator.add_above.append(chunks)
-            self._new_data_event.set()
-
-        asyncio.run_coroutine_threadsafe(in_loop(), self._event_loop)
-
-    def _shutdown_decorator(self) -> None:
-        assert self._decorator
-        try:
-            self._decorator.shutdown()
-            for chunk in self._decorator.out_to_terminal:
-                sys.stdout.buffer.write(chunk_to_bytes(chunk))
-            sys.stdout.flush()
-        except OSError:
-            pass  # ignore output write errors in shutdown
 
 
 @contextlib.asynccontextmanager
