@@ -1,4 +1,3 @@
-import logging
 import re
 from typing import Literal
 
@@ -133,16 +132,15 @@ class TerminalDecorator:
             self._can_move_cursor_to_base()
             and not (self._now_right or self._now_below)
         ):
+            assert self._base_col != "querying", self._base_col
             self._move_cursor_to_base()
             self._switch_terminal_mode(self._base_mode)
             self._emit(*self.add_base)
             for chunk in self.add_base:
-                # track queries from base content
+                self._base_col = 1 if chunk == b"\n" else "unknown"
                 if isinstance(chunk, bytes) and CURSOR_QUERY_RX.match(chunk):
                     self._query_passthru.append(time + QUERY_PASSTHRU_TIMEOUT)
             self.add_base.clear()
-            assert self._base_col != "querying", self._base_col
-            self._base_col = "unknown"  # can't predict ending point
 
         # add/replace right decoration if provided and reachable
         if self.set_right and (
@@ -187,18 +185,20 @@ class TerminalDecorator:
         if self._can_move_cursor_to_base():
             self._move_cursor_to_base()
 
-    def shutdown(self) -> None:
-        """Performs a final update and adds cleanup to .out_to_terminal:
-        - removes any right/below decorations
+    def reset(self) -> None:
+        """Adds cleanup to .out_to_terminal (*without* an update cycle):
         - resets terminal mode to default state
-        - moves to a new line if we're not already at one
+        - moves to a new line if we're not positioned at start of line
         - clears the screen below the cursor
+        - keeps mode tracking in sync to allow restart
         """
 
-        self._switch_terminal_mode(TerminalModeTracker())  # default state
+        self._base_mode = TerminalModeTracker()  # reset to default state
+        self._switch_terminal_mode(self._base_mode)
+        self._emit(b"\x1b7", b"\x1b[r", b"\x1b8")  # reset DECSTBM margins
         if (self._cursor_pos, self._base_col) != ("base", 1):
+            self._cursor_pos, self._base_col = "base", 1  # in case of restart
             self._emit(b"\r", b"\n")  # newline to move past the base line
-            self._cursor_pos, self._base_col = "base", 1
         self._emit(b"\x1b[J")  # clear from cursor to end of display
 
     def _can_move_cursor_to_base(self) -> bool:
