@@ -24,13 +24,13 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-  "mypy",
-  "pdoc",
-  "pyfakefs",
-  "pytest",
-  "pytest-asyncio",
-  "pytest-mock",
-  "ruff",
+  "mypy~=2.3",
+  "pdoc~=16.0",
+  "pyfakefs~=6.2",
+  "pytest~=9.1",
+  "pytest-asyncio~=1.4",
+  "pytest-mock~=3.15",
+  "ruff~=0.15",
 ]
 
 [tool.mypy]

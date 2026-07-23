@@ -42,8 +42,8 @@ class _TerminalSession:
         async with contextlib.AsyncExitStack() as cleanup:
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
-            self._keep_going = True
             self._decorator: TerminalDecorator | None = None
+            self._stop_requested = False
 
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
@@ -56,15 +56,14 @@ class _TerminalSession:
 
             # if stdin and stdout are the same terminal, do Fancy Terminal Stuff
             if not opts.plain and os.isatty(1) and os.stat(0) == os.stat(1):
-                self._decorator = TerminalDecorator()
-
                 intro_chunks: list[bytes | str] = [
                     b"\x1b[30;46m",
                     f"▸ {ok_serial.__package__} v{ok_serial.__version__} ┊ ",
-                    *[b"\x1b[1m", "ctrl-]", b"\x1b[22m", " for menu ┊ "],
-                    *[b"\x1b[1m", "ctrl-\\", b"\x1b[22m", " to quit "],
+                    *(b"\x1b[1m", "ctrl-]", b"\x1b[22m", " for menu ┊ "),
+                    *(b"\x1b[1m", "ctrl-\\", b"\x1b[22m", " to quit "),
                     b"\x1b[K",
                 ]
+                self._decorator = TerminalDecorator()
                 self._decorator.add_above.append(intro_chunks)
 
                 if os.stat(1) == os.stat(2):
@@ -80,10 +79,8 @@ class _TerminalSession:
             task_group.create_task(self._read_from_stdin())
             task_group.create_task(self._run_serial_monitor(opts))
 
-            while self._keep_going:
+            while True:
                 await self._main_loop()
-
-            task_group.cancel_scope.cancel()
 
     async def _main_loop(self) -> None:
         try:
@@ -113,59 +110,68 @@ class _TerminalSession:
         # use the decorator for "fancy" terminal output
         assert self._decorator
         decor = self._decorator
-        stdin_chunks, self._stdin_chunks = self._stdin_chunks, []
-        serial_chunks, self._serial_chunks = self._serial_chunks, []
+        timestamp = time.monotonic()
 
+        stdin_chunks, self._stdin_chunks = self._stdin_chunks, []
+        decor.add_from_terminal.extend(stdin_chunks)
+
+        # at exit, wait a bit for query replies to avoid hitting the shell
+        if self._stop_requested:
+            decor.update(timestamp)
+            if (qtime := decor.pending_query_time) and timestamp < qtime + 0.5:
+                return  # keep waiting for reply, do no other processing
+            else:
+                raise SystemExit(0)
+
+        decor_chunks: list[bytes | str]
         if self._serial is not self._last_serial:
             if self._last_serial:
-                chunks: list[bytes | str] = [
-                    *[b"\x1b[1;37;41m", "▶ Disconnected", b"\x1b[22m", " ┊ "],
+                decor_chunks = [
+                    *(b"\x1b[1;37;41m", "▶ Disconnected", b"\x1b[22m", " ┊ "),
                     self._last_serial.port_name,
                     b"\x1b[K",
                 ]
-                decor.add_above.append(chunks)
+                decor.add_above.append(decor_chunks)
             if self._serial:
-                chunks: list[bytes | str] = [
-                    *[b"\x1b[1;30;42m", "▶ Connected", b"\x1b[22m", " ┊ "],
+                decor_chunks = [
+                    *(b"\x1b[1;30;42m", "▶ Connected", b"\x1b[22m", " ┊ "),
                     f"{self._serial.port_name} ┊ ",
                     f"{self._serial.opts.baud}bps ┊ ",
                     f"{self._serial.opts.sharing}",
                     b"\x1b[K",
                 ]
-                decor.add_above.append(chunks)
+                decor.add_above.append(decor_chunks)
             self._last_serial = self._serial
 
-        if self._serial_signals and self._serial_signals != self._last_signals:
-
-            def tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
-                name = name.upper() if v else name.lower()
-                fg, bg, bold, style = (fg, bg, 1, 29) if v else (37, 40, 2, 9)
-                return [
-                    *[b"\x1b[37;%dm" % bg, "▌"],
-                    *[b"\x1b[%d;%d;%d;%dm" % (bold, style, fg, bg), name],
-                    *[b"\x1b[22;29;37;%dm" % bg, "▐"],
-                    b"\x1b[30;47m",
-                ]
-
-            sig = self._last_signals = self._serial_signals
-            chunks: list[bytes | str] = [
+        def sig_tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
+            name = name.upper() if v else name.lower()
+            fg, bg, bold, style = (fg, bg, 1, 29) if v else (37, 40, 2, 9)
+            return [
+                *(b"\x1b[37;%dm" % bg, "▌"),
+                *(b"\x1b[%d;%d;%d;%dm" % (bold, style, fg, bg), name),
+                *(b"\x1b[22;29;37;%dm" % bg, "▐"),
                 b"\x1b[30;47m",
-                "▸ out ",
-                *tag(30, 46, "dtr", sig.dtr),
-                *tag(30, 46, "rts", sig.rts),
-                *tag(30, 46, "break", sig.sending_break),
+            ]
+
+        if self._serial_signals and self._serial_signals != self._last_signals:
+            sig = self._last_signals = self._serial_signals
+            decor_chunks = [
+                *(b"\x1b[30;47m", "▸ out "),
+                *sig_tag(30, 46, "dtr", sig.dtr),
+                *sig_tag(30, 46, "rts", sig.rts),
+                *sig_tag(30, 46, "break", sig.sending_break),
                 " ┊ in ",
-                *tag(37, 44, "dsr", sig.dsr),
-                *tag(37, 44, "cts", sig.cts),
-                *tag(37, 44, "ri", sig.ri),
-                *tag(37, 44, "cd", sig.cd),
+                *sig_tag(37, 44, "dsr", sig.dsr),
+                *sig_tag(37, 44, "cts", sig.cts),
+                *sig_tag(37, 44, "ri", sig.ri),
+                *sig_tag(37, 44, "cd", sig.cd),
                 b"\x1b[K",
             ]
-            decor.add_above.append(chunks)
+            decor.add_above.append(decor_chunks)
 
-        decor.add_from_terminal.extend(stdin_chunks)
+        serial_chunks, self._serial_chunks = self._serial_chunks, []
         decor.add_base.extend(serial_chunks)
-        decor.update(timestamp := time.monotonic())
+        decor.update(timestamp)
 
         from_term, decor.out_from_terminal = decor.out_from_terminal, []
         for chunk in from_term:
@@ -175,23 +181,23 @@ class _TerminalSession:
                 decor.add_above.append(
                     [b"\x1b[1;37;41m", "▶ Quit (ctrl-\\ pressed)", b"\x1b[K"]
                 )
-                raise SystemExit(0)
+                decor.set_right.clear()
+                decor.set_below.clear()
+                self._stop_requested = True
             elif self._serial:
                 self._serial.write(chunk_to_bytes(chunk))
 
         decor.update(timestamp)  # pick up output from input
-
         to_term, decor.out_to_terminal = decor.out_to_terminal, []
         sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in to_term))
         sys.stdout.flush()
 
     def _shutdown_decorator(self) -> None:
         assert self._decorator
+        self._decorator.shutdown()
+        chunks = self._decorator.out_to_terminal
         try:
-            self._update_decorator_terminal()  # flush any remaining data
-            self._decorator.shutdown()
-            for chunk in self._decorator.out_to_terminal:
-                sys.stdout.buffer.write(chunk_to_bytes(chunk))
+            sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in chunks))
             sys.stdout.flush()
         except OSError:
             pass  # ignore output write errors in shutdown

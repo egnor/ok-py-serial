@@ -5,7 +5,6 @@ from typing import Literal
 from ok_serial.terminal.mode_tracker import TerminalModeTracker
 
 QUERY_PASSTHRU_TIMEOUT = 1.0  # seconds
-QUERY_WARNING_TIMEOUT = 10.0  # warn if a cursor query takes this long
 CURSOR_QUERY_RX = re.compile(b"(?:\x1b\\[|\x9b)6n")
 CURSOR_REPLY_RX = re.compile(b"(?:\x1b\\[|\x9b)(\\d+);(\\d+)R")
 
@@ -53,6 +52,7 @@ class TerminalDecorator:
 
         self.add_from_terminal: list[bytes | str] = []
         self.out_from_terminal: list[bytes | str] = []
+        self.pending_query_time: float | None = None  # if query is outstanding
 
         # terminal mode tracking: the mode set by base content, the mode
         # to use for decorations, and what the terminal is actually doing
@@ -63,7 +63,6 @@ class TerminalDecorator:
         # (between cols, the cursor *row* remains aligned with the base cursor)
         self._base_col: int | Literal["unknown", "querying"] = 1
         self._cursor_pos: Literal["base", "roam"] = "base"
-        self._query_warning_time: float = 0.0  # if "querying", when query sent
         self._query_passthru: list[float] = []  # expiration times
 
         # currently displayed right/below decorations for comparison
@@ -84,6 +83,7 @@ class TerminalDecorator:
                     del self._query_passthru[:1]
                 elif self._base_col == "querying":
                     self._base_col = int(m.group(2))
+                    self.pending_query_time = None
                     continue  # we issued the query; consume the result
             self.out_from_terminal.append(chunk)
         self.add_from_terminal.clear()
@@ -91,10 +91,6 @@ class TerminalDecorator:
         # expire pending passthru queries if we never saw a response
         while self._query_passthru and time > self._query_passthru[0]:
             del self._query_passthru[0]
-
-        if self._base_col == "querying" and time > self._query_warning_time:
-            logging.warning("Slow terminal query response (still waiting)")
-            self._query_warning_time = time + QUERY_WARNING_TIMEOUT
 
         # strategize - trim decorations right/below of cursor if:
         # - base content is pending *and* reachable after trimming right/below
@@ -145,6 +141,7 @@ class TerminalDecorator:
                 if isinstance(chunk, bytes) and CURSOR_QUERY_RX.match(chunk):
                     self._query_passthru.append(time + QUERY_PASSTHRU_TIMEOUT)
             self.add_base.clear()
+            assert self._base_col != "querying", self._base_col
             self._base_col = "unknown"  # can't predict ending point
 
         # add/replace right decoration if provided and reachable
@@ -198,13 +195,10 @@ class TerminalDecorator:
         - clears the screen below the cursor
         """
 
-        # consume pending input, erase lingering decorations, etc
-        self.set_right.clear()
-        self.set_below.clear()
-        self.update(time=0.0)  # time doesn't matter here
         self._switch_terminal_mode(TerminalModeTracker())  # default state
         if (self._cursor_pos, self._base_col) != ("base", 1):
-            self._emit(b"\r\n")  # move to new line if not already there
+            self._emit(b"\r", b"\n")  # newline to move past the base line
+            self._cursor_pos, self._base_col = "base", 1
         self._emit(b"\x1b[J")  # clear from cursor to end of display
 
     def _can_move_cursor_to_base(self) -> bool:
@@ -220,8 +214,8 @@ class TerminalDecorator:
     def _prepare_cursor_to_roam(self, time: float) -> None:
         if (self._cursor_pos, self._base_col) == ("base", "unknown"):
             self.out_to_terminal.append(b"\x1b[6n")
+            self.pending_query_time = time
             self._base_col = "querying"
-            self._query_warning_time = time + QUERY_WARNING_TIMEOUT
         self._cursor_pos = "roam"
 
     def _switch_terminal_mode(self, mode: TerminalModeTracker) -> None:

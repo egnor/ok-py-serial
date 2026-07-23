@@ -490,7 +490,7 @@ class _IoThreads(contextlib.AbstractContextManager):
                     self._notify_all_locked()
                 while not self.exception and not self.outgoing:
                     self.monitor.wait()
-                chunk = self.outgoing[:256]
+                chunk = bytes(self.outgoing[:256])
 
     def _notify_all_locked(self) -> None:
         """Must be run with self.monitor lock held."""
