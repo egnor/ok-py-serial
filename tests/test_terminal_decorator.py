@@ -1,5 +1,3 @@
-import logging
-
 from ok_serial.terminal.decorator import TerminalDecorator
 
 # the decoration mode differs from the default base mode only by DECAWM,
@@ -238,44 +236,30 @@ def test_base_cursor_query_passthru_expires():
     assert from_term(deco) == []
 
 
-def test_slow_query_warning(caplog):
+def test_reset_fresh():
+    deco = TerminalDecorator()
+    deco.reset()
+    # at a known column 1 with default modes: reset the scrolling margins
+    # (preserving the cursor) and clear below the cursor
+    assert deco.out_to_terminal == [b"\x1b7", b"\x1b[r", b"\x1b8", b"\x1b[J"]
+
+
+def test_reset_after_base_content():
     deco = TerminalDecorator()
     deco.add_base += ["hello"]
     to_term(deco)
-    deco.set_right = ["<hi>"]
-    to_term(deco)  # query sent at t=0
-
-    with caplog.at_level(logging.WARNING):
-        deco.update(5.0)  # before QUERY_WARNING_TIMEOUT
-        assert not caplog.records
-        deco.update(11.0)  # past it
-        assert any("Slow terminal" in r.message for r in caplog.records)
-
-
-def test_shutdown_fresh():
-    deco = TerminalDecorator()
-    deco.shutdown()
-    # at a known column 1 with default modes: just clear below the cursor
-    assert deco.out_to_terminal == [b"\x1b[J"]
-
-
-def test_shutdown_after_base_content():
-    deco = TerminalDecorator()
-    deco.add_base += ["hello"]
-    to_term(deco)
-    deco.shutdown()
+    deco.reset()
     # ending column unknown, so move to a fresh line before clearing
-    assert deco.out_to_terminal == [b"\r\n", b"\x1b[J"]
+    expect = [b"\x1b7", b"\x1b[r", b"\x1b8", b"\r", b"\n", b"\x1b[J"]
+    assert deco.out_to_terminal == expect
 
 
-def test_shutdown_removes_decorations():
+def test_reset_reverts_keyboard_protocols():
+    # regression: base content enabling modifyOtherKeys (which once crashed
+    # the tracker) and kitty keyboard flags must be undone by reset()
     deco = TerminalDecorator()
-    deco.set_right = ["<hi>"]
+    deco.add_base += [b"\x1b[>4;2m", b"\x1b[>1u", "hello"]
     to_term(deco)
-    deco.shutdown()
-    assert deco.out_to_terminal == [
-        b"\x1b[K",  # erase the right decoration
-        WRAP_ON,  # restore default modes
-        b"\x1b[J",
-    ]
-    assert deco.set_right == []
+    deco.reset()
+    assert b"\x1b[>4m" in deco.out_to_terminal  # modifyOtherKeys off
+    assert b"\x1b[<1u" in deco.out_to_terminal  # kitty flags popped
