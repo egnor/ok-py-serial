@@ -13,6 +13,7 @@ import typing
 
 from ok_serial.terminal.chunker import TerminalChunker, chunk_to_bytes
 from ok_serial.terminal.decorator import TerminalDecorator
+from ok_serial.terminal.keyboard import chunk_to_key_event
 from ok_serial._timeout_math import from_deadline
 
 
@@ -123,24 +124,25 @@ class _TerminalSession:
             else:
                 raise SystemExit(0)
 
-        decor_chunks: list[bytes | str]
+        line: list[bytes | str]
         if self._serial is not self._last_serial:
             if self._last_serial:
-                decor_chunks = [
+                line = [
                     *(b"\x1b[1;37;41m", "▶ Disconnected", b"\x1b[22m", " ┊ "),
                     self._last_serial.port_name,
                     b"\x1b[K",
                 ]
-                decor.add_above.append(decor_chunks)
+                decor.add_above.append(line)
+                decor.reset()
             if self._serial:
-                decor_chunks = [
+                line = [
                     *(b"\x1b[1;30;42m", "▶ Connected", b"\x1b[22m", " ┊ "),
                     f"{self._serial.port_name} ┊ ",
                     f"{self._serial.opts.baud}bps ┊ ",
                     f"{self._serial.opts.sharing}",
                     b"\x1b[K",
                 ]
-                decor.add_above.append(decor_chunks)
+                decor.add_above.append(line)
             self._last_serial = self._serial
 
         def sig_tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
@@ -155,7 +157,7 @@ class _TerminalSession:
 
         if self._serial_signals and self._serial_signals != self._last_signals:
             sig = self._last_signals = self._serial_signals
-            decor_chunks = [
+            line = [
                 *(b"\x1b[30;47m", "▸ out "),
                 *sig_tag(30, 46, "dtr", sig.dtr),
                 *sig_tag(30, 46, "rts", sig.rts),
@@ -167,7 +169,7 @@ class _TerminalSession:
                 *sig_tag(37, 44, "cd", sig.cd),
                 b"\x1b[K",
             ]
-            decor.add_above.append(decor_chunks)
+            decor.add_above.append(line)
 
         serial_chunks, self._serial_chunks = self._serial_chunks, []
         decor.add_base.extend(serial_chunks)
@@ -175,12 +177,15 @@ class _TerminalSession:
 
         from_term, decor.out_from_terminal = decor.out_from_terminal, []
         for chunk in from_term:
-            if chunk == b"\x1d":  # ctrl-]
+            key_event = chunk_to_key_event(chunk)
+            key_text = key_event.text if key_event else ""
+            if key_text == "\x1d":  # ctrl-]
                 pass  # TODO: menu
-            elif chunk == b"\x1c":  # ctrl-\
-                decor.add_above.append(
-                    [b"\x1b[1;37;41m", "▶ Quit (ctrl-\\ pressed)", b"\x1b[K"]
-                )
+            elif key_text == "\x1c":  # ctrl-\
+                decor.reset()
+                line = [b"\x1b[1;37;41m", "▶ Quit (ctrl-\\ pressed)", b"\x1b[K"]
+                decor.add_above.append(line)
+                decor.add_base.clear()
                 decor.set_right.clear()
                 decor.set_below.clear()
                 self._stop_requested = True
@@ -194,7 +199,7 @@ class _TerminalSession:
 
     def _shutdown_decorator(self) -> None:
         assert self._decorator
-        self._decorator.shutdown()
+        self._decorator.reset()
         chunks = self._decorator.out_to_terminal
         try:
             sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in chunks))

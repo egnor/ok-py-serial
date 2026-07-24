@@ -77,9 +77,13 @@ _CODE_RX = re.compile(
     b"(?P<decscusr>[0-9]) q|"  # DEC set cursor style
     b"\\?(?P<decset>[0-9;]*)h|"  # DEC mode set
     b"(?P<decstr>)!p|"  # Soft terminal reset
-    b"(?P<sgr>.*m)|"  # Set Graphics Rendition (capture 'm' as terminator)
+    b"<(?P<kittypop>[0-9]*)u|"  # kitty keyboard: pop flag entries
+    b">(?P<kittypush>[0-9]*)u|"  # kitty keyboard: push flag entry
+    b"=(?P<kittyset>[0-9]*;?[0-9]*)u|"  # kitty keyboard: set current flags
+    b"(?P<sgr>[0-9;:]*m)|"  # Set Graphics Rendition ('m' kept as terminator)
     b"(?P<sm>[0-9;]*)h|"  # ANSI mode set
     b"(?P<rm>[0-9;]*)l|"  # ANSI mode reset
+    b">(?P<xtmodkeys>[0-9;]*)m|"  # XTerm set key modifier option
     b">(?P<xtsmpointer>[0-9])p|"  # XTerm pointer visibility
     b"#(?P<xtpopsgr>[}q])|"  # XTerm Pop SGR state
     b"#(?P<xtpushsgr>[{p])|"  # XTerm Push SGR state
@@ -147,49 +151,53 @@ class TerminalModeTracker:
 
     Currently captures:
     - SGR codes (text style, color, font, etc.), including save/restore
-    - DEC private modes (DECSET/DECRST, CSI ? Pm h/l), e.g. cursor visibility,
-      auto-wrap, mouse reporting, alternate screen, bracketed paste
-    - ANSI standard modes (SM/RM, CSI Pm h/l), e.g. insert and newline modes
-    - DEC mode save/restore (XTSAVE/XTRESTORE) and terminal resets (DECSTR, RIS)
     - Character set designations (G0-G3) and GL locking shifts (SI/SO/LS2/LS3)
-    - Application vs. numeric keypad mode (DECKPAM/DECKPNM)
-    - Cursor style (DECSCUSR), keyboard LEDs (DECLL), character protection
-      (DECSCA), and xterm pointer visibility mode (XTSMPOINTER)
+    - ANSI standard modes (SM/RM, CSI Pm h/l), eg. insert and newline modes
+    - DEC private modes (DECSET/DECRST, CSI ? Pm h/l), eg. cursor visibility,
+      auto-wrap, mouse reporting, alternate screen, bracketed paste
+    - DEC other modes, eg. application keypad, cursor style, LEDs, protection
+    - DEC mode save/restore (DECSC/DECRC)
+    - Terminal resets (DECSTR, RIS)
+    - XTerm save/restore (XTSAVE/XTRESTORE, XTPUSHSGR/XTPOPSGR)
+    - XTerm pointer visibility mode (XTSMPOINTER)
+    - XTerm key modifier options (XTMODKEYS, eg. modifyOtherKeys)
+    - Kitty keyboard protocol flags (CSI >/</= ... u)
 
     Does not capture:
     - Cursor position, scrolling, or other non-mode-setting codes
     - Modes without restorable boolean semantics (see _DEC_MODE_ALIASES)
-    - Single shifts, GR locking shifts, modifyOtherKeys / kitty keyboard,
-      window title, palettes, or other esoteric state
+    - Other: single shifts, GR locking shifts, window title, palettes, ...
 
     State starts with explicit defaults and returns there on reset,
     which may not exactly match the terminal's own defaults after reset.
-
-    State is normalized where modes interact, so equal dict values imply
-    equal terminal state (which mode_chunks diffing relies on): shared
-    register DEC mode families (mouse protocol/encoding) keep at most one
-    member set, and keyboard LEDs are either all-off (decll0) or all
-    tracked individually (decll1-3).
+    State is normalized as much as possible for efficient diffing.
 
     Attributes:
-    - sgr_codes: dict[str, bytes] from SGR category name to latest value
     - ansi_modes: dict[int, bytes] from ANSI mode number to b"l" or b"h"
     - dec_modes: dict[int, bytes] from DEC mode number to b"l" or b"h"
+    - dec_save_dec: dict[int, bytes] dec_modes saved by DECSC
+    - dec_save_other: dict[str, bytes] other_modes saved by DECSC
+    - dec_save_sgr: dict[str, bytes] sgr_codes saved by DECSC
+    - kitty_key_flags: (list[int], list[int]) kitty stacks for main/alt screens
     - other_modes: dict[str, bytes] from type to escape code for other state
+    - sgr_codes: dict[str, bytes] from SGR category name to latest value
+    - xterm_save_dec: dict[int, bytes] dec_modes saved by XTSAVE
+    - xterm_save_sgr: list[dict[str, bytes]] stack of sgr_codes from XTPUSHSGR
 
     TODO:
     - track but do not replay modes like DECSTBM, etc.
     """
 
-    sgr_codes: dict[str, bytes]
     ansi_modes: dict[int, Literal[b"l", b"h"]]
     dec_modes: dict[int, Literal[b"l", b"h"]]
+    dec_save_dec: dict[int, Literal[b"l", b"h"]]
+    dec_save_other: dict[str, bytes]
+    dec_save_sgr: dict[str, bytes]
+    kitty_key_flags: tuple[list[int], list[int]]
     other_modes: dict[str, bytes]
-    _dec_save_dec: dict[int, Literal[b"l", b"h"]]  # DEC(SC/RC) saved modes
-    _dec_save_other: dict[str, bytes]  # DEC(SC/RC) saved other state
-    _dec_save_sgr: dict[str, bytes]  # DEC(SC/RC) saved SGM codes
-    _xterm_save_dec: dict[int, Literal[b"l", b"h"]]  # XT(SAVE/RESTORE)
-    _xterm_save_sgr: list[dict[str, bytes]]  # XT(PUSH/POP)SGR
+    sgr_codes: dict[str, bytes]
+    xterm_save_dec: dict[int, Literal[b"l", b"h"]]
+    xterm_save_sgr: list[dict[str, bytes]]
 
     def __init__(self) -> None:
         self.reset()
@@ -202,24 +210,23 @@ class TerminalModeTracker:
 
     def reset(self) -> None:
         """Returns all tracked state to the explicit baseline (as RIS does)."""
-        self.sgr_codes = dict(_RESET_SGR_CODES)
         self.ansi_modes = dict(_RESET_ANSI_MODES)
         self.dec_modes = dict(_RESET_DEC_MODES)
+        self.dec_save_dec = {}
+        self.dec_save_other = {}
+        self.dec_save_sgr = {}
+        self.kitty_key_flags = ([0], [0])
         self.other_modes = dict(_RESET_OTHER_MODES)
-        self._dec_save_dec = {}
-        self._dec_save_other = {}
-        self._dec_save_sgr = {}
-        self._xterm_save_dec = {}
-        self._xterm_save_sgr = []
+        self.sgr_codes = dict(_RESET_SGR_CODES)
+        self.xterm_save_dec = {}
+        self.xterm_save_sgr = []
 
-        self._set_dec_mode(1048, b"h")  # put reset state in ._dec_save_*
+        self._set_dec_mode(1048, b"h")  # put reset state in .dec_save_*
 
     def add_chunk(self, chunk: bytes | str) -> None:
         """Incorporates a chunk (from TerminalChunker) into saved state."""
 
-        if not (
-            isinstance(chunk, bytes) and (rxm := _CODE_RX.fullmatch(chunk))
-        ):
+        if not (rxm := isinstance(chunk, bytes) and _CODE_RX.fullmatch(chunk)):
             return
 
         code = rxm.lastgroup
@@ -271,6 +278,23 @@ class TerminalModeTracker:
                 else:
                     self.other_modes.pop(other_mode, None)
             self._set_dec_mode(1048, b"h")  # DECSTR clears DECSC state too
+        elif code == "kittypop":
+            active_stack = self.kitty_key_flags[self.dec_modes.get(47) == b"h"]
+            if count := int(body or 1):
+                active_stack[:] = active_stack[:-count] or [0]
+        elif code == "kittypush":
+            active_stack = self.kitty_key_flags[self.dec_modes.get(47) == b"h"]
+            active_stack.append(int(body or 0))
+        elif code == "kittyset":
+            kitty_params = (*body.split(b";"), b"")
+            flags, op = int(kitty_params[0] or 0), int(kitty_params[1] or 1)
+            active_stack = self.kitty_key_flags[self.dec_modes.get(47) == b"h"]
+            if op == 1:  # set all flags
+                active_stack[-1] = flags
+            elif op == 2:  # set given bits
+                active_stack[-1] |= flags
+            elif op == 3:  # clear given bits
+                active_stack[-1] &= ~flags
         elif code == "sgr":
             sgr_pos = 0
             while sgr_pos < len(body):
@@ -290,11 +314,23 @@ class TerminalModeTracker:
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
                 self.ansi_modes.pop(mode, None)  # reorder to latest
                 self.ansi_modes[mode] = ansi_value
+        elif code == "xtmodkeys":
+            xtm_params = [int(p) for p in body.split(b";") if p.isdigit()]
+            if not xtm_params:  # CSI > m resets all key modifier options
+                ks = [k for k in self.other_modes if k.startswith("xtmodkeys")]
+                for key in ks:
+                    self.other_modes.pop(key)
+            elif len(xtm_params) == 1:  # CSI > Pp m resets one option
+                self.other_modes.pop(f"xtmodkeys{xtm_params[0]}", None)
+            else:
+                key = f"xtmodkeys{xtm_params[0]}"
+                self.other_modes.pop(key, None)  # reorder to latest
+                self.other_modes[key] = b"\x1b[>%d;%dm" % tuple(xtm_params[:2])
         elif code == "xtpopsgr":
-            if self._xterm_save_sgr:
-                self.sgr_codes = self._xterm_save_sgr.pop()
+            if self.xterm_save_sgr:
+                self.sgr_codes = self.xterm_save_sgr.pop()
         elif code == "xtpushsgr":
-            self._xterm_save_sgr.append({**self.sgr_codes})
+            self.xterm_save_sgr.append({**self.sgr_codes})
         elif code in ("xtrestore", "xtsave"):
             aliases: list[int] = []
             for mode in (int(m) for m in body.split(b";") if m.isdigit()):
@@ -302,15 +338,15 @@ class TerminalModeTracker:
                 aliases.extend(a for a in mode_aliases if isinstance(a, int))
             if code == "xtsave":
                 for alias in aliases:
-                    self._xterm_save_dec.pop(alias, None)
+                    self.xterm_save_dec.pop(alias, None)
                     if current_value := self.dec_modes.get(alias):
-                        self._xterm_save_dec[alias] = current_value
+                        self.xterm_save_dec[alias] = current_value
             else:
                 for alias in aliases:
                     self.dec_modes.pop(alias, None)
-                    sv = self._xterm_save_dec.get(alias)
-                    if value := sv or _RESET_DEC_MODES.get(alias):
-                        self._set_dec_mode(alias, value)
+                    sv = self.xterm_save_dec.get(alias)
+                    if restore_value := (sv or _RESET_DEC_MODES.get(alias)):
+                        self._set_dec_mode(alias, restore_value)
         else:
             assert False, code  # unknown named group?
 
@@ -333,29 +369,53 @@ class TerminalModeTracker:
             base_store = getattr(base, attr) if base else {}
             run_value = None  # reset per store; the two never merge
             for mode in {**store, **base_store}:  # union of keys
-                value, base_value = store.get(mode, b"l"), base_store.get(mode)
-                if value == base_value:
-                    pass
-                elif value == run_value:  # extend the run we just emitted
-                    out[-1] = b"%s;%d%s" % (out[-1][:-1], mode, value)
-                else:
-                    out.append(b"%s%d%s" % (prefix, mode, value))
-                    run_value = value
+                if (value := store.get(mode, b"l")) != base_store.get(mode):
+                    if value == run_value:  # extend the run we just emitted
+                        out[-1] = b"%s;%d%s" % (out[-1][:-1], mode, value)
+                    else:
+                        out.append(b"%s%d%s" % (prefix, mode, value))
+                        run_value = value
 
         for mode, value in self.other_modes.items():
             if not (base and value == base.other_modes.get(mode)):
                 out.append(value)
 
-        # restore G2/G3 to ASCII only if it had been modified
+        # revert non-baseline other state (G2/G3, XTMODKEYS) only if modified
         if base:
-            for mode, revert in _REVERT_OTHER_MODES.items():
-                if mode in base.other_modes and mode not in self.other_modes:
-                    out.append(revert)
+            for mode in base.other_modes:
+                if mode not in self.other_modes:
+                    if revert := _REVERT_OTHER_MODES.get(mode):
+                        out.append(revert)
+                    elif mode.startswith("xtmodkeys"):
+                        out.append(b"\x1b[>%dm" % int(mode[len("xtmodkeys") :]))
+
+        # kitty keyboard flags: visit both windows, update stack as needed
+        # (use self.dec_modes because DEC modes were updated above)
+        mode_alt = now_alt = self.dec_modes.get(47) == b"h"
+        for stack_alt in (False, True):
+            stack = self.kitty_key_flags[stack_alt]
+            base_stack = base.kitty_key_flags[stack_alt] if base else [0]
+            if stack != base_stack:
+                if now_alt != stack_alt:  # switch to window to edit stack
+                    out.append(b"\x1b[?47%c" % b"lh"[now_alt := stack_alt])
+                if stack[:-1] == base_stack[:-1]:  # tweak the top item
+                    out.append(b"\x1b[=%du" % stack[-1])
+                else:  # just rebuild the whole stack
+                    if len(base_stack) > 1:
+                        out.append(b"\x1b[<%du" % (len(base_stack) - 1))
+                    if stack[0] != base_stack[0]:
+                        out.append(b"\x1b[=%du" % stack[0])
+                    for value in stack[1:]:
+                        out.append(b"\x1b[>%du" % value)
+
+        if now_alt != mode_alt:  # restore window state if needed
+            out.append(b"\x1b[?47%c" % b"lh"[mode_alt])
 
         return out
 
     def _set_dec_mode(self, mode: int, value: Literal[b"l", b"h"]) -> None:
         """Records a DEC mode value with aliasing, onehot, etc."""
+
         for alias in _DEC_MODE_ALIASES.get(mode, [mode]):
             if isinstance(alias, int):
                 for onehot_set in _ONEHOT_DEC_MODE_SETS:
@@ -364,22 +424,22 @@ class TerminalModeTracker:
                 self.dec_modes.pop(alias, None)  # reorder to latest
                 self.dec_modes[alias] = value
             elif (alias, value) == ("decsave", b"h"):
-                self._dec_save_sgr = {**self.sgr_codes}
-                self._dec_save_dec = {
+                self.dec_save_sgr = {**self.sgr_codes}
+                self.dec_save_dec = {
                     dm: self.dec_modes[dm] for dm in _DECSC_DEC_MODES
                 }
-                self._dec_save_other = {
+                self.dec_save_other = {
                     om: ov
                     for om in _DECSC_OTHER_MODES
                     if (ov := self.other_modes.get(om))
                 }
             elif (alias, value) == ("decsave", b"l"):
-                self.sgr_codes = {**self._dec_save_sgr}
+                self.sgr_codes = {**self.dec_save_sgr}
                 for dm in _DECSC_DEC_MODES:
                     self.dec_modes.pop(dm, None)  # reorder to latest
-                self.dec_modes.update(self._dec_save_dec)
+                self.dec_modes.update(self.dec_save_dec)
                 for om in _DECSC_OTHER_MODES:
                     self.other_modes.pop(om, None)  # clear / reorder to latest
-                self.other_modes.update(self._dec_save_other)
+                self.other_modes.update(self.dec_save_other)
             else:
                 assert False, (mode, alias, value)

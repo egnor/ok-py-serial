@@ -36,9 +36,9 @@ def test_baseline_state():
     assert tracker.dec_modes == RESET.dec_modes
     assert tracker.ansi_modes == RESET.ansi_modes
     assert tracker.other_modes == RESET.other_modes
-    assert tracker._dec_save_sgr == RESET.sgr_codes
-    assert tracker._xterm_save_sgr == []
-    assert tracker._xterm_save_dec == {}
+    assert tracker.dec_save_sgr == RESET.sgr_codes
+    assert tracker.xterm_save_sgr == []
+    assert tracker.xterm_save_dec == {}
 
 
 def test_single_attribute_kept():
@@ -297,7 +297,7 @@ def test_xtrestore_renormalizes_mouse_family():
 
 def test_xtsave_and_xtrestore_dec_modes():
     # save the current value, change it, then restore the saved one
-    assert track(b"\x1b[?6h", b"\x1b[?6s")._xterm_save_dec == {6: b"h"}
+    assert track(b"\x1b[?6h", b"\x1b[?6s").xterm_save_dec == {6: b"h"}
     expect = {**RESET.dec_modes, 6: b"h"}
     assert dec(b"\x1b[?6h", b"\x1b[?6s", b"\x1b[?6l", b"\x1b[?6r") == expect
     # restoring a mode that was never saved falls back to the baseline
@@ -440,6 +440,71 @@ def test_xterm_pointer_mode():
     expect = {**RESET.other_modes, "xtsmpointer": b"\x1b[>2p"}
     assert other(b"\x1b[>2p", b"\x1b[!p") == expect
     assert other(b"\x1b[>2p", b"\x1bc") == RESET.other_modes
+
+
+def test_xtmodkeys():
+    # XTMODKEYS (CSI > Pp;Pv m) tracks each modify-key resource separately
+    expect = {**RESET.other_modes, "xtmodkeys4": b"\x1b[>4;2m"}
+    assert other(b"\x1b[>4;2m") == expect  # modifyOtherKeys=2 (claude, nvim)
+    assert other(b"\x1b[>4;1m", b"\x1b[>4;2m") == expect  # superceded
+    expect = {**expect, "xtmodkeys0": b"\x1b[>0;1m"}
+    assert other(b"\x1b[>4;2m", b"\x1b[>0;1m") == expect  # independent slots
+    # CSI > Pp m reverts one resource; CSI > m reverts them all
+    assert other(b"\x1b[>4;2m", b"\x1b[>4m") == RESET.other_modes
+    assert other(b"\x1b[>4;2m", b"\x1b[>0;1m", b"\x1b[>m") == RESET.other_modes
+    # cleared by RIS
+    assert other(b"\x1b[>4;2m", b"\x1bc") == RESET.other_modes
+
+
+def test_xtmodkeys_does_not_pollute_sgr():
+    # regression: CSI > 4;2 m used to be misparsed as SGR (and assert-fail)
+    tracker = track(b"\x1b[>4;2m")
+    assert tracker.sgr_codes == RESET.sgr_codes
+
+
+def test_unknown_csi_m_sequences_ignored():
+    # private-parameter or otherwise non-SGR CSI ... m codes are skipped
+    tracker = track(b"\x1b[?4m", b"\x1b[<35;1;2m")
+    assert tracker.sgr_codes == RESET.sgr_codes
+    assert tracker.other_modes == RESET.other_modes
+
+
+def test_kitty_keyboard_stack():
+    # CSI > flags u pushes, CSI < count u pops (count defaults to 1)
+    push_1, push_5 = b"\x1b[>1u", b"\x1b[>5u"
+    pop_1, pop_2 = b"\x1b[<u", b"\x1b[<2u"
+    assert track(push_1).kitty_key_flags == ([0, 1], [0])
+    assert track(push_1, push_5).kitty_key_flags == ([0, 1, 5], [0])
+    assert track(push_1, pop_1).kitty_key_flags == ([0], [0])
+    assert track(push_1, push_5, pop_2).kitty_key_flags == ([0], [0])
+    # over-popping empties the stack and zeroes the flags
+    assert track(b"\x1b[=3;1u", b"\x1b[<42u").kitty_key_flags == ([0], [0])
+    # cleared by RIS
+    assert track(push_1, b"\x1bc").kitty_key_flags == ([0], [0])
+
+
+def test_kitty_keyboard_set_flags():
+    # CSI = flags;mode u modifies the current entry: set / or-in / clear bits
+    assert track(b"\x1b[=5;1u").kitty_key_flags == ([5], [0])
+    assert track(b"\x1b[=5;1u", b"\x1b[=2;2u").kitty_key_flags == ([7], [0])
+    assert track(b"\x1b[=5;1u", b"\x1b[=4;3u").kitty_key_flags == ([1], [0])
+    assert track(b"\x1b[>1u", b"\x1b[=8;2u").kitty_key_flags == ([0, 9], [0])
+
+
+def test_kitty_keyboard_pop_zero_is_noop():
+    # CSI < 0 u pops nothing (only a missing count defaults to 1)
+    assert track(b"\x1b[>1u", b"\x1b[<0u").kitty_key_flags == ([0, 1], [0])
+
+
+def test_kitty_keyboard_stacks_per_screen():
+    # kitty keeps separate stacks for the main and alternate screens;
+    # operations apply to whichever screen is active (nvim: 1049 then push)
+    assert track(b"\x1b[?1049h", b"\x1b[>1u").kitty_key_flags == ([0], [0, 1])
+    assert track(b"\x1b[?47h", b"\x1b[=5;1u").kitty_key_flags == ([0], [5])
+    # returning to the main screen switches back to the main stack
+    escapes = [b"\x1b[>3u", b"\x1b[?1049h", b"\x1b[>1u", b"\x1b[?1049l"]
+    assert track(*escapes).kitty_key_flags == ([0, 3], [0, 1])
+    assert track(*escapes, b"\x1b[<u").kitty_key_flags == ([0], [0, 1])
 
 
 #
@@ -601,6 +666,63 @@ def test_diff_undoes_base_only_charset_designations():
     base = track(b"\x1b*0", b"\x1b+0")  # G2/G3 = DEC special graphics
     expect = [b"\x1b*B", b"\x1b+B"]
     assert TerminalModeTracker().mode_chunks(base=base) == expect
+
+
+def test_diff_undoes_base_only_xtmodkeys():
+    # each modified modify-key resource is reverted to its terminal default
+    base = track(b"\x1b[>4;2m", b"\x1b[>0;1m")
+    expect = [b"\x1b[>4m", b"\x1b[>0m"]
+    assert TerminalModeTracker().mode_chunks(base=base) == expect
+    # ...and replayed when only the target has it
+    target = track(b"\x1b[>4;2m")
+    assert target.mode_chunks(base=TerminalModeTracker()) == [b"\x1b[>4;2m"]
+
+
+def test_diff_pops_base_only_kitty_flags():
+    # pushed entries are popped in one go
+    base = track(b"\x1b[>1u", b"\x1b[>5u")
+    assert TerminalModeTracker().mode_chunks(base=base) == [b"\x1b[<2u"]
+    # flags set on the terminal's own entry are zeroed with CSI = 0;1 u
+    base = track(b"\x1b[=3;1u")
+    assert TerminalModeTracker().mode_chunks(base=base) == [b"\x1b[=0u"]
+    # ...after popping down to that entry first
+    base = track(b"\x1b[=3;1u", b"\x1b[>1u")
+    expect = [b"\x1b[<1u", b"\x1b[=0u"]
+    assert TerminalModeTracker().mode_chunks(base=base) == expect
+
+
+def test_diff_replays_kitty_flags():
+    target = track(b"\x1b[>1u", b"\x1b[>5u")
+    expect = [b"\x1b[>1u", b"\x1b[>5u"]
+    assert target.mode_chunks(base=TerminalModeTracker()) == expect
+    # stack is rebuilt from the base
+    base = track(b"\x1b[>1u")
+    expect = [b"\x1b[<1u", b"\x1b[>1u", b"\x1b[>5u"]
+    assert target.mode_chunks(base=base) == expect
+
+
+def test_diff_pops_kitty_flags_on_alt_screen():
+    # an app killed while on the alt screen leaves flags on the alt stack;
+    # the diff must revisit that screen to pop them (the post-kill-nvim bug)
+    base = track(b"\x1b[?1049h", b"\x1b[>1u")
+    assert TerminalModeTracker().mode_chunks(base=base) == [
+        b"\x1b[?47l",  # dec-mode revert leaves the alt screen
+        b"\x1b[?47h",  # ...so revisit the alt screen
+        b"\x1b[<1u",  # pop the pushed entry there
+        b"\x1b[?47l",  # and return to the main screen
+    ]
+
+
+def test_diff_visits_both_screens_for_kitty_flags():
+    # flags on both stacks, target active on alt: fix main, end back on alt
+    base = track(b"\x1b[>1u", b"\x1b[?47h", b"\x1b[>5u")
+    target = track(b"\x1b[?47h")
+    assert target.mode_chunks(base=base) == [
+        b"\x1b[?47l",  # visit the main screen
+        b"\x1b[<1u",  # pop its pushed entry
+        b"\x1b[?47h",  # visit the alt screen (also the target's mode)
+        b"\x1b[<1u",  # pop its pushed entry
+    ]
 
 
 def test_diff_combined_stores():
