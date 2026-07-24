@@ -80,9 +80,10 @@ class TerminalDecorator:
             if isinstance(chunk, bytes) and (m := CURSOR_REPLY_RX.match(chunk)):
                 if self._query_passthru:
                     del self._query_passthru[:1]
-                elif self._base_col == "querying":
-                    self._base_col = int(m.group(2))
+                elif self.pending_query_time is not None:
                     self.pending_query_time = None
+                    if self._base_col == "querying":
+                        self._base_col = int(m.group(2))
                     continue  # we issued the query; consume the result
             self.out_from_terminal.append(chunk)
         self.add_from_terminal.clear()
@@ -181,9 +182,8 @@ class TerminalDecorator:
                 self._now_below.append(next_line[:])
             self._emit(b"\x1b[%dA" % len(self.set_below))  # ends at base row
 
-        # for aesthetics, leave the cursor at base pos, if possible
         if self._can_move_cursor_to_base():
-            self._move_cursor_to_base()
+            self._move_cursor_to_base()  # leave the cursor there if possible
 
     def reset(self) -> None:
         """Adds cleanup to .out_to_terminal (*without* an update cycle):

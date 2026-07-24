@@ -136,10 +136,10 @@ class SerialConnection(contextlib.AbstractContextManager):
                 log.debug("Opened %s %s", port, self.opts)
             except OSError as ex:
                 if ex.errno == errno.EBUSY:
-                    msg = "Serial port busy (EBUSY)"
+                    msg = "Port busy (EBUSY)"
                     raise _exceptions.SerialOpenBusy(msg, port) from ex
                 else:
-                    msg = "Serial port open error"
+                    msg = "Port open error"
                     raise _exceptions.SerialOpenException(msg, port) from ex
 
             if hasattr(pyserial, "fileno"):

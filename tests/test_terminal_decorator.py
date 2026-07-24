@@ -75,7 +75,7 @@ def test_below_decoration_inserts_and_truncates():
     deco = TerminalDecorator()
     deco.set_below = [["aaa"], ["bbb"]]
     assert to_term(deco) == [
-        WRAP_OFF,
+        WRAP_OFF,  # decoration mode
         b"\r",
         b"\n",
         "aaa",

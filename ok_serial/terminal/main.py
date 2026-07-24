@@ -6,6 +6,8 @@ import dataclasses
 import logging
 import os
 import re
+import select
+import signal
 import sys
 import termios
 import time
@@ -14,7 +16,7 @@ import typing
 from ok_serial.terminal.chunker import TerminalChunker, chunk_to_bytes
 from ok_serial.terminal.decorator import TerminalDecorator
 from ok_serial.terminal.keyboard import chunk_to_key_event
-from ok_serial._timeout_math import from_deadline
+from ok_serial._timeout_math import from_deadline, to_deadline
 
 
 @dataclasses.dataclass(frozen=True)
@@ -38,13 +40,23 @@ async def run_terminal_async(opts: SerialTerminalOptions):
 _NONPRINT_RX = re.compile("[\x00-\x1f]")  # unprintable characters to escape
 
 
+class _SystemExitMessage(SystemExit):
+    def __init__(self, code: int, message: str):
+        super().__init__(code)
+        self.message = message
+
+    def __repr__(self) -> str:
+        return f"SystemExitMessage({self.message!r}, {self.code!r})"
+
+
 class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
+        sys.stdout.flush()  # all output goes through _write_stdout from here
         async with contextlib.AsyncExitStack() as cleanup:
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
             self._decorator: TerminalDecorator | None = None
-            self._stop_requested = False
+            self._unix_signal_received: signal.Signals | None = None
 
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
@@ -68,17 +80,24 @@ class _TerminalSession:
                 self._decorator.add_above.append(intro_chunks)
 
                 if os.stat(1) == os.stat(2):
-                    patch_args = (sys.stderr, "write", self._tsafe_decor_stderr)
+                    patch_args = (sys.stderr, "write", self._stderr_write)
                     patch_context = _monkeypatch_context(*patch_args)
                     cleanup.enter_context(patch_context)  # before raw mode!
 
+                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                    cb = self._on_unix_signal
+                    sig_context = _unix_signal_handler_context(sig, cb)
+                    cleanup.enter_context(sig_context)
+
                 cleanup.enter_context(_raw_tty_context(0))
                 cleanup.enter_context(_raw_tty_context(1))
-                cleanup.callback(self._shutdown_decorator)
 
             task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
             task_group.create_task(self._read_from_stdin())
             task_group.create_task(self._run_serial_monitor(opts))
+
+            if self._decorator:  # clean up decorator while stdin reader
+                cleanup.push_async_exit(self._async_decorator_exit)
 
             while True:
                 await self._main_loop()
@@ -92,37 +111,32 @@ class _TerminalSession:
 
         await asyncio.sleep(0)  # let logs updates, etc. happen
         self._new_data_event.clear()
+        if unix := self._unix_signal_received:
+            raise _SystemExitMessage(1, f"{unix.name} received")
 
         # use Fancy Terminal if available, else relay raw data directly
         if self._decorator:
             self._update_decorator_terminal()
         else:
-            if self._serial and self._stdin_chunks:
-                chunks, self._stdin_chunks = self._stdin_chunks, []
-                stdin_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
-                self._serial.write(stdin_bytes)
-            if self._serial_chunks:
-                chunks, self._serial_chunks = self._serial_chunks, []
-                serial_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
-                sys.stdout.buffer.write(serial_bytes)
-                sys.stdout.flush()
+            self._update_plain_terminal()
+
+    def _update_plain_terminal(self) -> None:
+        if self._serial and self._stdin_chunks:
+            chunks, self._stdin_chunks = self._stdin_chunks, []
+            stdin_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
+            self._serial.write(stdin_bytes)
+        if self._serial_chunks:
+            chunks, self._serial_chunks = self._serial_chunks, []
+            serial_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
+            _write_stdout(serial_bytes)
 
     def _update_decorator_terminal(self) -> None:
-        # use the decorator for "fancy" terminal output
-        assert self._decorator
+        assert self._decorator  # use the decorator for "fancy" terminal output
         decor = self._decorator
         timestamp = time.monotonic()
 
         stdin_chunks, self._stdin_chunks = self._stdin_chunks, []
         decor.add_from_terminal.extend(stdin_chunks)
-
-        # at exit, wait a bit for query replies to avoid hitting the shell
-        if self._stop_requested:
-            decor.update(timestamp)
-            if (qtime := decor.pending_query_time) and timestamp < qtime + 0.5:
-                return  # keep waiting for reply, do no other processing
-            else:
-                raise SystemExit(0)
 
         line: list[bytes | str]
         if self._serial is not self._last_serial:
@@ -132,8 +146,8 @@ class _TerminalSession:
                     self._last_serial.port_name,
                     b"\x1b[K",
                 ]
-                decor.add_above.append(line)
                 decor.reset()
+                decor.add_above.append(line)
             if self._serial:
                 line = [
                     *(b"\x1b[1;30;42m", "▶ Connected", b"\x1b[22m", " ┊ "),
@@ -145,7 +159,7 @@ class _TerminalSession:
                 decor.add_above.append(line)
             self._last_serial = self._serial
 
-        def sig_tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
+        def ser_tag(fg: int, bg: int, name: str, v: bool) -> list[bytes | str]:
             name = name.upper() if v else name.lower()
             fg, bg, bold, style = (fg, bg, 1, 29) if v else (37, 40, 2, 9)
             return [
@@ -156,17 +170,17 @@ class _TerminalSession:
             ]
 
         if self._serial_signals and self._serial_signals != self._last_signals:
-            sig = self._last_signals = self._serial_signals
+            self._last_signals = self._serial_signals
             line = [
                 *(b"\x1b[30;47m", "▸ out "),
-                *sig_tag(30, 46, "dtr", sig.dtr),
-                *sig_tag(30, 46, "rts", sig.rts),
-                *sig_tag(30, 46, "break", sig.sending_break),
+                *ser_tag(30, 46, "dtr", self._serial_signals.dtr),
+                *ser_tag(30, 46, "rts", self._serial_signals.rts),
+                *ser_tag(30, 46, "break", self._serial_signals.sending_break),
                 " ┊ in ",
-                *sig_tag(37, 44, "dsr", sig.dsr),
-                *sig_tag(37, 44, "cts", sig.cts),
-                *sig_tag(37, 44, "ri", sig.ri),
-                *sig_tag(37, 44, "cd", sig.cd),
+                *ser_tag(37, 44, "dsr", self._serial_signals.dsr),
+                *ser_tag(37, 44, "cts", self._serial_signals.cts),
+                *ser_tag(37, 44, "ri", self._serial_signals.ri),
+                *ser_tag(37, 44, "cd", self._serial_signals.cd),
                 b"\x1b[K",
             ]
             decor.add_above.append(line)
@@ -182,32 +196,45 @@ class _TerminalSession:
             if key_text == "\x1d":  # ctrl-]
                 pass  # TODO: menu
             elif key_text == "\x1c":  # ctrl-\
-                decor.reset()
-                line = [b"\x1b[1;37;41m", "▶ Quit (ctrl-\\ pressed)", b"\x1b[K"]
-                decor.add_above.append(line)
-                decor.add_base.clear()
-                decor.set_right.clear()
-                decor.set_below.clear()
-                self._stop_requested = True
+                raise _SystemExitMessage(0, "ctrl-\\ pressed")
             elif self._serial:
                 self._serial.write(chunk_to_bytes(chunk))
 
         decor.update(timestamp)  # pick up output from input
         to_term, decor.out_to_terminal = decor.out_to_terminal, []
-        sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in to_term))
-        sys.stdout.flush()
+        _write_stdout(b"".join(chunk_to_bytes(c) for c in to_term))
 
-    def _shutdown_decorator(self) -> None:
+    async def _async_decorator_exit(self, exc_type, exc, tb) -> None:
         assert self._decorator
-        self._decorator.reset()
-        chunks = self._decorator.out_to_terminal
+        self._decorator.reset()  # back to main screen, add blank line, etc.
+
+        if isinstance(exc, _SystemExitMessage):
+            line: list[bytes | str] = [
+                b"\x1b[1;37;41m",
+                f"▶ Quit ({exc.message})",
+                b"\x1b[K",
+            ]
+            self._decorator.add_above.append(line)
+            self._decorator.update(time.monotonic())
+            self._decorator.reset()
+
         try:
-            sys.stdout.buffer.write(b"".join(chunk_to_bytes(c) for c in chunks))
-            sys.stdout.flush()
+            chunks = self._decorator.out_to_terminal
+            _write_stdout(b"".join(chunk_to_bytes(c) for c in chunks))
         except OSError:
             pass  # ignore output write errors in shutdown
 
-    def _tsafe_decor_stderr(self, data: str) -> None:
+        # wait a bit and conusme query replies to stop them hitting the shell
+        deadline = to_deadline(0.25)
+        while self._decorator.pending_query_time:
+            async with asyncio.timeout(from_deadline(deadline)):
+                await self._new_data_event.wait()
+            self._new_data_event.clear()
+            self._decorator.add_from_terminal.extend(self._stdin_chunks)
+            self._decorator.update(time.monotonic())
+            self._stdin_chunks = []
+
+    def _stderr_write(self, data: str) -> None:
         def esc_char(m: re.Match[str]) -> str:
             return m.group().encode("unicode_escape").decode("ascii")
 
@@ -283,19 +310,52 @@ class _TerminalSession:
                 self._new_data_event.set()
                 chunker.chunks.clear()
 
+    def _on_unix_signal(self, sig: signal.Signals) -> None:
+        if not self._unix_signal_received:
+            self._unix_signal_received = sig
+            self._new_data_event.set()
+
+
+def _write_stdout(data: bytes) -> None:
+    # asyncio sets O_NONBLOCK on stdin, whose open file description is
+    # usually shared with stdout, so buffered writes can fail with EAGAIN;
+    # write the fd directly, waiting for writability as needed
+    view = memoryview(data)
+    while view:
+        try:
+            view = view[os.write(1, view) :]
+        except BlockingIOError:
+            select.select([], [1], [])
+
 
 @contextlib.asynccontextmanager
 async def _async_reader_context(
     stream: typing.IO,
 ) -> typing.AsyncIterator[asyncio.StreamReader]:
+    # connect_read_pipe takes ownership of the file object and closes it with
+    # the transport, so give it a dup rather than (say) sys.stdin itself
+    fd = stream.fileno()
+    was_blocking = os.get_blocking(fd)
+    dup_stream = os.fdopen(os.dup(fd), "rb", buffering=0)
+
     reader = asyncio.StreamReader()
     loop = asyncio.get_running_loop()
     protocol = asyncio.StreamReaderProtocol(reader)
-    transport, _ = await loop.connect_read_pipe(lambda: protocol, stream)
+    try:
+        transport, _ = await loop.connect_read_pipe(
+            lambda: protocol, dup_stream
+        )
+    except BaseException:
+        dup_stream.close()
+        raise
+
     try:
         yield reader
     finally:
         transport.close()
+        # asyncio set O_NONBLOCK on the open file description, which the dup
+        # (and often stdout/stderr) shares with `stream`; undo that here
+        os.set_blocking(fd, was_blocking)
 
 
 @contextlib.contextmanager
@@ -320,6 +380,18 @@ def _raw_tty_context(fd: typing.Literal[0, 1, 2]) -> typing.Iterator[bool]:
     finally:
         logging.debug("Restoring tty fd=%d to original mode", fd)
         termios.tcsetattr(fd, termios.TCSADRAIN, old_attr)
+
+
+@contextlib.contextmanager
+def _unix_signal_handler_context(
+    sig: signal.Signals, handler: typing.Callable[[signal.Signals], None]
+) -> typing.Iterator[None]:
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(sig, lambda: handler(sig))
+    try:
+        yield
+    finally:
+        loop.remove_signal_handler(sig)
 
 
 @contextlib.contextmanager
