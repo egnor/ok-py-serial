@@ -126,23 +126,23 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
             with self._lock:
                 # Return an existing live connection if possible
                 if self._conn:
+                    limit = self.mopts.reconnect_limit
                     try:
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except SerialIoException as ex:
-                        if self.mopts.reconnect_limit == 0:
+                        self._reconnect_count += 1
+                        if limit == 0:
                             msg = f"{ex} (reconnect disabled)"
                             raise SerialMonitorExhausted(msg) from ex
+                        if limit and (n := self._reconnect_count) > limit:
+                            msg = f"{ex} (reconnect {n}/{limit})"
+                            raise SerialMonitorExhausted(msg) from ex
                         log_level = 20 if isinstance(ex, SerialIoClosed) else 30
-                        log.log(log_level, "⛓️‍💥 %s", ex)
+                        log.log(log_level, "⛓️‍💥 %s (reconnecting)", ex)
 
                     self._conn.close()
                     self._conn = None
-                    self._reconnect_count += 1
-                    limit = self.mopts.reconnect_limit
-                    if limit is not None and self._reconnect_count > limit:
-                        msg = f"{self.match!r} reconnect limit met ({limit})"
-                        raise SerialMonitorExhausted(msg)
 
                 if self._scan_deadline is None:
                     scan_timeout = self.mopts.scan_timeout

@@ -190,7 +190,8 @@ class TerminalDecorator:
         - resets terminal mode to default state
         - moves to a new line if we're not positioned at start of line
         - clears the screen below the cursor
-        - keeps mode tracking in sync to allow restart
+        - (for restart) updates mode tracking
+        - (for restart) clears right & below decorations
         """
 
         self._base_mode = TerminalModeTracker()  # reset to default state
@@ -200,6 +201,8 @@ class TerminalDecorator:
             self._cursor_pos, self._base_col = "base", 1  # in case of restart
             self._emit(b"\r", b"\n")  # newline to move past the base line
         self._emit(b"\x1b[J")  # clear from cursor to end of display
+        self.set_right.clear()
+        self.set_below.clear()
 
     def _can_move_cursor_to_base(self) -> bool:
         return self._cursor_pos == "base" or isinstance(self._base_col, int)
