@@ -34,6 +34,7 @@ dev = [
 ]
 
 [tool.mypy]
+check_untyped_defs = true
 exclude_gitignore = true
 files = "."
 

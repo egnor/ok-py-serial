@@ -4,6 +4,10 @@ from ok_serial.terminal.keyboard import (
 )
 
 
+def key_text(chunk: bytes | str) -> str | None:
+    return k.text if (k := key(chunk)) else None
+
+
 def test_plain_control_bytes():
     assert key(b"\x1c") == TerminalKeyEvent(ord("\\"), text="\x1c", ctrl=True)
     assert key(b"\x1d") == TerminalKeyEvent(ord("]"), text="\x1d", ctrl=True)
@@ -14,15 +18,15 @@ def test_kitty_key_reports():
     # kitty keyboard protocol: CSI unicode-key;mods u, ctrl = bit 4 in mods-1
     expect = TerminalKeyEvent(ord("\\"), text="\x1c", ctrl=True)
     assert key(b"\x1b[92;5u") == expect
-    assert key(b"\x1b[93;5u").text == "\x1d"  # ctrl-]
-    assert key(b"\x1b[99;5u").text == "\x03"  # ctrl-c
-    assert key(b"\x9b92;5u").text == "\x1c"  # 8-bit CSI
+    assert key_text(b"\x1b[93;5u") == "\x1d"  # ctrl-]
+    assert key_text(b"\x1b[99;5u") == "\x03"  # ctrl-c
+    assert key_text(b"\x9b92;5u") == "\x1c"  # 8-bit CSI
 
     # extra modifiers alongside ctrl still count
-    assert key(b"\x1b[92;13u").text == "\x1c"  # ctrl+super
+    assert key_text(b"\x1b[92;13u") == "\x1c"  # ctrl+super
 
     # alternate-key subparameters on the key field are ignored
-    assert key(b"\x1b[92:124;5u").text == "\x1c"
+    assert key_text(b"\x1b[92:124;5u") == "\x1c"
 
     # explicit text-as-codepoints is decoded and takes precedence
     expect = TerminalKeyEvent(ord("a"), text="A", shift=True)
@@ -31,15 +35,15 @@ def test_kitty_key_reports():
 
 def test_kitty_event_types():
     # press (1, or omitted) and repeat (2) count; release (3) does not
-    assert key(b"\x1b[92;5:1u").text == "\x1c"
-    assert key(b"\x1b[92;5:2u").text == "\x1c"
+    assert key_text(b"\x1b[92;5:1u") == "\x1c"
+    assert key_text(b"\x1b[92;5:2u") == "\x1c"
     assert key(b"\x1b[92;5:3u") is None
 
 
 def test_modify_other_keys_reports():
     # xterm modifyOtherKeys: CSI 27;mods;key ~
-    assert key(b"\x1b[27;5;92~").text == "\x1c"
-    assert key(b"\x1b[27;5;93~").text == "\x1d"
+    assert key_text(b"\x1b[27;5;92~") == "\x1c"
+    assert key_text(b"\x1b[27;5;93~") == "\x1d"
 
     # some terminals report the resulting control code instead of the key
     expect = TerminalKeyEvent(ord("\\"), text="\x1c", ctrl=True)

@@ -141,30 +141,30 @@ def test_non_style_escapes_ignored():
 
 def test_dec_save_and_restore():
     # ESC 7 snapshots the style, ESC 8 restores it
-    expect = {**RESET.sgr_codes, "fg": b"31"}
-    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[;31m") == expect
-    expect = {**RESET.sgr_codes, "weight": b"1"}
-    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[;31m", b"\x1b8") == expect
+    expect_sgr = {**RESET.sgr_codes, "fg": b"31"}
+    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[;31m") == expect_sgr
+    expect_sgr = {**RESET.sgr_codes, "weight": b"1"}
+    assert sgr(b"\x1b[1m", b"\x1b7", b"\x1b[;31m", b"\x1b8") == expect_sgr
     # ESC 8 without a prior ESC 7 restores the baseline
     assert sgr(b"\x1b[1m", b"\x1b8") == RESET.sgr_codes
 
     # they also snapshot DECOM, but NOT other DEC modes
     assert dec(b"\x1b[?1;6h", b"\x1b7", b"\x1b[?1;6l") == RESET.dec_modes
-    expect = {**RESET.dec_modes, 6: b"h"}
-    assert dec(b"\x1b[?1;6h", b"\x1b7", b"\x1b[?1;6l", b"\x1b8") == expect
+    expect_dec = {**RESET.dec_modes, 6: b"h"}
+    assert dec(b"\x1b[?1;6h", b"\x1b7", b"\x1b[?1;6l", b"\x1b8") == expect_dec
     assert dec(b"\x1b[?1;6h", b"\x1b8") == {**RESET.dec_modes, 1: b"h"}
 
     # they also snapshot character sets; the no-save reset state is *unset*
-    expect = {**RESET.other_modes, "G2": b"\x1b*B", "G3": b"\x1b+B"}
-    assert other(b"\x1b*B", b"\x1b7", b"\x1b+B") == expect
-    expect = {**RESET.other_modes, "G2": b"\x1b*B"}
-    assert other(b"\x1b*B", b"\x1b7", b"\x1b+B", b"\x1b8") == expect
+    expect_other = {**RESET.other_modes, "G2": b"\x1b*B", "G3": b"\x1b+B"}
+    assert other(b"\x1b*B", b"\x1b7", b"\x1b+B") == expect_other
+    expect_other = {**RESET.other_modes, "G2": b"\x1b*B"}
+    assert other(b"\x1b*B", b"\x1b7", b"\x1b+B", b"\x1b8") == expect_other
     assert other(b"\x1b*B", b"\x1b+B", b"\x1b8") == RESET.other_modes
 
     # and they snapshot DECSCA
     assert other(b'\x1b[1"q', b"\x1b7", b'\x1b[0"q') == RESET.other_modes
-    expect = {**RESET.other_modes, "decsca": b'\x1b[1"q'}
-    assert other(b'\x1b[1"q', b"\x1b7", b'\x1b[0"q', b"\x1b8") == expect
+    expect_other = {**RESET.other_modes, "decsca": b'\x1b[1"q'}
+    assert other(b'\x1b[1"q', b"\x1b7", b'\x1b[0"q', b"\x1b8") == expect_other
     assert other(b'\x1b[1"q', b"\x1b8") == RESET.other_modes
 
 

@@ -1,12 +1,9 @@
-import time
-
 from ok_serial import _timeout_math
 
 
 def test_timeout_to_deadline(mocker):
     TMAX = _timeout_math.TIMEOUT_MAX
-    mocker.patch("time.monotonic")
-    time.monotonic.return_value = 1000.0
+    mocker.patch("time.monotonic", return_value=1000.0)
 
     assert _timeout_math.to_deadline(-1) == 0
     assert _timeout_math.to_deadline(0) == 0
@@ -19,8 +16,7 @@ def test_timeout_to_deadline(mocker):
 
 def test_timeout_from_deadline(mocker):
     TMAX = _timeout_math.TIMEOUT_MAX
-    mocker.patch("time.monotonic")
-    time.monotonic.return_value = 1000.0
+    mocker.patch("time.monotonic", return_value=1000.0)
 
     assert _timeout_math.from_deadline(-1) == 0
     assert _timeout_math.from_deadline(0) == 0

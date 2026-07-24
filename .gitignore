@@ -4,6 +4,9 @@
 __pycache__
 .venv
 
+# pdoc output
+docs/
+
 # Generic, system, text editors
 *~
 \#*\#

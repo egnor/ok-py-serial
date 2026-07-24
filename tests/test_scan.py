@@ -1,13 +1,12 @@
 import json
 import pytest
-from serial.tools import list_ports
 from serial.tools import list_ports_common
 
 import ok_serial
 
 
 def test_scan_ports(mocker):
-    mocker.patch("serial.tools.list_ports.comports")
+    mock_comports = mocker.patch("serial.tools.list_ports.comports")
 
     bare_port = list_ports_common.ListPortInfo("/dev/zz")
 
@@ -22,7 +21,7 @@ def test_scan_ports(mocker):
     full_port.product = "Product"
     full_port.interface = "Interface"
 
-    list_ports.comports.return_value = [bare_port, full_port]
+    mock_comports.return_value = [bare_port, full_port]
 
     assert ok_serial.scan_serial_ports() == [
         ok_serial.SerialPort(

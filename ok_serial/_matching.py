@@ -1,6 +1,6 @@
 import re
 
-from ok_serial._metadata import PortPredicate
+from ok_serial._port import PortPredicate
 
 
 def compile_match(spec: str | PortPredicate | None) -> PortPredicate:

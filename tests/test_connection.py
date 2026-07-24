@@ -201,7 +201,7 @@ def test_multiple_close_is_safe(pty_serial):
 def test_concurrent_reads_and_writes(pty_serial):
     """Test concurrent read and write from multiple threads."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        results = {"read": None, "write": None}
+        results: dict[str, str | bool | None] = {"read": None, "write": None}
         errors = []
 
         def reader():

@@ -220,11 +220,11 @@ def test_exclusive_fails_when_flock_held(fs, mocker):
 #
 
 
-def test_check_returns_none_for_non_polite(fs):
+def test_check_returns_successfully_for_non_polite(fs):
     lock = _lock.PortLock("/dev/test", sharing="exclusive")
-    assert lock.check() is None  # no fd yet
-    lock.fd = 999  # pretend
-    assert lock.check() is None  # exclusive: never returns intrusion
+    lock.check()  # no fd yet
+    lock._fd = 999  # pretend
+    lock.check()  # exclusive: never returns intrusion
 
 
 def test_check_detects_lock_file_appearing(fs, mocker):
