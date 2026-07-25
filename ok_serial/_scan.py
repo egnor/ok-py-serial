@@ -59,7 +59,8 @@ def scan_serial_ports(
                 log.debug("pyserial port: %s", port)
                 found.append(port)
 
-        # Prioritize exact device path match
+        # Include a port the match names by pathname, even if pyserial's scan
+        # didn't find it (eg. a pty, or a symlink to one, as socat makes)
         if exact_port := _port_from_path(match):
             # use pyserial metadata if pyserial also found this port
             if not (found := [p for p in found if p.name == exact_port.name]):

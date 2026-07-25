@@ -3,16 +3,19 @@ import ok_serial
 import asyncio
 import contextlib
 import dataclasses
-import logging
 import os
 import re
-import select
 import signal
 import sys
-import termios
 import time
 import typing
 
+from ok_serial.terminal.async_stdio import (
+    async_reader_context,
+    async_signal_handler_context,
+    async_writer_context,
+    raw_tty_context,
+)
 from ok_serial.terminal.chunker import TerminalChunker, chunk_to_bytes
 from ok_serial.terminal.decorator import TerminalDecorator
 from ok_serial.terminal.keyboard import chunk_to_key_event
@@ -47,6 +50,12 @@ class _TerminalSession:
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
 
+            # entered first, so it outlives everything that writes output
+            stdout_context = async_writer_context(sys.stdout)
+            self._write_stdout = await cleanup.enter_async_context(
+                stdout_context
+            )
+
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
             self._last_serial: ok_serial.SerialConnection | None = None
@@ -80,15 +89,15 @@ class _TerminalSession:
 
                 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                     sigcb = self._decorator_signal_hook
-                    sig_context = _unix_signal_context(sig, sigcb)
+                    sig_context = async_signal_handler_context(sig, sigcb)
                     cleanup.enter_context(sig_context)
 
-                cleanup.enter_context(_raw_tty_context(0))
-                cleanup.enter_context(_raw_tty_context(1))
+                cleanup.enter_context(raw_tty_context(0))
+                cleanup.enter_context(raw_tty_context(1))
 
             task_group = await cleanup.enter_async_context(asyncio.TaskGroup())
-            task_group.create_task(self._read_from_stdin())
-            task_group.create_task(self._run_serial_monitor(opts))
+            task_group.create_task(self._serial_monitor_task(opts))
+            task_group.create_task(self._stdin_reader_task())
 
             if self._decorator:  # clean up decorator with stdin reader running
                 cleanup.push_async_callback(self._async_decorator_cleanup)
@@ -103,29 +112,26 @@ class _TerminalSession:
         except TimeoutError:
             pass
 
-        await asyncio.sleep(0)  # let logs updates, etc. happen
+        await asyncio.sleep(0)  # let logs updates arrive, etc.
         self._new_data_event.clear()
 
-        # use Fancy Terminal if available, else relay raw data directly
         if self._decorator:
-            self._update_decorator_terminal()
+            to_terminal = self._update_decorator_terminal()
         else:
-            self._update_plain_terminal()
+            to_terminal = self._update_plain_terminal()
 
-    def _update_plain_terminal(self) -> None:
+        await self._write_stdout(to_terminal)
+
+    def _update_plain_terminal(self) -> bytes:
         if self._serial and self._stdin_chunks:
             chunks, self._stdin_chunks = self._stdin_chunks, []
             stdin_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
             self._serial.write(stdin_bytes)
-        if self._serial_chunks:
-            chunks, self._serial_chunks = self._serial_chunks, []
-            serial_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
-            _write_stdout(serial_bytes)
-        if sig := self._decorator_killed:
-            logging.critical("%s received, exiting", sig.name)
-            raise SystemExit(255)
+        chunks, self._serial_chunks = self._serial_chunks, []
+        serial_bytes = b"".join(chunk_to_bytes(c) for c in chunks)
+        return serial_bytes
 
-    def _update_decorator_terminal(self) -> None:
+    def _update_decorator_terminal(self) -> bytes:
         assert self._decorator  # use the decorator for "fancy" terminal output
         decor = self._decorator
         timestamp = time.monotonic()
@@ -222,26 +228,29 @@ class _TerminalSession:
 
         decor.update(timestamp)  # pick up output from input
         to_term, decor.out_to_terminal = decor.out_to_terminal, []
-        _write_stdout(b"".join(chunk_to_bytes(c) for c in to_term))
+        return b"".join(chunk_to_bytes(c) for c in to_term)
 
     async def _async_decorator_cleanup(self) -> None:
         assert self._decorator
         self._decorator.reset()  # back to default terminal mode
         try:
             chunks = self._decorator.out_to_terminal
-            _write_stdout(b"".join(chunk_to_bytes(c) for c in chunks))
+            await self._write_stdout(
+                b"".join(chunk_to_bytes(c) for c in chunks)
+            )
         except OSError:
             pass  # ignore output write errors in shutdown
 
-        # wait a bit and conusme query replies to stop them hitting the shell
+        # wait a bit and consume query replies to stop them hitting the shell
         deadline = to_deadline(0.25)
-        while self._decorator.pending_query_time:
-            async with asyncio.timeout(from_deadline(deadline)):
-                await self._new_data_event.wait()
-            self._new_data_event.clear()
-            self._decorator.add_from_terminal.extend(self._stdin_chunks)
-            self._decorator.update(time.monotonic())
-            self._stdin_chunks = []
+        with contextlib.suppress(TimeoutError):  # give up if they don't come
+            while self._decorator.pending_query_time:
+                async with asyncio.timeout(from_deadline(deadline)):
+                    await self._new_data_event.wait()
+                self._new_data_event.clear()
+                self._decorator.add_from_terminal.extend(self._stdin_chunks)
+                self._decorator.update(time.monotonic())
+                self._stdin_chunks = []
 
     def _decorator_stderr_hook(self, data: str) -> None:
         def esc_char(m: re.Match[str]) -> str:
@@ -265,15 +274,18 @@ class _TerminalSession:
             self._decorator_killed = sig
             self._new_data_event.set()
 
-    async def _read_from_stdin(self) -> None:
-        async with _async_reader_context(sys.stdin) as inp:
+    async def _stdin_reader_task(self) -> None:
+        async with async_reader_context(sys.stdin) as read_stdin:
             chunker = TerminalChunker()
-            while True:
+            reading = True
+            while reading:  # exits at end of input (eg. </dev/null)
                 try:
                     timeout = from_deadline(chunker.data_deadline)
                     async with asyncio.timeout(timeout):
-                        if not (data := await inp.read(256)):
-                            raise EOFError("Input closed")
+                        data = await read_stdin(256)
+                        # an empty read means closed, not merely idle, which
+                        # relies on raw_tty_context leaving VMIN=1 for a tty
+                        reading = bool(data)
                         chunker.add_data(data, time.monotonic())
                 except TimeoutError:
                     chunker.add_data(b"", time.monotonic())
@@ -282,7 +294,7 @@ class _TerminalSession:
                     self._new_data_event.set()
                     chunker.chunks.clear()
 
-    async def _run_serial_monitor(self, opts: SerialTerminalOptions) -> None:
+    async def _serial_monitor_task(self, opts: SerialTerminalOptions) -> None:
         with ok_serial.SerialConnectionMonitor(
             opts.match, copts=opts.copts, mopts=opts.mopts
         ) as monitor:
@@ -329,84 +341,6 @@ class _TerminalSession:
                 self._serial_chunks.extend(chunker.chunks)
                 self._new_data_event.set()
                 chunker.chunks.clear()
-
-
-def _write_stdout(data: bytes) -> None:
-    # asyncio sets O_NONBLOCK on stdin, whose open file description is
-    # usually shared with stdout, so buffered writes can fail with EAGAIN;
-    # write the fd directly, waiting for writability as needed
-    view = memoryview(data)
-    while view:
-        try:
-            view = view[os.write(1, view) :]
-        except BlockingIOError:
-            select.select([], [1], [])
-
-
-@contextlib.asynccontextmanager
-async def _async_reader_context(
-    stream: typing.IO,
-) -> typing.AsyncIterator[asyncio.StreamReader]:
-    # connect_read_pipe takes ownership of the file object and closes it with
-    # the transport, so give it a dup rather than (say) sys.stdin itself
-    fd = stream.fileno()
-    was_blocking = os.get_blocking(fd)
-    dup_stream = os.fdopen(os.dup(fd), "rb", buffering=0)
-
-    reader = asyncio.StreamReader()
-    loop = asyncio.get_running_loop()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    try:
-        transport, _ = await loop.connect_read_pipe(
-            lambda: protocol, dup_stream
-        )
-    except BaseException:
-        dup_stream.close()
-        raise
-
-    try:
-        yield reader
-    finally:
-        transport.close()
-        # asyncio set O_NONBLOCK on the open file description, which the dup
-        # (and often stdout/stderr) shares with `stream`; undo that here
-        os.set_blocking(fd, was_blocking)
-
-
-@contextlib.contextmanager
-def _raw_tty_context(fd: typing.Literal[0, 1, 2]) -> typing.Iterator[bool]:
-    try:
-        old_attr = termios.tcgetattr(fd)
-    except termios.error:
-        logging.debug("FD %d is not a terminal, skipping raw mode", fd)
-        yield False  # not a tty
-        return
-
-    if fd == 0:
-        raw_cc = [int(i == termios.VMIN) for i in range(len(old_attr[6]))]
-        raw_attr = [0, old_attr[1], 0, 0, *old_attr[4:6], raw_cc]
-    else:
-        raw_attr = [old_attr[0], 0, *old_attr[2:]]
-
-    logging.debug("Setting tty fd=%d to raw mode", fd)
-    try:
-        termios.tcsetattr(fd, termios.TCSADRAIN, raw_attr)
-        yield True  # is a tty
-    finally:
-        logging.debug("Restoring tty fd=%d to original mode", fd)
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_attr)
-
-
-@contextlib.contextmanager
-def _unix_signal_context(
-    sig: signal.Signals, handler: typing.Callable[[signal.Signals], None]
-) -> typing.Iterator[None]:
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(sig, lambda: handler(sig))
-    try:
-        yield
-    finally:
-        loop.remove_signal_handler(sig)
 
 
 @contextlib.contextmanager
