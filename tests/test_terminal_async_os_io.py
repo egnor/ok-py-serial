@@ -6,10 +6,7 @@ import pytest
 import threading
 import tty
 
-from ok_serial.terminal.async_stdio import (
-    async_reader_context,
-    async_writer_context,
-)
+from ok_serial.terminal.async_os_io import AsyncReader, AsyncWriter
 
 
 @pytest.fixture
@@ -23,16 +20,16 @@ def pty_pair():
 
 async def test_read_from_tty(pty_pair):
     ctrl, sim = pty_pair
-    async with async_reader_context(sim) as read:
-        ctrl.write(b"typed")
-        assert await asyncio.wait_for(read(256), 2) == b"typed"
+    reader = AsyncReader(sim)
+    ctrl.write(b"typed")
+    assert await asyncio.wait_for(reader.read(256), 2) == b"typed"
 
-        # with no data pending, the read waits rather than spinning or failing
-        reading = asyncio.ensure_future(read(256))
-        await asyncio.sleep(0.05)
-        assert not reading.done()
-        ctrl.write(b"more")
-        assert await asyncio.wait_for(reading, 2) == b"more"
+    # with no data pending, the read waits rather than spinning or failing
+    reading = asyncio.ensure_future(reader.read(256))
+    await asyncio.sleep(0.05)
+    assert not reading.done()
+    ctrl.write(b"more")
+    assert await asyncio.wait_for(reading, 2) == b"more"
 
 
 async def test_read_from_unpollable_fds(tmp_path):
@@ -40,13 +37,13 @@ async def test_read_from_unpollable_fds(tmp_path):
     path = tmp_path / "input.txt"
     path.write_bytes(b"file contents")
     with open(path, "rb") as file:
-        async with async_reader_context(file) as read:
-            assert await asyncio.wait_for(read(256), 2) == b"file contents"
-            assert await asyncio.wait_for(read(256), 2) == b""  # end of file
+        reader = AsyncReader(file)
+        assert await asyncio.wait_for(reader.read(256), 2) == b"file contents"
+        assert await asyncio.wait_for(reader.read(256), 2) == b""  # end of file
 
     with open("/dev/null", "rb") as null:
-        async with async_reader_context(null) as read:
-            assert await asyncio.wait_for(read(256), 2) == b""  # end of file
+        reader = AsyncReader(null)
+        assert await asyncio.wait_for(reader.read(256), 2) == b""  # end of file
 
 
 async def test_io_leaves_blocking_mode_alone(pty_pair):
@@ -54,12 +51,11 @@ async def test_io_leaves_blocking_mode_alone(pty_pair):
     # stdout/stderr, so setting it would break unrelated buffered writes
     ctrl, sim = pty_pair
     assert os.get_blocking(sim.fileno())
-    async with async_reader_context(sim) as read:
-        async with async_writer_context(sim) as write:
-            ctrl.write(b"typed")
-            assert await asyncio.wait_for(read(256), 2) == b"typed"
-            await asyncio.wait_for(write(b"output"), 2)
-            assert os.get_blocking(sim.fileno())
+    reader = AsyncReader(sim)
+    writer = AsyncWriter(sim)
+    ctrl.write(b"typed")
+    assert await asyncio.wait_for(reader.read(256), 2) == b"typed"
+    await asyncio.wait_for(writer.write(b"output"), 2)
     assert os.get_blocking(sim.fileno())
 
 
@@ -83,13 +79,13 @@ async def test_buffered_writes_survive_concurrent_reader(pty_pair):
 
     raw = io.FileIO(sim.fileno(), "wb", closefd=False)
     logs = io.TextIOWrapper(io.BufferedWriter(raw))
-    async with async_reader_context(sim) as read:
-        reading = asyncio.ensure_future(read(256))  # reader active meanwhile
-        await asyncio.sleep(0.05)
-        for i in range(lines):
-            print(f"scan found port /dev/ttyUSB{i:03d}", file=logs)
-        logs.flush()
-        reading.cancel()
+    reader = AsyncReader(sim)
+    reading = asyncio.ensure_future(reader.read(256))  # reader still active
+    await asyncio.sleep(0.05)
+    for i in range(lines):
+        print(f"scan found port /dev/ttyUSB{i:03d}", file=logs)
+    logs.flush()
+    reading.cancel()
 
     drainer.join(timeout=10)
     assert sum(chunk.count(b"ttyUSB") for chunk in drained) == lines
@@ -97,27 +93,27 @@ async def test_buffered_writes_survive_concurrent_reader(pty_pair):
 
 async def test_read_cancel_keeps_stream_usable(pty_pair):
     ctrl, sim = pty_pair
-    async with async_reader_context(sim) as read:
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(read(256), 0.05)  # cancelled while waiting
+    reader = AsyncReader(sim)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(reader.read(256), 0.05)  # cancelled during wait
 
-        # the cancelled read consumed nothing and left no reader registered
-        ctrl.write(b"after cancel")
-        assert await asyncio.wait_for(read(256), 2) == b"after cancel"
+    # the cancelled read consumed nothing and left no reader registered
+    ctrl.write(b"after cancel")
+    assert await asyncio.wait_for(reader.read(256), 2) == b"after cancel"
 
 
 async def test_write_to_tty(pty_pair):
     ctrl, sim = pty_pair
-    async with async_writer_context(sim) as write:
-        await asyncio.wait_for(write(b"output"), 2)
+    writer = AsyncWriter(sim)
+    await asyncio.wait_for(writer.write(b"output"), 2)
     assert ctrl.read(256) == b"output"
 
 
 async def test_write_to_unpollable_fd(tmp_path):
     path = tmp_path / "output.txt"
     with open(path, "wb") as file:  # a regular file is never "writable"
-        async with async_writer_context(file) as write:
-            await asyncio.wait_for(write(b"file contents"), 2)
+        writer = AsyncWriter(file)
+        await asyncio.wait_for(writer.write(b"file contents"), 2)
     assert path.read_bytes() == b"file contents"
 
 
@@ -146,8 +142,8 @@ async def test_write_waits_out_backpressure():
     draining = asyncio.ensure_future(drain_pipe())
     try:
         with os.fdopen(write_fd, "wb", buffering=0) as pipe:
-            async with async_writer_context(pipe) as write:
-                await asyncio.wait_for(write(data), 10)
+            writer = AsyncWriter(pipe)
+            await asyncio.wait_for(writer.write(data), 10)
         assert await asyncio.wait_for(draining, 10) == data
         assert ticks > 0  # the event loop kept running during the write
     finally:

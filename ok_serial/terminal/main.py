@@ -8,12 +8,10 @@ import re
 import signal
 import sys
 import time
-import typing
 
-from ok_serial.terminal.async_stdio import (
-    async_reader_context,
-    async_signal_handler_context,
-    async_writer_context,
+from ok_serial.terminal.async_os_io import (
+    AsyncReader,
+    AsyncWriter,
     raw_tty_context,
 )
 from ok_serial.terminal.chunker import TerminalChunker, chunk_to_bytes
@@ -45,16 +43,9 @@ _NONPRINT_RX = re.compile("[\x00-\x1f]")  # unprintable characters to escape
 
 class _TerminalSession:
     async def run(self, opts: SerialTerminalOptions) -> None:
-        sys.stdout.flush()  # all output goes through _write_stdout from here
         async with contextlib.AsyncExitStack() as cleanup:
             self._event_loop = asyncio.get_running_loop()
             self._new_data_event = asyncio.Event()
-
-            # entered first, so it outlives everything that writes output
-            stdout_context = async_writer_context(sys.stdout)
-            self._write_stdout = await cleanup.enter_async_context(
-                stdout_context
-            )
 
             self._serial: ok_serial.SerialConnection | None = None
             self._serial_signals: ok_serial.SerialControlSignals | None = None
@@ -66,6 +57,7 @@ class _TerminalSession:
             self._serial_error: ok_serial.SerialException | None = None
             self._serial_failed: ok_serial.SerialException | None = None
 
+            self._stdout = AsyncWriter(sys.stdout)
             self._decorator: TerminalDecorator | None = None
             self._decorator_killed: signal.Signals | None = None
             self._decorator_stderr = ""
@@ -83,14 +75,14 @@ class _TerminalSession:
                 self._decorator.add_above.append(intro_chunks)
 
                 if os.stat(1) == os.stat(2):
-                    ecb = self._decorator_stderr_hook
-                    err_context = _monkeypatch_context(sys.stderr, "write", ecb)
-                    cleanup.enter_context(err_context)  # before raw mode!
+                    save_write = sys.stderr.write
+                    setattr(sys.stderr, "write", self._decorator_stderr_hook)
+                    cleanup.callback(setattr, sys.stderr, "write", save_write)
 
-                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-                    sigcb = self._decorator_signal_hook
-                    sig_context = async_signal_handler_context(sig, sigcb)
-                    cleanup.enter_context(sig_context)
+                for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                    cb = self._decorator_signal_hook
+                    self._event_loop.add_signal_handler(s, cb, s)
+                    cleanup.callback(self._event_loop.remove_signal_handler, s)
 
                 cleanup.enter_context(raw_tty_context(0))
                 cleanup.enter_context(raw_tty_context(1))
@@ -120,7 +112,7 @@ class _TerminalSession:
         else:
             to_terminal = self._update_plain_terminal()
 
-        await self._write_stdout(to_terminal)
+        await self._stdout.write(to_terminal)
 
     def _update_plain_terminal(self) -> bytes:
         if self._serial and self._stdin_chunks:
@@ -233,13 +225,9 @@ class _TerminalSession:
     async def _async_decorator_cleanup(self) -> None:
         assert self._decorator
         self._decorator.reset()  # back to default terminal mode
-        try:
-            chunks = self._decorator.out_to_terminal
-            await self._write_stdout(
-                b"".join(chunk_to_bytes(c) for c in chunks)
-            )
-        except OSError:
-            pass  # ignore output write errors in shutdown
+        with contextlib.suppress(OSError):
+            final = self._decorator.out_to_terminal
+            await self._stdout.write(b"".join(chunk_to_bytes(c) for c in final))
 
         # wait a bit and consume query replies to stop them hitting the shell
         deadline = to_deadline(0.25)
@@ -275,24 +263,22 @@ class _TerminalSession:
             self._new_data_event.set()
 
     async def _stdin_reader_task(self) -> None:
-        async with async_reader_context(sys.stdin) as read_stdin:
-            chunker = TerminalChunker()
-            reading = True
-            while reading:  # exits at end of input (eg. </dev/null)
-                try:
-                    timeout = from_deadline(chunker.data_deadline)
-                    async with asyncio.timeout(timeout):
-                        data = await read_stdin(256)
-                        # an empty read means closed, not merely idle, which
-                        # relies on raw_tty_context leaving VMIN=1 for a tty
-                        reading = bool(data)
-                        chunker.add_data(data, time.monotonic())
-                except TimeoutError:
-                    chunker.add_data(b"", time.monotonic())
-                if chunker.chunks:
-                    self._stdin_chunks.extend(chunker.chunks)
-                    self._new_data_event.set()
-                    chunker.chunks.clear()
+        stdin = AsyncReader(sys.stdin)
+        chunker = TerminalChunker()
+        while True:
+            try:
+                timeout = from_deadline(chunker.data_deadline)
+                async with asyncio.timeout(timeout):
+                    data = await stdin.read(256)
+                    if not data:  # with VMIN=1, means EOF
+                        raise EOFError("EOF reading stdin")
+                    chunker.add_data(data, time.monotonic())
+            except TimeoutError:
+                chunker.add_data(b"", time.monotonic())
+            if chunker.chunks:
+                self._stdin_chunks.extend(chunker.chunks)
+                self._new_data_event.set()
+                chunker.chunks.clear()
 
     async def _serial_monitor_task(self, opts: SerialTerminalOptions) -> None:
         with ok_serial.SerialConnectionMonitor(
@@ -341,13 +327,3 @@ class _TerminalSession:
                 self._serial_chunks.extend(chunker.chunks)
                 self._new_data_event.set()
                 chunker.chunks.clear()
-
-
-@contextlib.contextmanager
-def _monkeypatch_context(obj: object, attr: str, val) -> typing.Iterator:
-    save = getattr(obj, attr, None)
-    try:
-        setattr(obj, attr, val)
-        yield save
-    finally:
-        setattr(obj, attr, save)
