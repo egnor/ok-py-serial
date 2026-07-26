@@ -9,7 +9,7 @@ import signal
 import sys
 import time
 
-from ok_serial.terminal.async_os_io import (
+from ok_serial.terminal.async_stdio import (
     AsyncReader,
     AsyncWriter,
     raw_tty_context,
@@ -318,11 +318,9 @@ class _TerminalSession:
             except TimeoutError:
                 chunker.add_data(b"", time.monotonic())
 
-            try:
+            # ignore errors for signal fetch (eg. unimplemented on pty devs).
+            with contextlib.suppress(ok_serial.SerialIoException):
                 signals = self._serial.get_signals()
-            except ok_serial.SerialIoException:
-                pass  # could be a pty; let real errors be found in data read
-            else:
                 if signals != self._serial_signals:
                     self._serial_signals = signals
                     self._new_data_event.set()

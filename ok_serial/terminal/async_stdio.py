@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import select
 import termios
 import typing
 
@@ -17,6 +18,10 @@ log = logging.getLogger(__name__)
 
 
 class AsyncReader:
+    """Wraps an OS-level I/O stream with an async read() function.
+    Designed for stdio: pipes, files, ttys/ptys, and /dev/null.
+    """
+
     def __init__(self, stream: typing.IO) -> None:
         self._fd = stream.fileno()
         self._lock = asyncio.Lock()
@@ -42,6 +47,10 @@ class AsyncReader:
 
 
 class AsyncWriter:
+    """Wraps an OS-level I/O stream with an async write() function.
+    Designed for stdio: pipes, files, ttys/ptys, and /dev/null.
+    """
+
     def __init__(self, stream: typing.IO) -> None:
         self._fd = stream.fileno()
         self._lock = asyncio.Lock()
@@ -63,9 +72,12 @@ class AsyncWriter:
                     finally:
                         self._loop.remove_writer(self._fd)
 
-                # cap write size to bound blocking (the fd is not O_NONBLOCK)
+                # cap write size to bound blocking (the fd is not O_NONBLOCK);
+                # for pipes/FIFOs, writable poll guarantees PIPE_BUF space
+                # TODO: for ttys/ptys, reopen it by name and use O_NONBLOCK?
+                # TODO: for sockets (eg. systemd logging), use a small write?
                 with contextlib.suppress(BlockingIOError):
-                    view = view[os.write(self._fd, view[:8192]) :]
+                    view = view[os.write(self._fd, view[: select.PIPE_BUF]) :]
 
 
 @contextlib.contextmanager
