@@ -49,8 +49,9 @@ class AsyncWriter:
         self._pollable = True
 
     async def write(self, data: bytes) -> None:
+        view = memoryview(data)
         async with self._lock:
-            while data:
+            while view:
                 if self._pollable:
                     future = self._loop.create_future()
                     try:
@@ -62,8 +63,9 @@ class AsyncWriter:
                     finally:
                         self._loop.remove_writer(self._fd)
 
+                # cap write size to bound blocking (the fd is not O_NONBLOCK)
                 with contextlib.suppress(BlockingIOError):
-                    data = data[os.write(self._fd, data[:256]) :]
+                    view = view[os.write(self._fd, view[:8192]) :]
 
 
 @contextlib.contextmanager

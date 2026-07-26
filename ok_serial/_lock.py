@@ -39,14 +39,16 @@ class PortLock(contextlib.AbstractContextManager):
         self.device = device
         self.sharing = sharing
 
-        dev_parts = Path(device).parts[-2:]
+        # resolve symlinks (eg. socat link=...) to the actual device
+        dev_real = Path(device).resolve()
+        dev_parts = dev_real.parts[-2:]
         if dev_parts[-1].isdigit() and dev_parts[0].startswith("pt"):
             self._lock_path = Path(f"/var/lock/LCK..{'.'.join(dev_parts)}")
         else:
             self._lock_path = Path(f"/var/lock/LCK..{dev_parts[-1]}")
 
         self._fd: int | None = None
-        self._linux_pty_quirk = device.startswith("/dev/pts/")
+        self._linux_pty_quirk = str(dev_real).startswith("/dev/pts/")
         self._polite_path = Path(str(self._lock_path) + ".polite")
 
     def __enter__(self) -> "PortLock":

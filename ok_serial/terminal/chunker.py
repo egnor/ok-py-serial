@@ -1,6 +1,13 @@
 import re
 from threading import TIMEOUT_MAX
 
+# TODO: maybe optimize TerminalChunker (and de-chunking); start with a
+# chunker-focused profiling pass. Colorized `xxd` output (SGR codes every few
+# bytes -> ~4-byte chunks) is a good stress test. Ideas: single-pass finditer
+# instead of per-chunk match() calls, batch runs of small text/escape chunks,
+# and accumulate chunk output into a bytearray rather than b"".join() of
+# millions of pieces
+
 _CHUNK_RX = re.compile(
     # group 1: well-formed UTF-8 code points -- what str.decode() accepts
     # Grammar: https://datatracker.ietf.org/doc/html/rfc3629#section-4

@@ -19,6 +19,10 @@ from ok_serial.terminal.decorator import TerminalDecorator
 from ok_serial.terminal.keyboard import chunk_to_key_event
 from ok_serial._timeout_math import from_deadline, to_deadline
 
+# TODO: maybe skip TerminalChunker entirely in plain (non-decorator) mode,
+# passing raw bytes from serial to stdout; needs some dataflow restructuring
+# (separate bytes/chunks pipelines depending on mode?)
+
 
 @dataclasses.dataclass(frozen=True)
 class SerialTerminalOptions:
