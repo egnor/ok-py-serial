@@ -174,11 +174,9 @@ def _classic_key_event(rxm: re.Match[bytes]) -> TerminalKeyEvent | None:
         return None  # ignore key release (3) and other non-press events
 
     mods = int(mods_str) - 1
-    if rxm["lkey"] == b"Z":
-        mods |= 1  # backtab implies shift
     return TerminalKeyEvent(
         key,
-        shift=bool(mods & 1),
+        shift=bool(mods & 1) or rxm["lkey"] == b"Z",  # backtab implies shift
         alt=bool(mods & 2),
         ctrl=bool(mods & 4),
     )
