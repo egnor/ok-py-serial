@@ -17,9 +17,12 @@ def key_desc(chunk: bytes | str) -> str | None:
 
 
 def test_plain_control_bytes():
-    assert key(b"\x1c") == TerminalKeyEvent(ord("\\"), text="\x1c", ctrl=True)
-    assert key(b"\x1d") == TerminalKeyEvent(ord("]"), text="\x1d", ctrl=True)
-    assert key(b"\x03") == TerminalKeyEvent(ord("c"), text="\x03", ctrl=True)
+    assert key_desc(b"\x03") == "ctrl-c"
+    assert key_desc(b"\x09") == "TAB"
+    assert key_desc(b"\x0d") == "ENTER"
+    assert key_desc(b"\x1b") == "ESCAPE"
+    assert key_desc(b"\x1c") == "ctrl-\\"
+    assert key_desc(b"\x1d") == "ctrl-]"
 
 
 def test_kitty_key_reports():
@@ -88,6 +91,7 @@ def test_classic_cursor_and_edit_keys():
     assert key_desc(b"\x1b[2~") == "INSERT"
     assert key_desc(b"\x1b[5;3~") == "alt-PAGE_UP"
     assert key_desc(b"\x1b[6~") == "PAGE_DOWN"
+    assert key_desc(b"\x1b[Z") == "shift-TAB"  # special case
 
 
 def test_classic_function_keys():
@@ -108,12 +112,6 @@ def test_classic_keypad_keys():
     assert key_desc(b"\x1bOo") == "KP_DIVIDE"
     assert key_desc(b"\x1b[E") == "KP_BEGIN"
     assert key_desc(b"\x1b[57427~") == "KP_BEGIN"
-
-
-def test_backtab_and_delete_byte():
-    # backtab is the tab key (reported as ctrl-i style, like CSI 9;2u)
-    assert key_desc(b"\x1b[Z") == "shift-i"
-    assert key_desc(b"\x7f") == "\x7f"
 
 
 def test_classic_event_types():

@@ -59,8 +59,8 @@ _VALID_TEXT_RX = re.compile("[^\x00-\x1f]+")  # non-control text
 class TerminalChunker:
     """Breaks VTxxx data into output characters and control sequences.
 
-    Attributes:
-    - chunks: received escape codes (bytes) or text (str); remove as processed
+    Output attributes:
+    - chunks: received escape codes (bytes) or text (str); caller removes
     - data_deadline: when to call add_data(b"", now) if nothing received
     """
 
@@ -73,6 +73,7 @@ class TerminalChunker:
         """Accepts terminal data to be chunked:
         - data: bytes to process; use b"" if nothing received
         - data_time: data timestamp in seconds (arbitrary epoch)
+        Appends output to .chunks and updates .data_deadline.
         """
 
         if data:

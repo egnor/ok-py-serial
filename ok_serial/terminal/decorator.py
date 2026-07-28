@@ -31,9 +31,8 @@ class TerminalDecorator:
     - .out_from_terminal (chunk list) - filtered terminal input to handle
 
     "Decorations" (.add_above/.set_below lines, .set_right) can include
-    SGR-type directives (starting from reset) but must
-    be a single line without cursor shenanigans. Auto-wrap is disabled for
-    decorations, so they will be truncated at the right margin.
+    SGR-type directives (starting from reset each time) but must be a single
+    line without cursor shenanigans. Auto-wrap is disabled so they will cut off.
 
     Caveats: base rendering isn't disrupted "too much", but...
     - adding decorations above/below moves lines around and can change the row

@@ -29,13 +29,19 @@ _KEY_CODES: dict[str, int] = {
 
 _KEY_NAMES = {code: name for name, code in _KEY_CODES.items()}
 
+# single-byte keys
+_BYTE_KEYS: dict[bytes, int] = {
+    bytes([ch]): _KEY_CODES[name]
+    for ch, name in zip((9, 13, 27, 127), "TAB ENTER ESCAPE BACKSPACE".split())
+}
+
 # classic keys sent as CSI [1;mods] letter; "R" (old F3) is omitted
 # because CSI 1;mods R is ambiguous with a cursor position report
 _CSI_LETTER_KEYS: dict[bytes, int] = {
-    bytes([ch]): int(name) if name.isdigit() else _KEY_CODES[name]
+    bytes([ch]): _KEY_CODES[name]
     for ch, name in zip(
         b"ABCDEFHPQSZ",
-        "UP DOWN RIGHT LEFT KP_BEGIN END HOME F1 F2 F4 9".split(),
+        "UP DOWN RIGHT LEFT KP_BEGIN END HOME F1 F2 F4 TAB".split(),
     )
 }
 
@@ -90,14 +96,11 @@ class TerminalKeyEvent:
     """A single key press (or autorepeat) decoded from terminal input."""
 
     key: int
-    """Unicode codepoint of the key without modifiers applied, kitty style
-    (lowercase for letters), e.g. 92 (backslash) for ctrl-\\; functional
-    keys use kitty's private use codepoints (see _KEY_CODES)."""
+    """Kitty-style codepoint for the base key (101 for ^E, 92 for ^\\, etc),
+    using specific private-use codepoints for non-text keys (see _KEY_CODES)."""
 
     text: str = ""
-    """Text this key press inserts, when known: as reported by the
-    terminal, or the legacy character for a control combo, e.g. "\\x1c"
-    for ctrl-\\ however it was encoded."""
+    """Text inserted by this key, eg. "\\x1c" for ctrl-\\, "" if N/A."""
 
     shift: bool = False
     alt: bool = False
@@ -109,16 +112,17 @@ class TerminalKeyEvent:
 
 
 def chunk_to_key_event(chunk: bytes | str) -> TerminalKeyEvent | None:
-    """Decodes a terminal input chunk as a key event, if it unambiguously
-    represents a single key press: a plain control byte, a CSI key report
-    from the kitty keyboard protocol or xterm modifyOtherKeys, or a classic
-    ANSI/DEC sequence for a functional key (arrows, F-keys, keypad...).
-    Ordinary printable text (str chunks), other escape sequences, and
-    key-release reports return None."""
+    """Returns the TerminalKeyEvent for a terminal input chunk:
+    - plain control bytes (0x00-0x1F, 0x7F)
+    - key reports from the kitty keyboard protocol or xterm modifyOtherKeys
+    - classic ANSI/DEC non-text key reports (arrows, F-keys, keypad...)
+    Returns None for printable text input (str chunks), other escapes, etc."""
 
     if not isinstance(chunk, bytes):
         return None
-    if len(chunk) == 1 and (code := chunk[0]) < 0x20:
+    if key := _BYTE_KEYS.get(chunk):
+        return TerminalKeyEvent(key, text=chunk.decode("ascii"))
+    elif len(chunk) == 1 and (code := chunk[0]) < 0x20:
         key = ord(chr(code | 0x40).lower())
         return TerminalKeyEvent(key, text=chr(code), ctrl=True)
     if chunk == b"\x7f":
@@ -173,10 +177,7 @@ def _classic_key_event(rxm: re.Match[bytes]) -> TerminalKeyEvent | None:
     if event_type not in (b"", b"1", b"2"):
         return None  # ignore key release (3) and other non-press events
 
-    mods = int(mods_str) - 1
+    mods = int(mods_str) - 1 | (1 if rxm["lkey"] == b"Z" else 0)
     return TerminalKeyEvent(
-        key,
-        shift=bool(mods & 1) or rxm["lkey"] == b"Z",  # backtab implies shift
-        alt=bool(mods & 2),
-        ctrl=bool(mods & 4),
+        key, shift=bool(mods & 1), alt=bool(mods & 2), ctrl=bool(mods & 4)
     )

@@ -37,6 +37,7 @@ dev = [
 check_untyped_defs = true
 exclude_gitignore = true
 files = "."
+warn_unreachable = true
 
 [tool.pytest]
 asyncio_mode = "auto"

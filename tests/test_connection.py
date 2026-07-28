@@ -201,25 +201,25 @@ def test_multiple_close_is_safe(pty_serial):
 def test_concurrent_reads_and_writes(pty_serial):
     """Test concurrent read and write from multiple threads."""
     with ok_serial.SerialConnection(port=pty_serial.path) as conn:
-        results: dict[str, str | bool | None] = {"read": None, "write": None}
-        errors = []
+        read_result, write_success, errors = b"", False, []
 
         def reader():
+            nonlocal read_result
             try:
-                results["read"] = conn.read_sync(timeout=5.0)
+                read_result = conn.read_sync(timeout=5.0)
             except Exception as e:
                 errors.append(e)
 
         def writer():
+            nonlocal write_success
             try:
                 conn.write(b"HELLO")
                 conn.drain_sync(timeout=5.0)
-                results["write"] = True
+                write_success = True
             except Exception as e:
                 errors.append(e)
 
         pty_serial.control.write(b"WORLD")
-
         read_thread = threading.Thread(target=reader)
         write_thread = threading.Thread(target=writer)
         read_thread.start()
@@ -228,8 +228,8 @@ def test_concurrent_reads_and_writes(pty_serial):
         write_thread.join(timeout=10.0)
 
         assert not errors, f"Errors occurred: {errors}"
-        assert results["read"] == b"WORLD"
-        assert results["write"] is True
+        assert read_result == b"WORLD"
+        assert write_success is True
         assert pty_serial.control.read(256) == b"HELLO"
 
 

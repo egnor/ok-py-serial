@@ -8,6 +8,7 @@ import re
 import signal
 import sys
 import time
+from typing import assert_never
 
 from ok_serial.terminal.async_stdio import (
     AsyncReader,
@@ -16,12 +17,10 @@ from ok_serial.terminal.async_stdio import (
 )
 from ok_serial.terminal.chunker import TerminalChunker, chunk_to_bytes
 from ok_serial.terminal.decorator import TerminalDecorator
-from ok_serial.terminal.keyboard import chunk_to_key_event
+from ok_serial.terminal.keyboard import TerminalKeyEvent, chunk_to_key_event
 from ok_serial._timeout_math import from_deadline, to_deadline
 
-# TODO: maybe skip TerminalChunker entirely in plain (non-decorator) mode,
-# passing raw bytes from serial to stdout; needs some dataflow restructuring
-# (separate bytes/chunks pipelines depending on mode?)
+# TODO: maybe skip TerminalChunker entirely in plain (non-decorator) mode?
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,6 +65,9 @@ class _TerminalSession:
             self._decorator_killed: signal.Signals | None = None
             self._decorator_stderr = ""
 
+            self._echo_deadline: float | None = None
+            self._echo_input: list[TerminalKeyEvent | str] = []
+
             # if stdin and stdout are the same terminal, do Fancy Terminal Stuff
             if not opts.plain and os.isatty(1) and os.stat(0) == os.stat(1):
                 intro_chunks: list[bytes | str] = [
@@ -103,7 +105,8 @@ class _TerminalSession:
 
     async def _main_loop(self) -> None:
         try:
-            async with asyncio.timeout(0.25):
+            timeout = min(0.25, from_deadline(self._echo_deadline))
+            async with asyncio.timeout(timeout):
                 await self._new_data_event.wait()
         except TimeoutError:
             pass
@@ -134,6 +137,11 @@ class _TerminalSession:
 
         stdin_chunks, self._stdin_chunks = self._stdin_chunks, []
         decor.add_from_terminal.extend(stdin_chunks)
+        decor.update(timestamp)  # process input before adding outputs
+
+        #
+        # Serial connection/disconnection and status
+        #
 
         line: list[bytes | str]
         if self._serial is not self._last_serial:
@@ -180,6 +188,10 @@ class _TerminalSession:
             ]
             decor.add_above.append([*line, b"\x1b[K"])
 
+        #
+        # fatal errors
+        #
+
         if self._serial_failed:
             decor.reset()  # back to main screen, add blank line
             line = [
@@ -200,16 +212,16 @@ class _TerminalSession:
             decor.update(timestamp)
             raise SystemExit(255)
 
-        serial_chunks, self._serial_chunks = self._serial_chunks, []
-        decor.add_base.extend(serial_chunks)
-        decor.update(timestamp)
+        #
+        # input processing
+        #
 
         from_term, decor.out_from_terminal = decor.out_from_terminal, []
         for chunk in from_term:
             key_event = chunk_to_key_event(chunk)
             key_text = key_event.text if key_event else ""
             if key_text == "\x1d":  # ctrl-]
-                pass  # TODO: menu
+                continue
             elif key_text == "\x1c":  # ctrl-\
                 decor.reset()  # back to main screen, add blank line
                 line = [
@@ -219,10 +231,66 @@ class _TerminalSession:
                 decor.add_above.append(line)
                 decor.update(timestamp)
                 raise SystemExit(0)
-            elif self._serial:
+
+            # write input to serial port (unless captured above)
+            if self._serial:
                 self._serial.write(chunk_to_bytes(chunk))
 
-        decor.update(timestamp)  # pick up output from input
+            # save input that doens't get echoed back for display
+            if not self._echo_input:
+                self._echo_deadline = to_deadline(0.25)
+            if len(self._echo_input) < 256:  # limit echo buffer size
+                if key_event:
+                    self._echo_input.append(key_event)
+                elif self._echo_input and isinstance(self._echo_input[-1], str):
+                    self._echo_input[-1] += chunk
+                else:
+                    self._echo_input.append(chunk)
+
+        #
+        # normal terminal output
+        #
+
+        serial_chunks, self._serial_chunks = self._serial_chunks, []
+        if serial_chunks:
+            decor.add_base.extend(serial_chunks)
+        #
+        # unechoed character display
+        #
+
+        decor.set_right.clear()
+        if serial_chunks or not self._serial:
+            self._echo_deadline = None
+            self._echo_input.clear()
+        elif self._echo_input and (
+            not self._echo_deadline or timestamp > self._echo_deadline
+        ):
+            self._echo_deadline = None
+            decor.set_right.append(" ")
+            for input_chunk in self._echo_input:
+                if isinstance(input_chunk, TerminalKeyEvent):
+                    name_parts = input_chunk.name.split("_")
+                    desc_parts = [
+                        *("c" if input_chunk.ctrl else []),
+                        *("s" if input_chunk.shift else []),
+                        *("a" if input_chunk.alt else []),
+                        "".join(p[:3].capitalize() for p in name_parts),
+                    ]
+                    key_chunks = [
+                        *(b"\x1b[36m", "▐", b"\x1b[30;46m"),
+                        *("-".join(desc_parts), b"\x1b[;36m", "▌"),
+                    ]
+                    decor.set_right.extend(key_chunks)
+                elif isinstance(input_chunk, str):
+                    text_chunks = [
+                        *(b"\x1b[34m", "▐", b"\x1b[37;44m"),
+                        *(input_chunk, b"\x1b[;34m", "▌"),
+                    ]
+                    decor.set_right.extend(text_chunks)
+                else:
+                    assert_never(input_chunk)
+
+        decor.update(timestamp)  # process outputs
         to_term, decor.out_to_terminal = decor.out_to_terminal, []
         return b"".join(chunk_to_bytes(c) for c in to_term)
 

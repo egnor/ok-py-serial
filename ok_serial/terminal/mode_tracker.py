@@ -1,6 +1,6 @@
 import copy
 import re
-from typing import Literal
+from typing import assert_never, Literal
 
 # Baseline reset state assumed at startup or after full-reset (RIS)
 _RESET_SGR_CODES = {"RESET": b""}  # plain SGR reset (CSI m)
@@ -423,7 +423,7 @@ class TerminalModeTracker:
                         self.dec_modes.update((m, b"l") for m in onehot_set)
                 self.dec_modes.pop(alias, None)  # reorder to latest
                 self.dec_modes[alias] = value
-            elif (alias, value) == ("decsave", b"h"):
+            elif alias == "decsave" and value == b"h":
                 self.dec_save_sgr = {**self.sgr_codes}
                 self.dec_save_dec = {
                     dm: self.dec_modes[dm] for dm in _DECSC_DEC_MODES
@@ -433,7 +433,7 @@ class TerminalModeTracker:
                     for om in _DECSC_OTHER_MODES
                     if (ov := self.other_modes.get(om))
                 }
-            elif (alias, value) == ("decsave", b"l"):
+            elif alias == "decsave" and value == b"l":
                 self.sgr_codes = {**self.dec_save_sgr}
                 for dm in _DECSC_DEC_MODES:
                     self.dec_modes.pop(dm, None)  # reorder to latest
@@ -442,4 +442,4 @@ class TerminalModeTracker:
                     self.other_modes.pop(om, None)  # clear / reorder to latest
                 self.other_modes.update(self.dec_save_other)
             else:
-                assert False, (mode, alias, value)
+                assert_never((mode, alias, value))
