@@ -3,6 +3,31 @@
 import dataclasses
 import re
 
+
+@dataclasses.dataclass(frozen=True)
+class TerminalKeyEvent:
+    """A single key press (or autorepeat) decoded from terminal input."""
+
+    key: int
+    """Kitty-style codepoint for the base key (101 for ^E, 92 for ^\\, etc),
+    using specific private-use codepoints for non-text keys (see _KEY_CODES)."""
+
+    text: str = dataclasses.field(compare=False, default="")
+    """Text inserted by this key, eg. "\\x1c" for ctrl-\\, "" if N/A."""
+
+    shift: bool = False
+    alt: bool = False
+    ctrl: bool = False
+
+    def __str__(self) -> str:
+        mods = [m for m in ("ctrl", "alt", "shift") if getattr(self, m)]
+        return "-".join((*mods, self.key_name))
+
+    @property
+    def key_name(self) -> str:
+        return _KEY_NAMES.get(self.key, chr(self.key))
+
+
 # Unicode private-use codepoints used by the Kitty protocol for non-text keys.
 # https://sw.kovidgoyal.net/kitty/keyboard-protocol/#functional-key-definitions
 _KEY_CODES: dict[str, int] = {
@@ -89,26 +114,6 @@ _CLASSIC_KEY_RX = re.compile(
     b")|"
     b"(?:\x1bO|\x8f)(?P<skey>[\x20-\x7e])"
 )
-
-
-@dataclasses.dataclass(frozen=True)
-class TerminalKeyEvent:
-    """A single key press (or autorepeat) decoded from terminal input."""
-
-    key: int
-    """Kitty-style codepoint for the base key (101 for ^E, 92 for ^\\, etc),
-    using specific private-use codepoints for non-text keys (see _KEY_CODES)."""
-
-    text: str = ""
-    """Text inserted by this key, eg. "\\x1c" for ctrl-\\, "" if N/A."""
-
-    shift: bool = False
-    alt: bool = False
-    ctrl: bool = False
-
-    @property
-    def name(self) -> str:
-        return _KEY_NAMES.get(self.key, chr(self.key))
 
 
 def chunk_to_key_event(chunk: bytes | str) -> TerminalKeyEvent | None:

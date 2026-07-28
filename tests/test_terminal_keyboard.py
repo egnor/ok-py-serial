@@ -9,26 +9,19 @@ def key_text(chunk: bytes | str) -> str | None:
     return k.text if (k := key(chunk)) else None
 
 
-def key_desc(chunk: bytes | str) -> str | None:
-    if not (k := key(chunk)):
-        return None
-    mods = [m for m in "shift alt ctrl".split() if getattr(k, m)]
-    return "-".join([*mods, k.name])
-
-
 def test_plain_control_bytes():
-    assert key_desc(b"\x03") == "ctrl-c"
-    assert key_desc(b"\x09") == "TAB"
-    assert key_desc(b"\x0d") == "ENTER"
-    assert key_desc(b"\x1b") == "ESCAPE"
-    assert key_desc(b"\x1c") == "ctrl-\\"
-    assert key_desc(b"\x1d") == "ctrl-]"
+    assert str(key(b"\x03")) == "ctrl-c"
+    assert str(key(b"\x09")) == "TAB"
+    assert str(key(b"\x0d")) == "ENTER"
+    assert str(key(b"\x1b")) == "ESCAPE"
+    assert str(key(b"\x1c")) == "ctrl-\\"
+    assert str(key(b"\x1d")) == "ctrl-]"
 
 
 def test_kitty_key_reports():
     # kitty keyboard protocol: CSI unicode-key;mods u, ctrl = bit 4 in mods-1
-    expect = TerminalKeyEvent(ord("\\"), text="\x1c", ctrl=True)
-    assert key(b"\x1b[92;5u") == expect
+    assert key(b"\x1b[92;5u") == TerminalKeyEvent(ord("\\"), ctrl=True)
+    assert key_text(b"\x1b[92;5u") == "\x1c"  # ctrl-\
     assert key_text(b"\x1b[93;5u") == "\x1d"  # ctrl-]
     assert key_text(b"\x1b[99;5u") == "\x03"  # ctrl-c
     assert key_text(b"\x9b92;5u") == "\x1c"  # 8-bit CSI
@@ -78,52 +71,52 @@ def test_key_codes():
 
 
 def test_classic_cursor_and_edit_keys():
-    assert key_desc(b"\x1b[A") == "UP"
-    assert key_desc(b"\x9bB") == "DOWN"  # 8-bit CSI
-    assert key_desc(b"\x1bOC") == "RIGHT"  # app cursor mode
-    assert key_desc(b"\x8fC") == "RIGHT"  # 8-bit SS3
-    assert key_desc(b"\x1b[1;5D") == "ctrl-LEFT"
-    assert key_desc(b"\x1b[H") == "HOME"
-    assert key_desc(b"\x1b[1~") == "HOME"
-    assert key_desc(b"\x1b[7~") == "HOME"
-    assert key_desc(b"\x1b[1;2F") == "shift-END"
-    assert key_desc(b"\x1b[3~") == "DELETE"
-    assert key_desc(b"\x1b[2~") == "INSERT"
-    assert key_desc(b"\x1b[5;3~") == "alt-PAGE_UP"
-    assert key_desc(b"\x1b[6~") == "PAGE_DOWN"
-    assert key_desc(b"\x1b[Z") == "shift-TAB"  # special case
+    assert str(key(b"\x1b[A")) == "UP"
+    assert str(key(b"\x9bB")) == "DOWN"  # 8-bit CSI
+    assert str(key(b"\x1bOC")) == "RIGHT"  # app cursor mode
+    assert str(key(b"\x8fC")) == "RIGHT"  # 8-bit SS3
+    assert str(key(b"\x1b[1;5D")) == "ctrl-LEFT"
+    assert str(key(b"\x1b[H")) == "HOME"
+    assert str(key(b"\x1b[1~")) == "HOME"
+    assert str(key(b"\x1b[7~")) == "HOME"
+    assert str(key(b"\x1b[1;2F")) == "shift-END"
+    assert str(key(b"\x1b[3~")) == "DELETE"
+    assert str(key(b"\x1b[2~")) == "INSERT"
+    assert str(key(b"\x1b[5;3~")) == "alt-PAGE_UP"
+    assert str(key(b"\x1b[6~")) == "PAGE_DOWN"
+    assert str(key(b"\x1b[Z")) == "shift-TAB"  # special case
 
 
 def test_classic_function_keys():
-    assert key_desc(b"\x1bOP") == "F1"
-    assert key_desc(b"\x1b[1;2P") == "shift-F1"
-    assert key_desc(b"\x1b[11~") == "F1"
-    assert key_desc(b"\x1bOR") == "F3"
-    assert key_desc(b"\x1b[13~") == "F3"
-    assert key_desc(b"\x1b[15~") == "F5"
-    assert key_desc(b"\x1b[24;6~") == "shift-ctrl-F12"
-    assert key_desc(b"\x1b[34~") == "F20"
+    assert str(key(b"\x1bOP")) == "F1"
+    assert str(key(b"\x1b[1;2P")) == "shift-F1"
+    assert str(key(b"\x1b[11~")) == "F1"
+    assert str(key(b"\x1bOR")) == "F3"
+    assert str(key(b"\x1b[13~")) == "F3"
+    assert str(key(b"\x1b[15~")) == "F5"
+    assert str(key(b"\x1b[24;6~")) == "ctrl-shift-F12"
+    assert str(key(b"\x1b[34~")) == "F20"
 
 
 def test_classic_keypad_keys():
-    assert key_desc(b"\x1bOM") == "KP_ENTER"
-    assert key_desc(b"\x1bOp") == "KP_0"
-    assert key_desc(b"\x1bOy") == "KP_9"
-    assert key_desc(b"\x1bOo") == "KP_DIVIDE"
-    assert key_desc(b"\x1b[E") == "KP_BEGIN"
-    assert key_desc(b"\x1b[57427~") == "KP_BEGIN"
+    assert str(key(b"\x1bOM")) == "KP_ENTER"
+    assert str(key(b"\x1bOp")) == "KP_0"
+    assert str(key(b"\x1bOy")) == "KP_9"
+    assert str(key(b"\x1bOo")) == "KP_DIVIDE"
+    assert str(key(b"\x1b[E")) == "KP_BEGIN"
+    assert str(key(b"\x1b[57427~")) == "KP_BEGIN"
 
 
 def test_classic_event_types():
     # kitty event subparams also apply to legacy-encoded functional keys
-    assert key_desc(b"\x1b[1;1:2A") == "UP"  # repeat
+    assert str(key(b"\x1b[1;1:2A")) == "UP"  # repeat
     assert key(b"\x1b[1;1:3A") is None  # release
     assert key(b"\x1b[5;1:3~") is None  # release
 
 
 def test_kitty_functional_key_reports():
-    assert key_desc(b"\x1b[57376u") == "F13"
-    assert key_desc(b"\x1b[57413;5u") == "ctrl-KP_ADD"
+    assert str(key(b"\x1b[57376u")) == "F13"
+    assert str(key(b"\x1b[57413;5u")) == "ctrl-KP_ADD"
 
 
 def test_non_key_chunks_ignored():

@@ -242,18 +242,21 @@ class _TerminalSession:
             if len(self._echo_input) < 256:  # limit echo buffer size
                 if key_event:
                     self._echo_input.append(key_event)
+                elif isinstance(chunk, bytes):
+                    pass
                 elif self._echo_input and isinstance(self._echo_input[-1], str):
                     self._echo_input[-1] += chunk
                 else:
                     self._echo_input.append(chunk)
 
         #
-        # normal terminal output
+        # terminal data output from serial port
         #
 
         serial_chunks, self._serial_chunks = self._serial_chunks, []
         if serial_chunks:
             decor.add_base.extend(serial_chunks)
+
         #
         # unechoed character display
         #
@@ -262,33 +265,34 @@ class _TerminalSession:
         if serial_chunks or not self._serial:
             self._echo_deadline = None
             self._echo_input.clear()
-        elif self._echo_input and (
-            not self._echo_deadline or timestamp > self._echo_deadline
-        ):
+
+        if not self._echo_deadline or timestamp > self._echo_deadline:
             self._echo_deadline = None
-            decor.set_right.append(" ")
-            for input_chunk in self._echo_input:
-                if isinstance(input_chunk, TerminalKeyEvent):
-                    name_parts = input_chunk.name.split("_")
-                    desc_parts = [
-                        *("c" if input_chunk.ctrl else []),
-                        *("s" if input_chunk.shift else []),
-                        *("a" if input_chunk.alt else []),
-                        "".join(p[:3].capitalize() for p in name_parts),
-                    ]
-                    key_chunks = [
-                        *(b"\x1b[36m", "▐", b"\x1b[30;46m"),
-                        *("-".join(desc_parts), b"\x1b[;36m", "▌"),
-                    ]
-                    decor.set_right.extend(key_chunks)
-                elif isinstance(input_chunk, str):
-                    text_chunks = [
-                        *(b"\x1b[34m", "▐", b"\x1b[37;44m"),
-                        *(input_chunk, b"\x1b[;34m", "▌"),
-                    ]
-                    decor.set_right.extend(text_chunks)
-                else:
-                    assert_never(input_chunk)
+            show_input = self._echo_input
+        else:
+            show_input = []
+
+        for input in show_input:
+            decor.set_right.extend([] if decor.set_right else [" "])
+            if isinstance(input, TerminalKeyEvent):
+                [*key_mods, key_name] = str(input).split("-")
+                key_parts = [
+                    *[m[0] for m in key_mods],
+                    "".join(p[:3].capitalize() for p in key_name.split("_")),
+                ]
+                key_chunks: list[bytes | str] = [
+                    *(b"\x1b[36m", "▐", b"\x1b[30;46m"),
+                    *("-".join(key_parts), b"\x1b[;36m", "▌"),
+                ]
+                decor.set_right.extend(key_chunks)
+            elif isinstance(input, str):
+                text_chunks: list[bytes | str] = [
+                    *(b"\x1b[34m", "▐", b"\x1b[37;44m"),
+                    *(input, b"\x1b[;34m", "▌"),
+                ]
+                decor.set_right.extend(text_chunks)
+            else:
+                assert_never(input)
 
         decor.update(timestamp)  # process outputs
         to_term, decor.out_to_terminal = decor.out_to_terminal, []

@@ -150,7 +150,7 @@ Sharing mode implementation is limited by OS capabilities, process permissions, 
 
 ## Terminal emulator
 
-Install `ok-serial` and run `okserial term <port> [baud]` to launch a simple terminal emulator connected to the specified port, eg. `okserial term MyDevice 115200`. See `okserial term --help` for options. While running, you should see a status line with further guidance.
+Install `ok-serial` and run `okserial term <port> [baud]` to launch a simple terminal emulator connected to the specified port, eg. `okserial term MyDevice 115200`. See `okserial term --help` for options; use ctrl-`]` for a menu, ctrl-`\\` to quit.
 
 ## Socat for testing and profit
 
