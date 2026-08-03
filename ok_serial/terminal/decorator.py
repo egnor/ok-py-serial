@@ -187,19 +187,19 @@ class TerminalDecorator:
     def reset(self) -> None:
         """Adds cleanup to .out_to_terminal (*without* an update cycle):
         - resets terminal mode to default state
+        - clears the screen after & below the cursor
         - moves to a new line if we're not positioned at start of line
-        - clears the screen below the cursor
-        - (for restart) updates mode tracking
-        - (for restart) clears right & below decorations
+        - (for possible restart) updates mode tracking
+        - (for possible restart) clears right & below decoration setting
         """
 
         self._base_mode = TerminalModeTracker()  # reset to default state
         self._switch_terminal_mode(self._base_mode)
         self._emit(b"\x1b7", b"\x1b[r", b"\x1b8")  # reset DECSTBM margins
+        self._emit(b"\x1b[J")  # clear from cursor to end of display
         if (self._cursor_pos, self._base_col) != ("base", 1):
             self._cursor_pos, self._base_col = "base", 1  # in case of restart
             self._emit(b"\r", b"\n")  # newline to move past the base line
-        self._emit(b"\x1b[J")  # clear from cursor to end of display
         self.set_right.clear()
         self.set_below.clear()
 
