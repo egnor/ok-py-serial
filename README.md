@@ -14,9 +14,9 @@ Also see my own [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal
 
 ## Purpose
 
-Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) / [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter) library for Python. It runs most places Python does and abstracts lots of gnarly system details. However, some issues keep coming up:
+Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) / [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter) library for Python. It runs on lots of platforms and abstracts gnarly system details. But, some issues keep coming up:
 
-- Most modern serial ports are USB, and get temporary names like `/dev/ttyACM3` or `COM4`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep) or Linux's `/dev/serial/by-id` (or [custom udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk)) are helpful but clunky.
+- USB serial ports get temporary names like `/dev/ttyACM3` or `COM9`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep), OS-level `/dev/serial/by-id` paths, and [custom udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk) are helpful but clunky.
 
 - Nonblocking or concurrent PySerial I/O is [tricky](https://github.com/pyserial/pyserial/issues/772) and often [broken](https://github.com/pyserial/pyserial/issues/281) [entirely](https://github.com/pyserial/pyserial/issues/280).
 
@@ -28,11 +28,11 @@ The `ok-serial` library uses PySerial internally but has a revised interface:
 
 - Ports are referenced by [match strings](#port-matching) with wildcard support (eg. `RP2040` or `2e43:0226`) or, for by arbitrary `SerialPort -> bool` callables.
 
-- I/O operations are thread safe and can be blocking, non-blocking, timeout-based, or async. Blocking operations can be cleanly interrupted. The semantics of concurrent access, partial reads/writes, interruption, I/O errors, closure, and other edge cases are well defined.
+- I/O operations are thread safe and can be blocking, non-blocking, timeout-based, or async. Blocking operations can be cleanly interrupted. The semantics of concurrent access, partial reads/writes, interruption, I/O errors, closure, etc. are all well defined.
 
-- I/O buffers are limited only by system memory; writes never block. (A blocking drain is available.)
+- I/O buffers are limited only by memory; writes never block. (A blocking drain is available.)
 
-- Several [port locking modes](#sharing-modes) are supported, with exclusive locking by default. _All_ of [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html), [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial), and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html) are used to avoid contention.
+- Several [port locking modes](#sharing-modes) are supported, with exclusive locking by default. _All_ of [`/var/lock/LCK..*` files](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch05s09.html), [`flock(...)`](https://linux.die.net/man/2/flock) (like PySerial), and [`TIOCEXCL`](https://man7.org/linux/man-pages/man2/TIOCEXCL.2const.html) are used (if available).
 
 - [`SerialConnectionMonitor`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionMonitor) is an automatic reconnection helper for graceful handling of pluggable devices.
 
@@ -82,7 +82,7 @@ See the [full API reference docs](https://egnor.github.io/ok-py-serial/) for int
 
 Serial ports have metadata attributes like descriptive text, USB vendor/product ID, serial number and the like. These are captured as key/value pairs in [`SerialPort.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPort.attr) and returned by [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports).
 
-Specific attributes [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo) and are platform/device dependent but typically include:
+Attributes [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo) and are platform dependent but typically include:
 
 - `device` - system device name, eg. `/dev/ttyUSB1` or `COM3`
 - `description` - human readable text, eg. `Arduino Uno`
@@ -120,17 +120,17 @@ Port: /dev/ttyACM3 Kq2p 3:12s
 
 `SerialConnection(match=...)` and `SerialConnectionMonitor(...)` take either a **match string** or a **predicate callable** (`SerialPort -> bool`).
 
-A match string is split on whitespace into glob tokens. Each token must match (case-insensitively, as a whole-word glob with `*` and `?` wildcards) somewhere in some attribute value. So:
+A match string is split on whitespace into glob tokens. Each token must appear as a whole-word case-insensitive glob (with `*` and `?` wildcards) in some attribute value:
 
 - `Pico` - some attribute contains the word `pico` (any case)
-- `RP2040 DF625*` - some attribute contains `rp2040`, and some attribute
+- `RP2040 DF625*` - some attribute contains `rp2040` AND some attribute
   contains a word starting with `df625`
 - `2e8a:0005` - matches the canonical `vid_pid` form (lowercase hex)
-- `ttyS1` - does NOT match `/dev/ttyS10`; use `ttyS1*` for prefix matching
+- `ttyS1` - DOES match `/dev/ttyS1`, does NOT match `/dev/ttyS10`
 
 Word boundaries treat any non-alphanumeric character (`/`, `:`, `_`, etc.) as a separator, so partial USB IDs and device-path fragments work naturally.
 
-For anything more elaborate (substring matching across attribute boundaries, regex, negation, etc.), pass a callable:
+For anything more elaborate (substring matching across attribute boundaries, regex, negation, etc.), do your own filtering, or pass a callable:
 
 ```python
 ok_serial.SerialConnectionMonitor(
@@ -148,11 +148,11 @@ When opening a port, [`SerialConnection`](https://egnor.github.io/ok-py-serial/o
 - `exclusive` (the default) - Checks for locks before opening the port, and holds locks to guard against other programs using the port.
 - `stomp` (use with care!) - _Any other program using the port is killed_, if possible; locks are held, if possible; the port is opened regardless.
 
-Sharing mode implementation is limited by OS capabilities, process permissions, and historical conventions of port usage coordination. Best efforts are taken but your mileage may vary.
+Sharing modes are limited by OS capabilities, process permissions, and the conventions of port usage coordination. Best efforts are taken but your mileage may vary.
 
 ## Command line utility
 
-Installing `ok-serial` also installs `okserial`, which lists the serial ports on the system:
+Installing the `ok-serial` package installs the `okserial` utility, which lists serial ports:
 
 ```text
 $ okserial
@@ -191,4 +191,4 @@ with ok_serial.SerialConnection(port="socat.run.tmp") as conn:
     print(conn.read_sync())
 ```
 
-You should see the `echo Hello World` echoed, then `Hello World`, then the next shell prompt. If you use [`ok-serial-terminal`](https://github.com/egnor/ok-serial-terminal#readme), you can connect and operate the shell interactively.
+You should see the `echo Hello World` echoed, then `Hello World`, then the next shell prompt. (Use [`ok-serial-terminal`](https://github.com/egnor/ok-serial-terminal#readme) to connect and operate the shell interactively.)
