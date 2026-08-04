@@ -250,7 +250,7 @@ def test_reset_after_base_content():
     to_term(deco)
     deco.reset()
     # ending column unknown, so move to a fresh line before clearing
-    expect = [b"\x1b7", b"\x1b[r", b"\x1b8", b"\r", b"\n", b"\x1b[J"]
+    expect = [b"\x1b7", b"\x1b[r", b"\x1b8", b"\x1b[J", b"\r", b"\n"]
     assert deco.out_to_terminal == expect
 
 
