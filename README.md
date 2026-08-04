@@ -4,7 +4,7 @@ A Python serial port library (based on [PySerial](https://www.pyserial.com/)) wi
 
 Think twice before using this library! Consider something more established:
 
-- [good old PySerial](https://www.pyserial.com/) - the implementation under `ok-serial`, well established and widely used
+- [good old PySerial](https://www.pyserial.com/) - the implementation under `ok-serial`, established, widely used
 - [pyserial-asyncio](https://github.com/pyserial/pyserial-asyncio) - official and "proper" [asyncio](https://docs.python.org/3/library/asyncio.html) support for PySerial
 - [pyserial-asyncio-fast](https://github.com/home-assistant-libs/pyserial-asyncio-fast) - pyserial-asyncio fork designed for faster writes
 - [aioserial](https://github.com/mrjohannchang/aioserial.py) - alternative asyncio wrapper designed for ease of use
@@ -52,7 +52,7 @@ Here is a minimal example:
 import ok_serial
 
 conn = ok_serial.SerialConnection(match="MyDevice", baud=115200)
-conn.write("Hello Device!")
+conn.write(b"Hello Device!")
 while (data := conn.read_sync(timeout=5)):
     print("Received data:", data)
 print("...5 seconds elapsed with no data")
@@ -167,3 +167,28 @@ Each line includes the device name, [tio](https://github.com/tio/tio)-compatible
 Run `okserial -v` print extra detail; see `okserial --help` for more options.
 
 For an interactive terminal, see [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme).
+
+## Socat for testing and profit
+
+On Unix-ish systems, [socat](http://www.dest-unreach.org/socat/) is handy for connecting serial-port apps (using `ok-serial` or otherwise) to other endpoints (Unix programs, TCP sockets, other serial-port apps, etc). Install it with your favorite package manager (eg. `sudo apt install socat`), and run something like this in one window:
+
+```sh
+socat pty,raw,echo=0,link=socat.tmp exec:$SHELL,pty,stderr,setsid,ctty
+```
+
+The first socat argument `pty,raw,echo=0,link=socat.tmp` allocates a pseudoterminal (pty) that looks like a serial port, and creates a `./socat.tmp` symlink to the device. The `,raw,echo=0` suppresses default pty echo behavior to avoid the shell looping on its own output.
+
+The second socat argument starts a shell on its own pty, but this could be any socat endpoint (`exec:cat`, `tcp:localhost:8000`, another `pty,...`, etc).
+
+Socat will shuffle data between the two. Try this Python in another window in the same directory:
+
+```python
+import ok_serial
+import time
+with ok_serial.SerialConnection(port="socat.run.tmp") as conn:
+    conn.write(b"echo Hello World\n")
+    time.sleep(0.5)  # let shell respond
+    print(conn.read_sync())
+```
+
+You should see the `echo Hello World` echoed, then `Hello World`, then the next shell prompt. If you use [`ok-serial-terminal`](https://github.com/egnor/ok-serial-terminal#readme), you can connect and operate the shell interactively.
