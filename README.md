@@ -10,7 +10,7 @@ Think twice before using this library! Consider something more established:
 - [aioserial](https://github.com/mrjohannchang/aioserial.py) - alternative asyncio wrapper designed for ease of use
 - bonus recommendation: [tio](https://github.com/tio/tio) - not a library, not Python, but a great serial terminal utility
 
-Looking for an interactive terminal? That lives in a separate package now: [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme) (`pip install ok-serial-terminal`, then `okterm <port> [baud]`).
+Also see my own [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme), a terminal program based on this library.
 
 ## Purpose
 
@@ -91,7 +91,7 @@ Specific attributes [come from PySerial](https://pyserial.readthedocs.io/en/late
 - `serial_number` - USB device serial, eg. `DF62585783553434`
 - `location` - system bus attachment path, eg. `3-2.1:1.0`
 
-To see all the attributes, install `ok-serial`, connect some device(s) and run `okserial --print-verbose`:
+To see all the attributes, install `ok-serial` and run `okserial -v`:
 
 ```text
 Port: /dev/ttyACM3 Kq2p 3:12s
@@ -139,8 +139,6 @@ ok_serial.SerialConnectionMonitor(
 )
 ```
 
-Run `okserial` to see which ports are visible and what attributes they have.
-
 ## Sharing modes
 
 When opening a port, [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.__init__) offers a choice of [sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
@@ -164,12 +162,8 @@ $ okserial
 /dev/ttyACM3 Kq2p usb 239a:812d 'Feather RP2040 RFM' DF62585783553434 3:12s
 ```
 
-Each line is the device name, the [tio](https://github.com/tio/tio)-compatible topology ID, and whichever of the subsystem, USB vendor/product ID, description, and serial number are known, followed by how long the port has been present.
+Each line includes the device name, [tio](https://github.com/tio/tio)-compatible topology ID, and whichever of the subsystem, USB vendor/product ID, description, and serial number are known, along with the age of the port.
 
-Arguments are a [port match expression](#port-matching) to filter the list (eg. `okserial RP2040`). Options:
+Run `okserial -v` print extra detail; see `okserial --help` for more options.
 
-- `--one` / `-1` - fail unless exactly one port matches
-- `--print-name` / `-n` - print only device names (handy for scripting)
-- `--print-verbose` / `-v` - print all attributes of each port
-
-For an interactive terminal, see [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme). That repo also has [notes on faking a serial port with socat](https://github.com/egnor/ok-serial-terminal#socat-for-testing-and-profit), handy for testing without hardware.
+For an interactive terminal, see [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme).

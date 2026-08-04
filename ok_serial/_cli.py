@@ -18,14 +18,20 @@ ok_logging_setup.install()
 
 @click.command()
 @click.argument("match", nargs=-1)
-@click.option("--one", "-1", is_flag=True)
-@click.option("--print-name", "-n", is_flag=True)
-@click.option("--print-verbose", "-v", is_flag=True)
+@click.option(
+    "--one", "-1", is_flag=True, help="Fail unless exactly one port matches"
+)
+@click.option(
+    "--name-only", "-n", is_flag=True, help="Print device names, one per line"
+)
+@click.option(
+    "--verbose", "-v", is_flag=True, help="Print details for each port"
+)
 def main(
     match: tuple[str, ...],
+    name_only: bool = False,
     one: bool = False,
-    print_name: bool = False,
-    print_verbose: bool = False,
+    verbose: bool = False,
 ):
     """Print a list of available serial ports"""
 
@@ -49,10 +55,10 @@ def main(
             f"{num} serial ports found, only --one allowed:"
             + "".join(f"\n  {format_line(p)}" for p in found)
         )
-    if print_name:
+    if name_only:
         for p in found:
             click.echo(p.name)
-    elif print_verbose:
+    elif verbose:
         for p in found:
             click.echo(format_detail(p) + "\n")
     else:
