@@ -7,7 +7,7 @@ dependencies = [
   "pyserial>=3.5",
   "types-pyserial>=3.5.0.20251001",
 ]
-description = "Serial port library (PySerial wrapper) with more features"
+description = "Serial port library (PySerial wrapper) with improved semantics"
 name = "ok-serial"
 readme = "README.md"
 requires-python = ">=3.11"

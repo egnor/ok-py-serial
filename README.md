@@ -14,9 +14,9 @@ Think twice before using this library! Consider something more established:
 
 Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) / [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter) library for Python. It runs most places Python does and abstracts lots of gnarly system details. However, some issues keep coming up:
 
-- Most modern serial ports are USB, and get temporary names like `/dev/ttyACM3` or `COM4`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep) or Linux's [udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk) are helpful but clunky.
+- Most modern serial ports are USB, and get temporary names like `/dev/ttyACM3` or `COM4`. PySerial's [`serial.tools.list_ports.grep(...)`](https://pythonhosted.org/pyserial/tools.html#serial.tools.list_ports.grep) or Linux's `/dev/serial/by-id` (or [custom udev rules](https://dev.to/enbis/how-udev-rules-can-help-us-to-recognize-a-usb-to-serial-device-over-dev-tty-interface-pbk)) are helpful but clunky.
 
-- Nonblocking or concurrent PySerial I/O is tricky and often [broken](https://github.com/pyserial/pyserial/issues/281) [entirely](https://github.com/pyserial/pyserial/issues/280).
+- Nonblocking or concurrent PySerial I/O is [tricky](https://github.com/pyserial/pyserial/issues/772) and often [broken](https://github.com/pyserial/pyserial/issues/281) [entirely](https://github.com/pyserial/pyserial/issues/280).
 
 - PySerial has small buffers; overruns lose data and/or block unexpectedly.
 
@@ -26,7 +26,7 @@ The `ok-serial` library uses PySerial internally but has a revised interface:
 
 - Ports are referenced by [match strings](#port-matching) with wildcard support (eg. `RP2040` or `2e43:0226`) or, for by arbitrary `SerialPort -> bool` callables.
 
-- I/O operations are thread safe and can be blocking, non-blocking, timeout-based, or async. Blocking operations can be cleanly interrupted. The semantics of concurrent access, partial reads/writes, interruption, I/O errors, and other edge cases are well defined.
+- I/O operations are thread safe and can be blocking, non-blocking, timeout-based, or async. Blocking operations can be cleanly interrupted. The semantics of concurrent access, partial reads/writes, interruption, I/O errors, closure, and other edge cases are well defined.
 
 - I/O buffers are limited only by system memory; writes never block. (A blocking drain is available.)
 
