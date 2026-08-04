@@ -1,43 +1,31 @@
 #!/usr/bin/env python3
 
-"""CLI tool to scan serial ports and/or communicate with them"""
+"""CLI tool to list serial ports on the system"""
 
 import datetime
 import logging
 import re
-import sys
 
-try:
-    import click
-    import ok_logging_setup
-except ModuleNotFoundError:
-    print("\n⚠️ Try: pip install 'ok-serial[cli]'\n", file=sys.stderr)
-    raise
+import click
+import ok_logging_setup
 
 import ok_serial
-from ok_serial.terminal.main import run_terminal, SerialTerminalOptions
 
 ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException
 ok_logging_setup.skip_traceback_for(EOFError)
 ok_logging_setup.install()
 
 
-@click.group()
-def main():
-    pass
-
-
-@main.command()
+@click.command()
 @click.argument("match", nargs=-1)
 @click.option("--one", "-1", is_flag=True)
 @click.option("--print-name", "-n", is_flag=True)
 @click.option("--print-verbose", "-v", is_flag=True)
-def list_command(
+def main(
     match: tuple[str, ...],
     one: bool = False,
     print_name: bool = False,
     print_verbose: bool = False,
-    wait_time: float = 0.0,
 ):
     """Print a list of available serial ports"""
 
@@ -70,40 +58,6 @@ def list_command(
     else:
         for p in found:
             click.echo(format_line(p))
-
-
-@main.command()
-@click.argument("port_baud", metavar="PORT/BAUD", nargs=-1, required=True)
-@click.option("--plain", "-p", is_flag=True)
-@click.option("--reconnect", "-r", is_flag=True)
-@click.option("--scan-time", "-s", default=0.0)
-@click.option("--oblivious", "sharing", flag_value="oblivious")
-@click.option("--polite", "sharing", flag_value="polite")
-@click.option("--exclusive", "sharing", flag_value="exclusive", default=True)
-@click.option("--stomp", "sharing", flag_value="stomp")
-def term_command(
-    port_baud: tuple[str, ...],
-    plain: bool = False,
-    reconnect: bool = False,
-    scan_time: float = 0.0,
-    sharing: ok_serial.SerialSharingType = "exclusive",
-):
-    """Start an interactive terminal on a serial port"""
-
-    baud = 115200
-    if port_baud[-1].isdigit():
-        port_baud, baud = port_baud[:-1], int(port_baud[-1])
-
-    match = " ".join(port_baud)
-    copts = ok_serial.SerialConnectionOptions(baud=baud, sharing=sharing)
-    mopts = ok_serial.SerialMonitorOptions(
-        scan_timeout=scan_time,
-        reconnect_limit=None if reconnect else 0,
-    )
-    topts = SerialTerminalOptions(
-        match=match, copts=copts, mopts=mopts, plain=plain
-    )
-    run_terminal(topts)
 
 
 def format_line(port: ok_serial.SerialPort):

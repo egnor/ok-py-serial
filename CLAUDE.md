@@ -53,6 +53,10 @@ uv run pytest tests/test_matching.py::test_whole_word_match
 
 - **`_exceptions.py`**: Exception hierarchy rooted at `SerialException` (extends `OSError`)
 
+- **`_cli.py`**: the `okserial` command, which lists ports and nothing else.
+  (The interactive terminal lives in a separate repo/package,
+  [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal).)
+
 ### Testing
 
 Tests use pseudo-TTYs (`pty.openpty()`) to simulate serial ports without hardware. The `pty_serial` fixture in `conftest.py` provides a test serial connection.

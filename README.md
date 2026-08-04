@@ -10,6 +10,8 @@ Think twice before using this library! Consider something more established:
 - [aioserial](https://github.com/mrjohannchang/aioserial.py) - alternative asyncio wrapper designed for ease of use
 - bonus recommendation: [tio](https://github.com/tio/tio) - not a library, not Python, but a great serial terminal utility
 
+Looking for an interactive terminal? That lives in a separate package now: [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme) (`pip install ok-serial-terminal`, then `okterm <port> [baud]`).
+
 ## Purpose
 
 Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial port](https://en.wikipedia.org/wiki/Serial_port) / [UART](https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter) library for Python. It runs most places Python does and abstracts lots of gnarly system details. However, some issues keep coming up:
@@ -89,26 +91,28 @@ Specific attributes [come from PySerial](https://pyserial.readthedocs.io/en/late
 - `serial_number` - USB device serial, eg. `DF62585783553434`
 - `location` - system bus attachment path, eg. `3-2.1:1.0`
 
-To see all the attributes, install `ok-serial`, connect some device(s) and run `okserial list --print-verbose`:
+To see all the attributes, install `ok-serial`, connect some device(s) and run `okserial --print-verbose`:
 
 ```text
-Serial port: /dev/ttyACM3
-   device='/dev/ttyACM3'
-   name='ttyACM3'
-   description='Feather RP2040 RFM - Pico Serial'
-   hwid='USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
-   vid='9114'
-   pid='33069'
-   serial_number='DF62585783553434'
-   location='3-2.1:1.0'
-   manufacturer='Adafruit'
-   product='Feather RP2040 RFM'
-   interface='Pico Serial'
-   usb_device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1'
-   device_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-   subsystem='usb'
-   usb_interface_path='/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0'
-   vid_pid='239A:812D'
+Port: /dev/ttyACM3 Kq2p 3:12s
+  device=/dev/ttyACM3
+  name=ttyACM3
+  description='Feather RP2040 RFM - Pico Serial'
+  hwid='USB VID:PID=239A:812D SER=DF62585783553434 LOCATION=3-2.1:1.0'
+  vid=9114
+  pid=33069
+  serial_number=DF62585783553434
+  location=3-2.1:1.0
+  manufacturer=Adafruit
+  product='Feather RP2040 RFM'
+  interface='Pico Serial'
+  usb_device_path=/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1
+  device_path=/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0
+  subsystem=usb
+  usb_interface_path=/sys/devices/pci0000:00/0000:00:14.0/usb3/3-2/3-2.1/3-2.1:1.0
+  tid=Kq2p
+  time=2026-08-04T12:38:39.800
+  vid_pid=239a:812d
 ...
 ```
 
@@ -135,7 +139,7 @@ ok_serial.SerialConnectionMonitor(
 )
 ```
 
-Run `okserial list` to see which ports are visible and what attributes they have.
+Run `okserial` to see which ports are visible and what attributes they have.
 
 ## Sharing modes
 
@@ -148,26 +152,24 @@ When opening a port, [`SerialConnection`](https://egnor.github.io/ok-py-serial/o
 
 Sharing mode implementation is limited by OS capabilities, process permissions, and historical conventions of port usage coordination. Best efforts are taken but your mileage may vary.
 
-## Terminal emulator
+## Command line utility
 
-Install `ok-serial` and run `okserial term <port> [baud]` to launch a simple terminal emulator connected to the specified port, eg. `okserial term MyDevice 115200`. See `okserial term --help` for options; use ctrl-`]` for a menu, ctrl-`\\` to quit.
+Installing `ok-serial` also installs `okserial`, which lists the serial ports on the system:
 
-## Socat for testing and profit
-
-On Unix-ish systems, [socat](http://www.dest-unreach.org/socat/) is handy for connecting serial-port apps (okserial or otherwise) to non-serial endpoints (like a Unix program or a TCP socket). Install it with your favorite package manager (eg. `sudo apt install socat`), and run something like this in one window:
-
-```sh
-socat pty,raw,echo=0,link=socat.tmp shell:pty,stderr,setsid,ctty
+```text
+$ okserial
+🔎 Finding serial ports...
+✅ 2 serial ports found
+/dev/ttyACM0 ZdvG usb 0424:494c 'USB2 Controller Hub - UART Bridge' 1d+04:18:11s
+/dev/ttyACM3 Kq2p usb 239a:812d 'Feather RP2040 RFM' DF62585783553434 3:12s
 ```
 
-The first socat argument `pty,raw,echo=0,link=socat.tmp` allocates a pseudoterminal (pty) that looks like a serial port, and creates a `./socat.tmp` symlink to the device. The `,raw,echo=0` suppresses default pty echo behavior to avoid the shell looping on its own output.
+Each line is the device name, the [tio](https://github.com/tio/tio)-compatible topology ID, and whichever of the subsystem, USB vendor/product ID, description, and serial number are known, followed by how long the port has been present.
 
-The second socat argument `shell:ptr,stderr,setsid,ctty` starts a shell on its own pty, but this could be any socat endpoint (`exec:cat`, `tcp:localhost:8000`, etc).
+Arguments are a [port match expression](#port-matching) to filter the list (eg. `okserial RP2040`). Options:
 
-Socat will then shuffle data between the two points. Try this in another window (in the same directory):
+- `--one` / `-1` - fail unless exactly one port matches
+- `--print-name` / `-n` - print only device names (handy for scripting)
+- `--print-verbose` / `-v` - print all attributes of each port
 
-```sh
-okserial term socat.tmp  # in the same directory in another window
-```
-
-You should get terminal connected to the pty socat allocated; hit enter and you should see a shell prompt.
+For an interactive terminal, see [ok-serial-terminal](https://github.com/egnor/ok-serial-terminal#readme). That repo also has [notes on faking a serial port with socat](https://github.com/egnor/ok-serial-terminal#socat-for-testing-and-profit), handy for testing without hardware.
