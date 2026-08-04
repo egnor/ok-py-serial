@@ -176,7 +176,7 @@ On Unix-ish systems, [socat](http://www.dest-unreach.org/socat/) is handy for co
 socat pty,raw,echo=0,link=socat.tmp exec:$SHELL,pty,stderr,setsid,ctty
 ```
 
-The first socat argument `pty,raw,echo=0,link=socat.tmp` allocates a pseudoterminal (pty) that looks like a serial port, and creates a `./socat.tmp` symlink to the device. The `,raw,echo=0` suppresses default pty echo behavior to avoid the shell looping on its own output.
+The first socat argument `pty,raw,echo=0,link=socat.tmp` allocates a pseudoterminal (pty) that looks like a serial port, and creates a `./socat.tmp` symlink. The `,raw,echo=0` suppresses default pty echo behavior to avoid the shell looping on its own output.
 
 The second socat argument starts a shell on its own pty, but this could be any socat endpoint (`exec:cat`, `tcp:localhost:8000`, another `pty,...`, etc).
 
