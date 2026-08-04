@@ -328,7 +328,7 @@ wheels = [
 
 [[package]]
 name = "ok-serial"
-version = "0.4"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
