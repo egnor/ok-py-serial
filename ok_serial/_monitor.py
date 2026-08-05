@@ -29,10 +29,7 @@ class SerialMonitorOptions:
     """Seconds between port re-scans when waiting for a match."""
 
     scan_timeout: float | int | None = None
-    """Seconds to scan before giving up permanently (None = no limit)."""
-
-    reconnect_limit: int | None = None
-    """Reconnection attempts before giving up permanently (None = no limit)."""
+    """Seconds to scan per (re)connection before giving up (None = no limit)."""
 
 
 class SerialConnectionMonitor(contextlib.AbstractContextManager):
@@ -41,6 +38,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
     re-scanning and re-connecting as needed after errors, with periodic retry.
     This is used for robust communication with a serial device which might be
     plugged and unplugged during operation.
+
+    Thread-safe: any method may be called from any thread at any time.
     """
 
     def __init__(
@@ -61,8 +60,9 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
         - `mopts` can define parameters for tracking (eg. re-scan interval)
 
         Actual port scans and connections only happen when `connect_*`
-        is called. Call `close` to end any open connection, and/or use
-        `SerialConnectionMonitor` as the target of a `with` statement.
+        is called. Use `SerialConnectionMonitor` as the target of a `with`
+        statement to release any open connection when you're done with it.
+        (After that, don't use it again, create a fresh one to resume.)
         """
 
         if baud:
@@ -73,18 +73,22 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
         self.mopts = mopts
 
         self._lock = threading.Lock()
-        self._baseline_keys: set[str] | None = None
         self._scan_matched: SerialPort | None = None
         self._scan_deadline: float | None = None
         self._next_scan = 0.0
-        self._reconnect_count = 0
         self._conn: SerialConnection | None = None
         self._conn_error: SerialException | None = None
 
         log.debug("Tracking %r", match or "(any port)")
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
+        """Closes any open connection with `SerialConnection.close`."""
+
+        with self._lock:
+            if self._conn:
+                log.debug("Closing %s", self._conn.port_name)
+                self._conn.close()
+                self._conn = None
 
     def __repr__(self) -> str:
         return (
@@ -92,17 +96,6 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
             f"copts={self.copts!r}), "
             f"mopts={self.mopts!r}"
         )
-
-    def close(self) -> None:
-        """
-        Closes any open connection with `SerialConnection.close`. A subsequent
-        call to `connect_sync`/`connect_async` will establish a new connection.
-        """
-
-        with self._lock:
-            if self._conn:
-                log.debug("Closing %s", self._conn.port_name)
-                self._conn.close()
 
     def connect_sync(
         self, timeout: float | int | None = None
@@ -118,7 +111,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
 
         Raises:
         - `SerialScanException` - System error scanning ports
-        - `SerialMonitorExhausted` - Permanent timeout or reconnect limit hit
+        - `SerialMonitorExhausted` - Gave up scanning (see `scan_timeout`)
         """
 
         call_deadline = to_deadline(timeout)
@@ -126,18 +119,10 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
             with self._lock:
                 # Return an existing live connection if possible
                 if self._conn:
-                    limit = self.mopts.reconnect_limit
                     try:
                         self._conn.write(b"")  # check for liveness
                         return self._conn
                     except SerialIoException as ex:
-                        self._reconnect_count += 1
-                        if limit == 0:
-                            msg = f"{ex} (reconnect disabled)"
-                            raise SerialMonitorExhausted(msg) from ex
-                        if limit and (n := self._reconnect_count) > limit:
-                            msg = f"{ex} (reconnect {n}/{limit})"
-                            raise SerialMonitorExhausted(msg) from ex
                         log_level = 20 if isinstance(ex, SerialIoClosed) else 30
                         log.log(log_level, "⛓️‍💥 %s (reconnecting)", ex)
 
@@ -188,13 +173,13 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                         self._scan_matched = None  # cool down until re-scan
                         log.warning("%s", self._conn_error)
 
-            assert self._scan_deadline is not None
-            if from_deadline(self._scan_deadline) < wait:
-                scan_timeout = self.mopts.scan_timeout
-                msg = f"Can't open {self.match!r}"
-                if scan_timeout and scan_timeout > 0:
-                    msg += f" ({scan_timeout:.2f}s timeout)"
-                raise SerialMonitorExhausted(msg) from self._conn_error
+                assert self._scan_deadline is not None  # still under the lock
+                if from_deadline(self._scan_deadline) < wait:
+                    scan_timeout = self.mopts.scan_timeout
+                    msg = f"Can't open {self.match!r}"
+                    if scan_timeout and scan_timeout > 0:
+                        msg += f" ({scan_timeout:.2f}s timeout)"
+                    raise SerialMonitorExhausted(msg) from self._conn_error
 
             if from_deadline(call_deadline) < wait:
                 return None
@@ -205,7 +190,11 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
     async def connect_async(self) -> SerialConnection:
         """
         Similar to `connect_sync` but returns a coroutine instead of
-        blocking the current thread.
+        blocking the current thread while waiting to retry after failure.
+
+        Note, actual connection attempts do run synchronously, blocking this
+        loop thread. This is not typically unbounded but can take nontrivial
+        time depending on the platform and its approach to USB and such.
         """
 
         while True:

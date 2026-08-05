@@ -25,21 +25,21 @@ class SerialConnectionOptions:
     """The [baud rate](https://en.wikipedia.org/wiki/Baud) to use."""
 
     sharing: SerialSharingType = "exclusive"
-    """
-    Port access negotiation strategy:
+    """Port access negotiation strategy.
+
     - `"oblivious"` - Don't perform any locking.
-    - `"polite"` - Defer to other users, don't lock the port.
-    - `"exclusive"` - Require exclusive access, lock the port or fail.
-    - `"stomp"` - Try to kill other users, try to lock the port, open the
-      port regardless. Use with care!
+    - `"polite"` - Defer to any other use of the port; don't lock the port.
+    - `"exclusive"` - Require exclusive access; lock the port or fail.
+    - `"stomp"` - Try to kill other processes using the port, try to lock the
+      port, open the port regardless. Use with care!
     """
 
 
 @dataclasses.dataclass(frozen=True)
 class SerialControlSignals:
-    """
-    [RS-232 modem control lines](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals),
-    outgoing ("DTE to DCE") and incoming ("DCE to DTE").
+    """[RS-232 modem control lines](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals).
+
+    Includes outgoing ("DTE to DCE") and incoming ("DCE to DTE") signals.
     """
 
     dtr: bool
@@ -66,7 +66,11 @@ class TimestampBytes(bytes):
 
 
 class SerialConnection(contextlib.AbstractContextManager):
-    """An open connection to a serial port."""
+    """An open connection to a serial port.
+
+    Thread-safe: any method may be called from any thread at any time,
+    and any `*_async` method may be awaited from any event loop in any thread.
+    """
 
     def __init__(
         self,
@@ -76,8 +80,8 @@ class SerialConnection(contextlib.AbstractContextManager):
         opts: SerialConnectionOptions = SerialConnectionOptions(),
         **kwargs,
     ):
-        """
-        Opens a serial port to make it available for use.
+        """Opens a serial port to make it available for use.
+
         - `match` is a
           [match string](https://github.com/egnor/ok-py-serial#port-matching)
           or `SerialPort -> bool` callable matching exactly one port...
@@ -147,38 +151,48 @@ class SerialConnection(contextlib.AbstractContextManager):
                 cleanup.callback(port_lock.release_fd)
                 port_lock.attach_fd(pyserial.fileno())
 
-            self._io = cleanup.enter_context(_IoThreads(pyserial, port_lock))
+            # (annotated because AbstractContextManager.__enter__ gives Any,
+            # which would silently disable checking of every self._io use)
+            self._io: _IoThreads = cleanup.enter_context(
+                _IoThreads(pyserial, port_lock)
+            )
             self._io.start()
+            self._cleanup_lock = threading.Lock()  # assigned before _cleanup
             self._cleanup = cleanup.pop_all()
 
     def __del__(self) -> None:
         if cleanup := getattr(self, "_cleanup", None):
-            cleanup.close()
+            with self._cleanup_lock:
+                cleanup.close()
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self._cleanup.__exit__(exc_type, exc_value, traceback)
+        with self._cleanup_lock:
+            self._cleanup.__exit__(exc_type, exc_value, traceback)
 
     def __repr__(self) -> str:
-        return f"SerialConnection({self._io.pyserial.port!r})"
+        return f"SerialConnection({self._io.device!r})"
 
     def close(self) -> None:
-        """
-        Releases the serial port connection and any associated locks.
+        """Releases the serial port connection and any associated locks.
 
-        Any I/O operations in progress or attempted after closure will
-        raise an immediate `SerialIoClosed` exception.
+        Blocks until connection I/O threads have finished.
+        Thread-safe, OK to call repeatedly, and OK to call with I/O in flight.
+        Any I/O operations in progress or attempted after closure raise an
+        immediate `SerialIoClosed` exception.
         """
 
-        self._cleanup.close()
+        with self._cleanup_lock:
+            self._cleanup.close()
 
     def read_sync(
         self,
         *,
         timeout: float | int | None = None,
     ) -> TimestampBytes:
-        """
-        Waits up to `timeout` seconds (forever for `None`) for data,
+        """Waits up to `timeout` seconds (forever for `None`) for any data,
         then returns all of it (b"" on timeout).
+
+        Thread-safe, but each call takes all the currently buffered data.
 
         Raises:
         - `SerialIoException` - port I/O failed and there is no matching data
@@ -194,17 +208,19 @@ class SerialConnection(contextlib.AbstractContextManager):
                     self._io.incoming.clear()
                     self._io.incoming_monotime = 0.0
                     return out
-                elif self._io.exception:
-                    raise self._io.exception
-                elif (wait := from_deadline(deadline)) <= 0:
+
+                self._io.check_poison_locked()
+                if (wait := from_deadline(deadline)) <= 0:
                     return TimestampBytes(b"", 0.0)
-                else:
-                    self._io.monitor.wait(timeout=wait)
+                self._io.monitor.wait(timeout=wait)
 
     async def read_async(self) -> TimestampBytes:
-        """
-        Similar to `read_sync` but returns a coroutine instead of
-        blocking the current thread.
+        """Similar to `read_sync` but returns a coroutine instead of blocking.
+
+        OK to call from any event loop on any thread, but as with `read_sync`
+        each call takes all the currently buffered data.
+
+        Raises `RuntimeError` if there is no running event loop.
         """
 
         while True:
@@ -214,11 +230,10 @@ class SerialConnection(contextlib.AbstractContextManager):
             await future
 
     def write(self, data: bytes | bytearray) -> None:
-        """
-        Adds data to the outgoing buffer to be sent immediately.
-        Never blocks; the buffer can grow indefinitely.
-        (Use `outgoing_size` and `drain_sync`/`drain_async` to manage
-        buffer size.)
+        """Adds data to the outgoing buffer to be sent immediately.
+
+        Never blocks; the buffer can grow indefinitely. (Use `outgoing_size`
+        and `drain_sync`/`drain_async` to manage buffer size.)
 
         Raises:
         - `SerialIoException` - port I/O failed
@@ -226,15 +241,13 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
 
         with self._io.monitor:
-            if self._io.exception:
-                raise self._io.exception
-            elif data:
+            self._io.check_poison_locked()
+            if data:
                 self._io.outgoing.extend(data)
                 self._io.monitor.notify_all()
 
     def drain_sync(self, *, timeout: float | int | None = None) -> bool:
-        """
-        Waits up to `timeout` seconds (forever for `None`) until
+        """Waits up to `timeout` seconds (forever for `None`) until
         all buffered data is transmitted.
 
         Returns `True` if the drain completed, `False` on timeout.
@@ -247,19 +260,17 @@ class SerialConnection(contextlib.AbstractContextManager):
         deadline = to_deadline(timeout)
         while True:
             with self._io.monitor:
-                if self._io.exception:
-                    raise self._io.exception
-                elif not self._io.outgoing:
+                self._io.check_poison_locked()
+                if not self._io.outgoing:
                     return True
-                elif (wait := from_deadline(deadline)) <= 0:
+                if (wait := from_deadline(deadline)) <= 0:
                     return False
-                else:
-                    self._io.monitor.wait(timeout=wait)
+                self._io.monitor.wait(timeout=wait)
 
     async def drain_async(self) -> bool:
-        """
-        Similar to `drain_sync` but returns a coroutine instead of
-        blocking the current thread.
+        """Similar to `drain_sync` but returns a coroutine instead of blocking.
+
+        Raises `RuntimeError` if there is no running event loop.
         """
 
         while True:
@@ -269,16 +280,12 @@ class SerialConnection(contextlib.AbstractContextManager):
             await future
 
     def incoming_size(self) -> int:
-        """
-        Returns the number of bytes waiting to be read.
-        """
+        """Returns the number of bytes waiting to be read."""
         with self._io.monitor:
             return len(self._io.incoming)
 
     def outgoing_size(self) -> int:
-        """
-        Returns the number of bytes waiting to be sent.
-        """
+        """Returns the number of bytes waiting to be sent."""
         with self._io.monitor:
             return len(self._io.outgoing)
 
@@ -288,10 +295,10 @@ class SerialConnection(contextlib.AbstractContextManager):
         rts: bool | None = None,
         send_break: bool | None = None,
     ) -> None:
-        """
-        Sets outgoing
+        """Sets outgoing
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals)
-        state (use `None` for no change):
+        state (use `None` for no change).
+
         - `dtr` - assert Data Terminal Ready
         - `rts` - assert Ready To Send
         - `send_break` - send a continuous BREAK condition
@@ -302,8 +309,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
 
         with self._io.monitor:
-            if self._io.exception:
-                raise self._io.exception
+            self._io.check_poison_locked()
             try:
                 if dtr is not None:
                     self._io.pyserial.dtr = dtr
@@ -312,16 +318,14 @@ class SerialConnection(contextlib.AbstractContextManager):
                 if send_break is not None:
                     self._io.pyserial.break_condition = send_break
             except OSError as ex:
-                msg, dev = "Can't set control signals", self._io.pyserial.port
+                msg, dev = "Can't set control signals", self._io.device
                 if ex.errno == errno.ENOTTY:  # could be pty; don't poison
                     raise _exceptions.SerialIoUnsupported(msg, dev) from ex
-                exc = _exceptions.SerialIoException(msg, dev)
-                exc.__cause__ = ex
-                raise exc
+                self._io.poison_locked(_exceptions.SerialIoException, msg, ex)
+                self._io.check_poison_locked()  # report to the caller
 
     def get_signals(self) -> SerialControlSignals:
-        """
-        Returns the current
+        """Returns the current
         [RS-232 modem control line](https://en.wikipedia.org/wiki/RS-232#Data_and_control_signals) state.
 
         Raises:
@@ -330,8 +334,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
 
         with self._io.monitor:
-            if self._io.exception:
-                raise self._io.exception
+            self._io.check_poison_locked()
             try:
                 return SerialControlSignals(
                     dtr=self._io.pyserial.dtr,
@@ -343,37 +346,38 @@ class SerialConnection(contextlib.AbstractContextManager):
                     sending_break=self._io.pyserial.break_condition,
                 )
             except OSError as ex:
-                msg, dev = ("Can't get control signals", self._io.pyserial.port)
+                msg, dev = ("Can't get control signals", self._io.device)
                 if ex.errno == errno.ENOTTY:  # could be pty; don't poison
                     raise _exceptions.SerialIoUnsupported(msg, dev) from ex
-                self._io.exception = _exceptions.SerialIoException(msg, dev)
-                self._io.exception.__cause__ = ex
-                raise self._io.exception
+                self._io.poison_locked(_exceptions.SerialIoException, msg, ex)
+                self._io.check_poison_locked()  # report to the caller
+                assert False, "check_poison_locked() should have raised"
 
     @property
     def port_name(self) -> str:
-        """
-        The port's device name, eg. `/dev/ttyACM0` or `COM3`.
-        """
-        return self._io.pyserial.port
+        """The port's device name, eg. `/dev/ttyACM0` or `COM3`."""
+        return self._io.device
 
     @property
     def pyserial(self) -> serial.Serial:
-        """
-        The underlying
+        """The underlying
         [`pyserial.Serial`](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial)
         object (API escape hatch).
+
+        NOT SYNCHRONIZED. Use at your own risk.
         """
         return self._io.pyserial
 
     def fileno(self) -> int:
-        """
-        The [Unix FD](https://en.wikipedia.org/wiki/File_descriptor)
+        """The [Unix FD](https://en.wikipedia.org/wiki/File_descriptor)
         for the serial connection, -1 if not available.
         """
+        pyserial = self._io.pyserial
         try:
-            return self._io.serial.fileno()
-        except AttributeError:
+            return pyserial.fileno()
+        except AttributeError:  # no fileno() at all (eg. on Windows)
+            return -1
+        except OSError:  # port closed, or otherwise has no descriptor
             return -1
 
 
@@ -383,72 +387,103 @@ class _IoThreads(contextlib.AbstractContextManager):
         pyserial: serial.Serial,
         port_lock: PortLock | None = None,
     ) -> None:
-        self.threads: list[threading.Thread] = []
+        assert pyserial.port is not None
+        self.device: str = pyserial.port  # pyserial's is typed `str | None`
         self.pyserial = pyserial
-        self.port_lock = port_lock
         self.monitor = threading.Condition()
         self.outgoing = bytearray()
         self.incoming = bytearray()
         self.incoming_monotime = 0.0
-        self.exception: None | _exceptions.SerialIoException = None
-        self.async_futures: list[asyncio.Future[None]] = []
-        self.async_loop: asyncio.AbstractEventLoop | None
-        try:
-            self.async_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self.async_loop = None
+        self._poison_type: type[_exceptions.SerialIoException] | None = None
+        self._poison_message: str | None = None
+        self._poison_cause: BaseException | None = None
+        self._port_lock = port_lock
+        self._threads: list[threading.Thread] = []
+
+        # Async futures grouped by the event loop to dispatch to.
+        NotifyType = dict[asyncio.AbstractEventLoop, list[asyncio.Future[None]]]
+        self.async_notify: NotifyType = {}
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.stop()
 
     def start(self):
         for t, n in ((self._readloop, "reader"), (self._writeloop, "writer")):
-            dev = self.pyserial.port
+            dev = self.device
             thread = threading.Thread(target=t, name=f"{dev} {n}", daemon=True)
             thread.start()
-            self.threads.append(thread)
+            self._threads.append(thread)
 
     def stop(self):
         with self.monitor:
-            if not isinstance(self.exception, _exceptions.SerialIoClosed):
-                msg, dev = "Serial port closed", self.pyserial.port
-                exc = _exceptions.SerialIoClosed(msg, dev)
-                exc.__context__, self.exception = self.exception, exc
-                self._notify_all_locked()
+            self.poison_locked(_exceptions.SerialIoClosed, "Serial port closed")
 
         try:
             self.pyserial.cancel_read()
             self.pyserial.cancel_write()
-            log.debug("Cancelled %s I/O", self.pyserial.port)
+            log.debug("Cancelled %s I/O", self.device)
         except OSError as ex:
-            log.warning("Can't cancel %s I/O (%s)", self.pyserial.port, ex)
+            log.warning("Can't cancel %s I/O (%s)", self.device, ex)
 
-        log.debug("Joining %s I/O threads", self.pyserial.port)
-        for thr in self.threads:
+        log.debug("Joining %s I/O threads", self.device)
+        for thr in self._threads:
             thr.join()
+
+    def create_future_in_loop(self) -> asyncio.Future[None]:
+        """Returns a future (on the running loop) resolved on state change."""
+        loop = asyncio.get_running_loop()
+        with self.monitor:
+            future = loop.create_future()
+            self.async_notify.setdefault(loop, []).append(future)
+            return future
+
+    def poison_locked(
+        self,
+        exc_type: type[_exceptions.SerialIoException],
+        message: str,
+        cause: BaseException | None = None,
+    ) -> None:
+        """Marks the connection dead. (Must call with self.monitor.)"""
+        if (
+            issubclass(exc_type, _exceptions.SerialIoClosed)
+            and self._poison_type is not None
+            and not issubclass(self._poison_type, _exceptions.SerialIoClosed)
+        ):  # override non-SerialIoClosed with SerialIoClosed
+            message += f" (after {self._poison_message})"
+            cause = cause or self._poison_cause
+        elif self._poison_type:
+            return  # keep the first error; no change -> no notify needed
+
+        self._poison_type = exc_type
+        self._poison_message = message
+        self._poison_cause = cause
+        self._notify_all_locked()
+
+    def check_poison_locked(self) -> None:
+        """Raises if the connection is dead. (Must call with self.monitor.)"""
+        if self._poison_type:
+            msg = self._poison_message or "Serial error"
+            if cause := self._poison_cause:
+                raise self._poison_type(msg, self.device) from cause
+            raise self._poison_type(msg, self.device)
 
     def _readloop(self) -> None:
         log.debug("Starting thread")
-        while not self.exception:
-            incoming, error, monotonic_time = b"", None, 0.0
+        while not self._poison_type:
+            incoming, exc, monotonic_time = b"", None, 0.0
             try:
                 # Block for at least one byte, then grab all available
                 incoming = self.pyserial.read(size=1)
                 monotonic_time = time.monotonic()
-                if self.port_lock:
-                    self.port_lock.check()
+                if self._port_lock:
+                    self._port_lock.check()
                 if incoming:
                     waiting = self.pyserial.in_waiting
                     if waiting > 0:
                         incoming += self.pyserial.read(size=waiting)
-            except _exceptions.SerialIoException as ex:
-                error = ex
-                data_log.debug("%s", ex)
-            except OSError as ex:
-                msg, dev = "Serial read error", self.pyserial.port
-                error = _exceptions.SerialIoException(msg, dev)
-                error.__cause__ = ex
-                data_log.debug("%s: %s", msg, ex)
+            except OSError as ex:  # includes SerialIoException
+                exc = ex
+                data_log.debug("Read: %s", ex)
 
             with self.monitor:
                 if incoming:
@@ -457,27 +492,31 @@ class _IoThreads(contextlib.AbstractContextManager):
                     self.incoming.extend(incoming)
                     in_len, buf_len = len(incoming), len(self.incoming)
                     data_log.debug("Read %db -> buf=%db", in_len, buf_len)
-                self.exception = self.exception or error
-                self._notify_all_locked()
+                if isinstance(exc, _exceptions.SerialIoException):
+                    self.poison_locked(type(exc), exc.message, exc.__cause__)
+                elif exc:
+                    msg = "Serial read error"
+                    self.poison_locked(_exceptions.SerialIoException, msg, exc)
+                else:
+                    self._notify_all_locked()
 
     def _writeloop(self) -> None:
         log.debug("Starting thread")
+        chunk = b""
 
         # Avoid blocking on writes to avoid pyserial bugs:
         # https://github.com/pyserial/pyserial/issues/280
         # https://github.com/pyserial/pyserial/issues/281
-        chunk, error = b"", None
-        while not self.exception:
+        while not self._poison_type:
+            exc = None
             if chunk:
                 try:
                     self.pyserial.write(chunk)
                     self.pyserial.flush()
                 except OSError as ex:
+                    exc = ex
                     chunk = b""
-                    msg, dev = "Serial write error", self.pyserial.port
-                    error = _exceptions.SerialIoException(msg, dev)
-                    error.__cause__ = ex
-                    data_log.debug("%s (%s)", msg, ex)
+                    data_log.debug("Write: %s", ex)
 
             with self.monitor:
                 if chunk:
@@ -485,38 +524,29 @@ class _IoThreads(contextlib.AbstractContextManager):
                     chunk_len, outgoing_len = len(chunk), len(self.outgoing)
                     data_log.debug("Wrote %d/%db", chunk_len, outgoing_len)
                     del self.outgoing[:chunk_len]
-                if chunk or error:
-                    self.exception = self.exception or error
+                if exc:
+                    msg = "Serial write error"
+                    self.poison_locked(_exceptions.SerialIoException, msg, exc)
+                elif chunk:
                     self._notify_all_locked()
-                while not self.exception and not self.outgoing:
+                while not self._poison_type and not self.outgoing:
                     self.monitor.wait()
                 chunk = bytes(self.outgoing[:256])
 
     def _notify_all_locked(self) -> None:
-        """Must be run with self.monitor lock held."""
-
+        """Ping sync and async state watchers. (Must call with self.monitor.)"""
         self.monitor.notify_all()
-        if self.async_futures:
-            assert self.async_loop
-            self.async_loop.call_soon_threadsafe(self._resolve_futures_in_loop)
+        for loop, futures in self.async_notify.items():
+            try:
+                loop.call_soon_threadsafe(_resolve_futures_in_loop, futures)
+            except RuntimeError:  # loop closed with waiters still registered
+                log.debug("Dropped waiters for closed event loop")
+        self.async_notify.clear()
 
-    def create_future_in_loop(self) -> asyncio.Future[None]:
-        """Must be run from an asyncio event loop."""
 
-        assert self.async_loop
-        with self.monitor:
-            future = self.async_loop.create_future()
-            self.async_futures.append(future)
-            return future
+def _resolve_futures_in_loop(futures: list[asyncio.Future[None]]) -> None:
+    """Resolves all of `futures`. (Must run in their event loop.)"""
 
-    def _resolve_futures_in_loop(self) -> None:
-        """Must be run from an asyncio event loop."""
-
-        # Exceptions will be handled by the event loop exception handler
-        assert self.async_loop
-        with self.monitor:
-            to_resolve, self.async_futures = self.async_futures, []
-
-        for future in to_resolve:
-            if not future.done():
-                future.set_result(None)
+    for future in futures:
+        if not future.done():
+            future.set_result(None)

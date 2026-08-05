@@ -140,9 +140,9 @@ class PortLock(contextlib.AbstractContextManager):
                 termios_attr = termios.tcgetattr(self._fd)
                 excl_state = array.array("i", [0])
                 fcntl.ioctl(self._fd, _TIOCGEXCL, excl_state, True)
-            except (OSError, termios.error):
+            except (OSError, termios.error) as ex:
                 msg = "Error checking for conflict"
-                raise _exceptions.SerialIoException(msg, self.device)
+                raise _exceptions.SerialIoException(msg, self.device) from ex
 
             iflag_ok = (termios_attr[0] & _CANARY_IFLAG) == _CANARY_IFLAG
             lflag_ok = (termios_attr[3] & _CANARY_LFLAG) == _CANARY_LFLAG
@@ -170,8 +170,13 @@ def _claim_lock_file(device: str, lock_path: Path, mode: str) -> None:
 
         if owner_pid := _lock_file_owner(lock_path):
             if owner_pid == os.getpid():
-                log.debug("We already own %s", lock_path)
-                return
+                # Treat our own PID like any other (matching PortLock.__enter__
+                # and .check(), which already do). Whether another connection
+                # in this process holds the port or leaked a lock file for it,
+                # this connection can't have it -- and don't SIGTERM ourselves.
+                log.debug("This process owns %s", lock_path)
+                msg = f"Port busy ({lock_path} pid={owner_pid}, this process)"
+                raise _exceptions.SerialOpenBusy(msg, device)
             if mode == "stomp":
                 for _try in range(5):
                     try:

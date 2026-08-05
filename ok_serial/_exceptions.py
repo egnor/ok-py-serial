@@ -7,9 +7,13 @@ class SerialException(OSError):
     port: str | None
     """The device name of the serial port involved in the error."""
 
+    message: str
+    """The error description, without the `port` prefix `str` carries."""
+
     def __init__(self, message: str, port: str | None = None):
         super().__init__(f"{port}: {message}" if port else message)
         self.port = port
+        self.message = message
 
 
 class SerialIoException(SerialException):
@@ -55,6 +59,6 @@ class SerialScanException(SerialException):
 
 
 class SerialMonitorExhausted(SerialException):
-    """Exception raised for permanent timeout or retry limit finding a port."""
+    """Exception raised when a monitor gives up scanning for a port."""
 
     pass

@@ -237,3 +237,28 @@ def test_check_detects_lock_file_appearing(fs, mocker):
         Path("/var/lock/LCK..ttyTEST0").write_text("         1\n")
         with pytest.raises(ok_serial.SerialIoConflict):
             lock.check()
+
+
+#
+# Locks are keyed by process, so this process does not get to double-open a
+# port it already holds (and "stomp" does not SIGTERM its own process)
+#
+
+
+@pytest.mark.parametrize("sharing", ["polite", "exclusive", "stomp"])
+def test_same_process_reopen_is_refused(pty_serial, sharing):
+    with ok_serial.SerialConnection(port=pty_serial.path, sharing=sharing):
+        with pytest.raises(ok_serial.SerialOpenBusy):
+            ok_serial.SerialConnection(port=pty_serial.path, sharing=sharing)
+
+    # ...and the port is usable again once the first connection lets go
+    with ok_serial.SerialConnection(port=pty_serial.path, sharing=sharing):
+        pass
+
+
+def test_oblivious_allows_same_process_reopen(pty_serial):
+    with ok_serial.SerialConnection(port=pty_serial.path, sharing="oblivious"):
+        with ok_serial.SerialConnection(
+            port=pty_serial.path, sharing="oblivious"
+        ):
+            pass

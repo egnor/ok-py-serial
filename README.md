@@ -74,9 +74,9 @@ I/O methods come in different flavors:
   - Errors are reported via the coroutine (`await` will raise)
 - Other methods (eg. [`write`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.write)) are non-blocking.
 
-All methods and functions are thread-safe and thread-sane. Any error or closure on a connection interrupts all operations on that connection.
-
 See the [full API reference docs](https://egnor.github.io/ok-py-serial/) for interface details.
+
+Unless called out in the docs, all methods and functions are thread-safe: any method may be called from any thread at any time, and `*_async` methods may be awaited from any event loop in any thread. Any error or closure on a connection interrupts all operations on that connection.
 
 ## Serial port attributes
 
@@ -143,10 +143,10 @@ ok_serial.SerialConnectionMonitor(
 
 When opening a port, [`SerialConnection`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnection.__init__) offers a choice of [sharing modes](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialConnectionOptions.sharing):
 
-- `oblivious` (not recommended) - Checks no locks and holds no locks. Multiple programs may open the port at once, leading to corruption.
-- `polite` - Checks for locks before opening the port, but holds no locks while running. Abandons the port if another program is detected using it.
-- `exclusive` (the default) - Checks for locks before opening the port, and holds locks to guard against other programs using the port.
-- `stomp` (use with care!) - _Any other program using the port is killed_, if possible; locks are held, if possible; the port is opened regardless.
+- `oblivious` (not recommended) - Checks no locks and holds no locks. The port may be opened concurrently, leading to corruption.
+- `polite` - Checks for locks before opening the port, but holds no locks while running. Abandons the port if another _process_ is detected using it.
+- `exclusive` (the default) - Checks for locks before opening the port, and holds locks to guard against other uses of the port.
+- `stomp` (use with care!) - _Any other process using the port is killed_, if possible; locks are held, if possible; the port is opened regardless.
 
 Sharing modes are limited by OS capabilities, process permissions, and the conventions of port usage coordination. Best efforts are taken but your mileage may vary.
 

@@ -74,34 +74,6 @@ def test_scan_timeout_not_hit_when_port_present(pty_serial, set_scan_override):
         assert conn.port_name == pty_serial.path
 
 
-def test_reconnect_limit_zero_raises_on_disconnect(
-    pty_serial, set_scan_override
-):
-    set_scan_override({pty_serial.path: {"name": "test"}})
-    opts = ok_serial.SerialMonitorOptions(reconnect_limit=0)
-    with ok_serial.SerialConnectionMonitor("test", mopts=opts) as monitor:
-        conn = monitor.connect_sync(timeout=1)
-        assert conn is not None
-        conn.close()  # Forces a reconnect attempt on the next call.
-        with pytest.raises(ok_serial.SerialMonitorExhausted):
-            monitor.connect_sync(timeout=1)
-
-
-def test_reconnect_limit_allows_then_exhausts(pty_serial, set_scan_override):
-    set_scan_override({pty_serial.path: {"name": "test"}})
-    opts = ok_serial.SerialMonitorOptions(reconnect_limit=1)
-    with ok_serial.SerialConnectionMonitor("test", mopts=opts) as monitor:
-        conn1 = monitor.connect_sync(timeout=1)
-        assert conn1 is not None
-        conn1.close()
-        conn2 = monitor.connect_sync(timeout=1)  # Reconnect #1, allowed.
-        assert conn2 is not None
-        assert conn2 is not conn1
-        conn2.close()
-        with pytest.raises(ok_serial.SerialMonitorExhausted):
-            monitor.connect_sync(timeout=1)  # Reconnect #2, over the limit.
-
-
 def test_multiple_matches_does_not_connect(pty_serial, set_scan_override):
     override = {pty_serial.path: {"name": "dup"}, "FAKE": {"name": "dup"}}
     set_scan_override(override)
