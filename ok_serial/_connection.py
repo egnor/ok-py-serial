@@ -68,8 +68,8 @@ class TimestampBytes(bytes):
 class SerialConnection(contextlib.AbstractContextManager):
     """An open connection to a serial port.
 
-    Thread-safe: any method may be called from any thread at any time,
-    and any `*_async` method may be awaited from any event loop in any thread.
+    Thread-safe: any method may be called from any thread any time, and any
+    `*_async` method may be awaited from any event loop on any thread any time.
     """
 
     def __init__(
@@ -106,7 +106,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         """
 
         assert (match is not None) + (port is not None) == 1
-        self.opts = dataclasses.replace(opts, **kwargs)
+        self._opts = dataclasses.replace(opts, **kwargs)
 
         if match is not None:
             if not (found := scan_serial_ports(match)):
@@ -124,20 +124,22 @@ class SerialConnection(contextlib.AbstractContextManager):
             port = port.name
 
         with contextlib.ExitStack() as cleanup:
-            port_lock = cleanup.enter_context(PortLock(port, self.opts.sharing))
+            port_lock = cleanup.enter_context(
+                PortLock(port, self._opts.sharing)
+            )
 
             try:
                 # (If "polite", wake the readloop periodically for checks.)
-                timeout = 0.5 if self.opts.sharing == "polite" else None
+                timeout = 0.5 if self._opts.sharing == "polite" else None
                 pyserial = cleanup.enter_context(
                     serial.Serial(
                         port=port,
-                        baudrate=self.opts.baud,
+                        baudrate=self._opts.baud,
                         write_timeout=0.1,
                         timeout=timeout,
                     )
                 )
-                log.debug("Opened %s %s", port, self.opts)
+                log.debug("Opened %s %s", port, self._opts)
             except OSError as ex:
                 if ex.errno == errno.EBUSY:
                     msg = "Port busy (EBUSY)"
@@ -177,7 +179,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         Blocks until connection I/O threads have finished.
         Thread-safe, OK to call repeatedly, and OK to call with I/O in flight.
-        Any I/O operations in progress or attempted after closure raise an
+        Any I/O operations in progress or attempted afterwards raise an
         immediate `SerialIoClosed` exception.
         """
 

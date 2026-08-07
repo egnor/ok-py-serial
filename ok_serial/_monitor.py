@@ -39,7 +39,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
     This is used for robust communication with a serial device which might be
     plugged and unplugged during operation.
 
-    Thread-safe: any method may be called from any thread at any time.
+    Thread-safe: any method may be called from any thread any time, and any
+    `*_async` method may be awaited from any event loop in any thread any time.
     """
 
     def __init__(
@@ -68,9 +69,9 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
         if baud:
             copts = dataclasses.replace(copts, baud=baud)
 
-        self.match = match
-        self.copts = copts
-        self.mopts = mopts
+        self._match = match
+        self._copts = copts
+        self._mopts = mopts
 
         self._lock = threading.Lock()
         self._scan_matched: SerialPort | None = None
@@ -92,9 +93,9 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
 
     def __repr__(self) -> str:
         return (
-            f"SerialConnectionMonitor({self.match!r}, "
-            f"copts={self.copts!r}), "
-            f"mopts={self.mopts!r}"
+            f"SerialConnectionMonitor({self._match!r}, "
+            f"copts={self._copts!r}), "
+            f"mopts={self._mopts!r}"
         )
 
     def connect_sync(
@@ -130,41 +131,41 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                     self._conn = None
 
                 if self._scan_deadline is None:
-                    scan_timeout = self.mopts.scan_timeout
+                    scan_timeout = self._mopts.scan_timeout
                     self._scan_deadline = to_deadline(scan_timeout)
                     if scan_timeout is None:
-                        log.info("🔎 Scanning for %r (ongoing)", self.match)
+                        log.info("🔎 Scanning for %r (ongoing)", self._match)
                     elif scan_timeout > 0:
                         msg = "🔎 Scanning for %r (%.2fs timeout)"
-                        log.info(msg, self.match, scan_timeout)
+                        log.info(msg, self._match, scan_timeout)
                     else:
-                        log.info("🔎 Looking for %r", self.match)
+                        log.info("🔎 Looking for %r", self._match)
 
                 # Re-scan for ports at the specified interval
                 if (wait := from_deadline(self._next_scan)) <= 0:
-                    matched = scan_serial_ports(self.match)
+                    matched = scan_serial_ports(self._match)
                     if len(matched) == 1:
                         self._scan_matched = matched[0]
                     elif matched:
                         detail = "".join(f"\n  {p}" for p in matched)
-                        msg = f"Multiple ports match {self.match!r}:{detail}"
+                        msg = f"Multiple ports match {self._match!r}:{detail}"
                         self._conn_error = SerialScanException(msg)
                         self._scan_matched = None
                         log.warning("%s", self._conn_error)
                     else:
-                        msg = f"No ports match {self.match!r}"
+                        msg = f"No ports match {self._match!r}"
                         self._conn_error = SerialScanException(msg)
                         self._scan_matched = None
                         log.debug("%s", self._conn_error)
 
-                    wait = self.mopts.scan_interval
+                    wait = self._mopts.scan_interval
                     self._next_scan = to_deadline(wait)
 
                 if port := self._scan_matched:
                     try:
                         msg = "🔌 Connecting to %s (%dbps)"
-                        log.info(msg, port.name, self.copts.baud)
-                        conn = SerialConnection(port=port, opts=self.copts)
+                        log.info(msg, port.name, self._copts.baud)
+                        conn = SerialConnection(port=port, opts=self._copts)
                         self._conn, self._conn_error = conn, None
                         self._scan_deadline = None  # reset for next scan
                         return self._conn
@@ -175,8 +176,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
 
                 assert self._scan_deadline is not None  # still under the lock
                 if from_deadline(self._scan_deadline) < wait:
-                    scan_timeout = self.mopts.scan_timeout
-                    msg = f"Can't open {self.match!r}"
+                    scan_timeout = self._mopts.scan_timeout
+                    msg = f"Can't open {self._match!r}"
                     if scan_timeout and scan_timeout > 0:
                         msg += f" ({scan_timeout:.2f}s timeout)"
                     raise SerialMonitorExhausted(msg) from self._conn_error
