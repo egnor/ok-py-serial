@@ -11,7 +11,8 @@ from ok_serial._connection import (
 )
 
 from ok_serial._scan import scan_serial_ports
-from ok_serial._port import SerialPort
+from ok_serial._scan_uf2 import scan_uf2_devices
+from ok_serial._port import PortInfo
 from ok_serial._monitor import SerialConnectionMonitor, SerialMonitorOptions
 from ok_serial._lock import SerialSharingType
 
@@ -32,4 +33,3 @@ import importlib.metadata
 __all__ = [n for n in globals() if not n.startswith("_")]
 
 __version__ = importlib.metadata.version(__package__)
-

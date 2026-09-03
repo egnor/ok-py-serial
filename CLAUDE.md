@@ -34,10 +34,10 @@ uv run pytest tests/test_matching.py::test_whole_word_match
   - Uses dedicated reader/writer threads (`_IoThreads`) for non-blocking I/O
   - Thread-safe via `threading.Condition` monitor pattern
 
-- `_matching.py`: `compile_match()` - turns a match string or callable into a `SerialPort -> bool` predicate (simple whole-word glob; pass a callable for anything fancier)
+- `_matching.py`: `compile_match()` - turns a match string or callable into a `PortInfo -> bool` predicate (simple whole-word glob; pass a callable for anything fancier)
 
 - **`_scan.py`**: Port discovery
-  - `scan_serial_ports()` - returns `SerialPortAttributes` for all ports
+  - `scan_serial_ports()` - returns `PortInfo` for all ports
   - Supports `OK_SERIAL_SCAN_OVERRIDE` env var for testing with fake port data
 
 - **`_monitor.py`**: `SerialConnectionMonitor` - auto-reconnecting connection manager

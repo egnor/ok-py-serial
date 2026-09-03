@@ -66,7 +66,7 @@ def main(
             click.echo(format_line(p))
 
 
-def format_line(port: ok_serial.SerialPort):
+def format_line(port: ok_serial.PortInfo):
     main_keys = "device tid subsystem vid_pid description serial_number".split()
     words = []
     for k in main_keys:
@@ -79,7 +79,7 @@ def format_line(port: ok_serial.SerialPort):
     return " ".join(words)
 
 
-def format_detail(port: ok_serial.SerialPort) -> str:
+def format_detail(port: ok_serial.PortInfo) -> str:
     label = f"Port: {format_value(port, 'device')}"
     if tid := format_value(port, "tid"):
         label += f" {tid}"
@@ -90,13 +90,13 @@ def format_detail(port: ok_serial.SerialPort) -> str:
     )
 
 
-def format_value(port: ok_serial.SerialPort, k: str) -> str:
+def format_value(port: ok_serial.PortInfo, k: str) -> str:
     if v := port.attr.get(k, ""):
         return repr(v) if re.search(r"\s", v) else v
     return ""
 
 
-def format_age(port: ok_serial.SerialPort) -> str:
+def format_age(port: ok_serial.PortInfo) -> str:
     try:
         dt = datetime.datetime.fromisoformat(port.attr.get("time", ""))
     except ValueError:

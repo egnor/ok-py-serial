@@ -9,7 +9,7 @@ import time
 
 from ok_serial import _exceptions
 from ok_serial._lock import PortLock, SerialSharingType
-from ok_serial._port import SerialPort, PortPredicate
+from ok_serial._port import PortInfo, PortPredicate
 from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
@@ -76,7 +76,7 @@ class SerialConnection(contextlib.AbstractContextManager):
         self,
         *,
         match: str | PortPredicate | None = None,
-        port: str | SerialPort | None = None,
+        port: str | PortInfo | None = None,
         opts: SerialConnectionOptions = SerialConnectionOptions(),
         **kwargs,
     ):
@@ -84,7 +84,7 @@ class SerialConnection(contextlib.AbstractContextManager):
 
         - `match` is a
           [match string](https://github.com/egnor/ok-py-serial#port-matching)
-          or `SerialPort -> bool` callable matching exactly one port...
+          or `PortInfo -> bool` callable matching exactly one port...
           - OR `port` must name a raw system serial device to open.
         - `opts` can define baud rate and other port parameters...
           - OR other keywords are forwarded to `SerialConnectionOptions`
@@ -120,7 +120,7 @@ class SerialConnection(contextlib.AbstractContextManager):
             log.debug("Scanned %r, found %s", match, port)
 
         assert port is not None
-        if isinstance(port, SerialPort):
+        if isinstance(port, PortInfo):
             port = port.name
 
         with contextlib.ExitStack() as cleanup:

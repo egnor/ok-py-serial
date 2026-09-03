@@ -26,7 +26,7 @@ Since 2001, [PySerial](https://www.pyserial.com/) has been the workhorse [serial
 
 The `ok-serial` library uses PySerial internally but has a revised interface:
 
-- Ports are referenced by [match strings](#port-matching) with wildcard support (eg. `RP2040` or `2e43:0226`) or, for by arbitrary `SerialPort -> bool` callables.
+- Ports are referenced by [match strings](#port-matching) with wildcard support (eg. `RP2040` or `2e43:0226`) or, for by arbitrary `PortInfo -> bool` callables.
 
 - I/O operations are thread safe and can be blocking, non-blocking, timeout-based, or async. Blocking operations can be cleanly interrupted. The semantics of concurrent access, partial reads/writes, interruption, I/O errors, closure, etc. are all well defined.
 
@@ -80,7 +80,7 @@ Unless called out in the docs, all methods and functions are thread-safe: any me
 
 ## Serial port attributes
 
-Serial ports have metadata attributes like descriptive text, USB vendor/product ID, serial number and the like. These are captured as key/value pairs in [`SerialPort.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#SerialPort.attr) and returned by [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports).
+Serial ports have metadata attributes like descriptive text, USB vendor/product ID, serial number and the like. These are captured as key/value pairs in [`PortInfo.attr`](https://egnor.github.io/ok-py-serial/ok_serial.html#PortInfo.attr) and returned by [`scan_serial_ports`](https://egnor.github.io/ok-py-serial/ok_serial.html#scan_serial_ports).
 
 Attributes [come from PySerial](https://pyserial.readthedocs.io/en/latest/tools.html#serial.tools.list_ports.ListPortInfo) and are platform dependent but typically include:
 
@@ -118,7 +118,7 @@ Port: /dev/ttyACM3 Kq2p 3:12s
 
 ## Port matching
 
-`SerialConnection(match=...)` and `SerialConnectionMonitor(...)` take either a **match string** or a **predicate callable** (`SerialPort -> bool`).
+`SerialConnection(match=...)` and `SerialConnectionMonitor(...)` take either a **match string** or a **predicate callable** (`PortInfo -> bool`).
 
 A match string is split on whitespace into glob tokens. Each token must appear as a whole-word case-insensitive glob (with `*` and `?` wildcards) in some attribute value:
 

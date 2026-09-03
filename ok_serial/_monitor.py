@@ -14,7 +14,7 @@ from ok_serial._exceptions import (
     SerialOpenException,
     SerialScanException,
 )
-from ok_serial._port import SerialPort, PortPredicate
+from ok_serial._port import PortInfo, PortPredicate
 from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 
@@ -55,7 +55,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
         Prepare to manage a serial port connection.
         - `match` selects the port of interest: a
           [match string](https://github.com/egnor/ok-py-serial#port-matching),
-          a `SerialPort -> bool` callable, or `None` for any port
+          a `PortInfo -> bool` callable, or `None` for any port
         - `copts` can define parameters for connecting (eg. baud rate)
           - OR `baud` can set the baud rate (as a shortcut)
         - `mopts` can define parameters for tracking (eg. re-scan interval)
@@ -74,7 +74,7 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
         self._mopts = mopts
 
         self._lock = threading.Lock()
-        self._scan_matched: SerialPort | None = None
+        self._scan_matched: PortInfo | None = None
         self._scan_deadline: float | None = None
         self._next_scan = 0.0
         self._conn: SerialConnection | None = None

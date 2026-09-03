@@ -24,10 +24,10 @@ def test_scan_ports(mocker):
     mock_comports.return_value = [bare_port, full_port]
 
     assert ok_serial.scan_serial_ports() == [
-        ok_serial.SerialPort(
+        ok_serial.PortInfo(
             name="/dev/zz", attr={"device": "/dev/zz", "name": "zz"}
         ),
-        ok_serial.SerialPort(
+        ok_serial.PortInfo(
             name="/dev/zzfull",
             attr={
                 "device": "/dev/zzfull",
@@ -65,8 +65,8 @@ def test_scan_ports_with_override(monkeypatch, tmp_path):
     override_path.write_text(json.dumps(override))
 
     assert ok_serial.scan_serial_ports() == [
-        ok_serial.SerialPort(
+        ok_serial.PortInfo(
             name="port1", attr={"aname": "avalue", "bname": "bvalue"}
         ),
-        ok_serial.SerialPort(name="port2", attr={}),
+        ok_serial.PortInfo(name="port2", attr={}),
     ]

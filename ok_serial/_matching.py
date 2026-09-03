@@ -4,7 +4,7 @@ from ok_serial._port import PortPredicate
 
 
 def compile_match(spec: str | PortPredicate | None) -> PortPredicate:
-    """Returns a predicate selecting matching `SerialPort` objects.
+    """Returns a predicate selecting matching `PortInfo` objects.
 
     A `None` or empty string accepts any port. A string is split on whitespace
     into glob tokens; each token must match (case-insensitively, as a

@@ -3,6 +3,7 @@ import json
 import logging
 import natsort
 import os
+import re
 import stat
 import struct
 from serial.tools import list_ports
@@ -10,27 +11,30 @@ from serial.tools import list_ports_common
 
 from ok_serial._exceptions import SerialScanException
 from ok_serial._matching import compile_match
-from ok_serial._port import SerialPort, PortPredicate
+from ok_serial._port import PortInfo, PortPredicate
 
 log = logging.getLogger("ok_serial.scan")
 
 _HASHMASK = (1 << (struct.calcsize("L") * 8)) - 1
 _HASHCODE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+_NONALNUM_RX = re.compile(r"[^a-zA-Z0-9]+")
+_PATH_SORT_KEY = natsort.natsort_keygen(alg=natsort.ns.P)
+_INFO_SORT_KEY = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
 
 
 def scan_serial_ports(
     match: str | PortPredicate | None = None,
-) -> list[SerialPort]:
+) -> list[PortInfo]:
     """
     Returns a list of serial ports currently attached to the system.
 
     If set, `match` is a
     [match string](https://github.com/egnor/ok-py-serial#port-matching)
-    or `SerialPort -> bool` callable to filter the ports returned.
+    or `PortInfo -> bool` callable to filter the ports returned.
 
     For testing and encapsulation, if the environment variable
     `$OK_SERIAL_SCAN_OVERRIDE` is the pathname of a JSON file in
-    `{"port-name": {"attr": "value", ...}, ...}` format, that port listing
+    `{"device-path": {"attr": "value", ...}, ...}` format, that port listing
     is returned instead of actual system scan results.
 
     Raises:
@@ -59,43 +63,60 @@ def scan_serial_ports(
                 log.debug("pyserial port: %s", port)
                 found.append(port)
 
-        # Include a port the match names by pathname, even if pyserial's scan
-        # didn't find it (eg. a pty, or a symlink to one, as socat makes)
-        if exact_port := _port_from_path(match):
-            # use pyserial metadata if pyserial also found this port
-            if not (found := [p for p in found if p.name == exact_port.name]):
-                log.debug("Named device: %s", exact_port)
-                found.append(exact_port)  # not found by pyserial (eg. pty)
+        # If `match` is a valid serial device (or symlink), include that device
+        by_path = {os.path.realpath(p.name): p for p in found}
+        if isinstance(match, str) and (match_path := os.path.realpath(match)):
+            if not (exact_port := by_path.get(match_path)):
+                if exact_port := _port_from_path(match_path):
+                    log.debug("Named device: %s", exact_port)
+                    found.append(exact_port)
+                    by_path[match_path] = exact_port
+            if exact_port:
+                # make sure it will pass the filter
+                exact_port.attr["path_found"] = match
 
-    sort_key = natsort.natsort_keygen(key=lambda p: p.name, alg=natsort.ns.P)
+        # Look for device symlink aliases
+        link_top = "/dev/serial"
+        for dir, dirnames, filenames in os.walk(link_top):
+            assert dir.startswith(link_top)
+            dirnames.sort(key=_PATH_SORT_KEY)
+            filenames.sort(key=_PATH_SORT_KEY)
+            key_base = _NONALNUM_RX.sub("_", dir[len(link_top) :]).strip("_")
+            for filename in filenames:
+                if (link := os.path.join(dir, filename)) not in by_path:
+                    if port := by_path.get(os.path.realpath(link)):
+                        key, n = f"link_{key_base}", 1
+                        while key in port.attr:
+                            key = f"link_{key_base}_" + str(n := n + 1)
+                        port.attr[key] = link
+
     if match:
         culled = list(filter(compile_match(match), found))
         log.debug("Found %d ports, %d match %r", len(found), len(culled), match)
     else:
-        log.debug("Found %d ports", len(found))
         culled = found
+        log.debug("Found %d ports", len(found))
 
-    culled.sort(key=sort_key)
+    culled.sort(key=_INFO_SORT_KEY)
     return culled
 
 
-def _port_from_path(p: str | PortPredicate | None) -> SerialPort | None:
-    if isinstance(p, str):
-        try:
-            st = os.stat(p)
-        except OSError:
-            return None
-        if st.st_mode & stat.S_IFCHR:
-            dt = datetime.datetime.fromtimestamp(st.st_ctime_ns * 1e-9)
-            attr = {"device": p, "time": dt.isoformat(timespec="milliseconds")}
-            return SerialPort(name=str(p), attr=attr)
+def _port_from_path(p: str) -> PortInfo | None:
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    if st.st_mode & stat.S_IFCHR:
+        dt = datetime.datetime.fromtimestamp(st.st_ctime_ns * 1e-9)
+        attr = {"device": p, "time": dt.isoformat(timespec="milliseconds")}
+        return PortInfo(name=p, attr=attr)
 
     return None
 
 
 def _port_from_pyserial(
     p: list_ports_common.ListPortInfo,
-) -> SerialPort | None:
+) -> PortInfo | None:
     # filter out bogus serial8250 entries on Linux (ttyS0~ttyS31)
     # https://stackoverflow.com/questions/2530096/how-to-find-all-serial-devices-ttys-ttyusb-on-linux-without-opening-them/12301542#12301542
     # https://askubuntu.com/questions/1520139/pyserial-lists-incorrect-serialports-on-ubuntu-24-04
@@ -141,10 +162,10 @@ def _port_from_pyserial(
     if p.vid and p.pid:
         attr["vid_pid"] = f"{p.vid:04x}:{p.pid:04x}"
 
-    return SerialPort(name=p.device, attr=attr)
+    return PortInfo(name=p.device, attr=attr)
 
 
-def _ports_from_json_text(text: str) -> list[SerialPort]:
+def _ports_from_json_text(text: str) -> list[PortInfo]:
     jv = json.loads(text)
     if not isinstance(jv, dict) or not all(
         isinstance(pv, dict) and all(isinstance(v, str) for v in pv.values())
@@ -152,4 +173,4 @@ def _ports_from_json_text(text: str) -> list[SerialPort]:
     ):
         raise ValueError(f"Bad type: {jv!r}")
 
-    return [SerialPort(name=k, attr=v) for k, v in jv.items()]
+    return [PortInfo(name=k, attr=v) for k, v in jv.items()]

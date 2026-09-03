@@ -1,16 +1,17 @@
 [project]
 authors = [{ name = "Dan Egnor", email = "egnor@ofb.net" }]
 dependencies = [
-  "click>=8.3.1",
-  "natsort>=8.4.0",
-  "ok-logging-setup>=0.17",
-  "pyserial>=3.5",
-  "types-pyserial>=3.5.0.20251001",
+  "click~=8.3",
+  "natsort~=8.4",
+  "ok-logging-setup~=0.17",
+  "psutil~=7.2",
+  "pyserial~=3.5",
+  "types-pyserial~=3.5",
 ]
 description = "Serial port library (PySerial wrapper) with improved semantics"
 name = "ok-serial"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4"
 urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
 version = "0.6"

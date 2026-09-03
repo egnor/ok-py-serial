@@ -3,7 +3,7 @@ import collections.abc
 
 
 @dataclasses.dataclass(frozen=True)
-class SerialPort:
+class PortInfo:
     """Metadata about a serial port found on the system"""
 
     name: str
@@ -18,5 +18,5 @@ class SerialPort:
         return self.name
 
 
-PortPredicate = collections.abc.Callable[[SerialPort], bool]
+PortPredicate = collections.abc.Callable[[PortInfo], bool]
 """A function that returns True for ports of interest."""
