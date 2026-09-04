@@ -84,7 +84,7 @@ def main(
 
     if one and port_n + uf2_n > 1:
         noun = "devices" if uf2_n else "ports"
-        message = "Only --one allowed but multiple {noun} found:"
+        message = f"Only --one allowed but multiple {noun} found:"
         if port_n:
             message += f"\n  🔌 Ports: {', '.join(p.name for p in port_list)}"
         if uf2_n:
