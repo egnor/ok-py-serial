@@ -105,9 +105,6 @@ def main(
     elif port_spec is not None:
         logging.error("❌ No serial ports found")
 
-    if port_n and (uf2_n or uf2_spec):
-        logging.info("")
-
     if uf2_n:
         logging.info(
             f"💿 {uf2_n} UF2 bootloader{'' if uf2_n == 1 else 's'} "
