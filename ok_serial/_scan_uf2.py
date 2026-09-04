@@ -1,4 +1,3 @@
-import datetime
 import json
 import logging
 import natsort
@@ -56,16 +55,16 @@ def scan_uf2_devices(
 
         # Include `match` in the list of dirs in case it's a direct pathname
         mpoints = set(os.path.realpath(p.mountpoint) for p in partitions)
-        match_path = isinstance(match, str) and os.path.realpath(match)
-        if match_path:
+        if match_path := isinstance(match, str) and os.path.realpath(match):
             mpoints.add(match_path)
 
         found = []
         for mpoint in mpoints:
-            if port := _device_from_dir(mpoint):
-                found.append(port)
-                if match_path and mpoint == match_path:
-                    found.attr["path_found"] = match
+            if dev := _device_from_dir(mpoint):
+                found.append(dev)
+                if mpoint == match_path:
+                    assert isinstance(match, str)
+                    dev.attr["path_found"] = match
 
     if match:
         culled = list(filter(compile_match(match), found))

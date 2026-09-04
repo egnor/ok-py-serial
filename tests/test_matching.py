@@ -74,3 +74,21 @@ def test_word_boundaries_around_punctuation():
     ]
     assert _filter("2e8a", ports) == ports
     assert _filter("0005", ports) == ports
+
+
+def test_word_boundaries_inside_match():
+    # a non-alphanumeric just INSIDE the match edge also counts as a
+    # boundary, so tokens containing punctuation match mid-word
+    ports = [
+        ok_serial.PortInfo(name="a", attr={"description": "foo(xyzzy)bar"}),
+        ok_serial.PortInfo(name="b", attr={"location": "usb-1.4:1.0"}),
+    ]
+    assert _filter("(xyzzy)", ports) == [ports[0]]
+    assert _filter("(xyzzy", ports) == [ports[0]]
+    assert _filter("xyzzy)", ports) == [ports[0]]
+    assert _filter(".4:1", ports) == [ports[1]]
+    # a wildcard that happens to match a non-alphanumeric counts too
+    assert _filter("?xyzzy?", ports) == [ports[0]]
+    # but edges strictly inside a run of alphanumerics still don't match
+    assert _filter("xyz", ports) == []
+    assert _filter("yzzy)", ports) == []

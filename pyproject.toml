@@ -6,7 +6,6 @@ dependencies = [
   "ok-logging-setup~=0.17",
   "psutil~=7.2",
   "pyserial~=3.5",
-  "types-pyserial~=3.5",
 ]
 description = "Serial port library (PySerial wrapper) with improved semantics"
 name = "ok-serial"
@@ -14,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.11,<4"
 urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
-version = "0.6"
+version = "0.7"
 
 [project.scripts]
 okserial = "ok_serial._cli:main"
@@ -33,6 +32,8 @@ dev = [
   "pytest-asyncio~=1.4",
   "pytest-mock~=3.15",
   "ruff~=0.15",
+  "types-psutil~=7.2",
+  "types-pyserial~=3.5",
 ]
 
 [tool.mypy]

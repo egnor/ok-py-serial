@@ -36,6 +36,8 @@ def _compile_token(token: str) -> re.Pattern:
         ".*" if ch == "*" else "." if ch == "?" else re.escape(ch)
         for ch in token
     )
-    # Custom word boundary: treat any non-alphanumeric character (including _)
-    # as a separator, so "ttyS1" doesn't match "ttyS10" but spans / and : etc.
-    return re.compile(r"(?<![A-Z0-9])" + body + r"(?![A-Z0-9])", re.I)
+
+    # Custom word boundary: don't start or end in a run of alphanumerics,
+    # to avoid "ttyS1" matching "ttyS10".
+    boundary = r"(?!(?<=[A-Z0-9])[A-Z0-9])"
+    return re.compile(boundary + body + boundary, re.I)

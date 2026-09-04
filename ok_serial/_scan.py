@@ -63,9 +63,9 @@ def scan_serial_ports(
                 log.debug("pyserial port: %s", port)
                 found.append(port)
 
-        # If `match` is a valid serial device (or symlink), include that device
+        # If `match` is a valid serial device (or symlink thereto), include it
         by_path = {os.path.realpath(p.name): p for p in found}
-        if isinstance(match, str) and (match_path := os.path.realpath(match)):
+        if match_path := isinstance(match, str) and os.path.realpath(match):
             if not (exact_port := by_path.get(match_path)):
                 if exact_port := _port_from_path(match_path):
                     log.debug("Named device: %s", exact_port)

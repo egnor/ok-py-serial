@@ -5,6 +5,7 @@
 import datetime
 import logging
 import re
+import time
 
 import click
 import ok_logging_setup
@@ -14,6 +15,16 @@ import ok_serial
 ok_logging_setup.skip_traceback_for(OSError)  # includes SerialException
 ok_logging_setup.skip_traceback_for(EOFError)
 ok_logging_setup.install()
+
+MAIN_ATTRS = [
+    "device",
+    "tid",
+    "subsystem",
+    "vid_pid",
+    "model",
+    "description",
+    "serial_number",
+]
 
 
 @click.command()
@@ -27,49 +38,99 @@ ok_logging_setup.install()
 @click.option(
     "--verbose", "-v", is_flag=True, help="Print details for each port"
 )
+@click.option(
+    "--uf2",
+    "uf2_spec",
+    metavar="MATCH",
+    is_flag=False,
+    flag_value="",
+    help="Scan for UF2 bootloaders",
+)
+@click.option(
+    "--scan-time", "-s", default=0.0, help="Seconds to wait for a matching port"
+)
 def main(
     match: tuple[str, ...],
-    name_only: bool = False,
-    one: bool = False,
-    verbose: bool = False,
+    name_only: bool,
+    one: bool,
+    uf2_spec: str | None,
+    verbose: bool,
+    scan_time: float,
 ):
     """Print a list of available serial ports"""
 
-    if spec := " ".join(match):
-        logging.info("🔎 Finding serial ports: %r", spec)
-    else:
-        logging.info("🔎 Finding serial ports...")
+    port_spec = " ".join(match) if (match or not uf2_spec) else None
+    port_list, port_n = [], 0
+    uf2_list, uf2_n = [], 0
 
-    found = ok_serial.scan_serial_ports(spec)
-    num = len(found)
-    if num == 0:
-        if spec:
-            ok_logging_setup.exit(f"🚫 No serial ports match {spec!r}")
-        else:
-            ok_logging_setup.exit("❌ No serial ports found")
+    start_time = time.time()
+    while True:
+        if port_spec is not None:
+            port_n = len(port_list := ok_serial.scan_serial_ports(port_spec))
+        if uf2_spec is not None:
+            uf2_n = len(uf2_list := ok_serial.scan_uf2_devices(uf2_spec))
 
-    logging.info("✅ %d serial port%s found", num, "" if num == 1 else "s")
+        if port_n or uf2_n:
+            break
 
-    if one and num != 1:
-        ok_logging_setup.exit(
-            f"{num} serial ports found, only --one allowed:"
-            + "".join(f"\n  {format_line(p)}" for p in found)
+        remaining = start_time + scan_time - time.time()
+        if remaining <= 0.0:
+            break
+
+        noun = "devices" if uf2_spec is not None else "ports"
+        phr = f"matching {noun}" if (port_spec or uf2_spec) else f"{noun} found"
+        logging.info(f"🔎 No {phr}, scanning... ({remaining:.1f}s)")
+        time.sleep(0.5)
+
+    if one and port_n + uf2_n > 1:
+        noun = "devices" if uf2_n else "ports"
+        message = "Only --one allowed but multiple {noun} found:"
+        if port_n:
+            message += f"\n  🔌 Ports: {', '.join(p.name for p in port_list)}"
+        if uf2_n:
+            message += f"\n  💿 UF2: {', '.join(u.name for u in uf2_list)}"
+        ok_logging_setup.exit(message, code=2)
+
+    f = format_name if name_only else format_detail if verbose else format_line
+
+    if port_n:
+        logging.info(
+            f"🔌 {port_n} serial port{'' if port_n == 1 else 's'} "
+            + (f"matching {port_spec!r}" if port_spec else "found")
         )
-    if name_only:
-        for p in found:
-            click.echo(p.name)
-    elif verbose:
-        for p in found:
-            click.echo(format_detail(p) + "\n")
-    else:
-        for p in found:
-            click.echo(format_line(p))
+        for port in port_list:
+            click.echo(f(port))
+    elif port_spec:
+        logging.error(f"🚫 No serial ports matching {port_spec!r}")
+    elif port_spec is not None:
+        logging.error("❌ No serial ports found")
+
+    if port_n and (uf2_n or uf2_spec):
+        logging.info("")
+
+    if uf2_n:
+        logging.info(
+            f"💿 {uf2_n} UF2 bootloader{'' if uf2_n == 1 else 's'} "
+            + (f"matching {uf2_spec!r}" if uf2_spec else "found")
+        )
+        for dev in uf2_list:
+            click.echo(f(dev))
+    elif uf2_spec:
+        logging.error(f"🚫 No UF2 bootloaders matching {uf2_spec!r}")
+    elif uf2_spec is not None:
+        logging.error("❌ No UF2 bootloaders found")
+
+    if not (port_n or uf2_n):
+        raise SystemExit(1)
+
+
+def format_name(port: ok_serial.PortInfo) -> str:
+    return port.name
 
 
 def format_line(port: ok_serial.PortInfo):
-    main_keys = "device tid subsystem vid_pid description serial_number".split()
     words = []
-    for k in main_keys:
+    for k in MAIN_ATTRS:
         if v := format_value(port, k):
             words.append(v)
 
@@ -85,9 +146,8 @@ def format_detail(port: ok_serial.PortInfo) -> str:
         label += f" {tid}"
     if age := format_age(port):
         label += f" {age}"
-    return label + "".join(
-        f"\n  {k}={format_value(port, k)}" for k in port.attr
-    )
+    attrs = "".join(f"\n  {k}={format_value(port, k)}" for k in port.attr)
+    return label + attrs + "\n"
 
 
 def format_value(port: ok_serial.PortInfo, k: str) -> str:
