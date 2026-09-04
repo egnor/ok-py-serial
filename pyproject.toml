@@ -13,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.11,<4"
 urls.Homepage = "https://github.com/egnor/ok-py-serial#readme"
 urls.Repository = "https://github.com/egnor/ok-py-serial.git"
-version = "0.7"
+version = "0.8"
 
 [project.scripts]
 okserial = "ok_serial._cli:main"

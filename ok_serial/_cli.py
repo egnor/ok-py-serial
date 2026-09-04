@@ -59,7 +59,7 @@ def main(
 ):
     """Print a list of available serial ports"""
 
-    port_spec = " ".join(match) if (match or not uf2_spec) else None
+    port_spec = " ".join(match) if (match or uf2_spec is None) else None
     port_list, port_n = [], 0
     uf2_list, uf2_n = [], 0
 
