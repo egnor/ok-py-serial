@@ -9,7 +9,7 @@ import time
 
 from ok_serial import _exceptions
 from ok_serial._lock import PortLock, SerialSharingType
-from ok_serial._port import PortInfo, PortPredicate
+from ok_serial._port_info import PortInfo, PortPredicate
 from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 

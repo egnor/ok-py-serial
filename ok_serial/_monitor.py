@@ -14,7 +14,7 @@ from ok_serial._exceptions import (
     SerialOpenException,
     SerialScanException,
 )
-from ok_serial._port import PortInfo, PortPredicate
+from ok_serial._port_info import PortInfo, PortPredicate
 from ok_serial._scan import scan_serial_ports
 from ok_serial._timeout_math import from_deadline, to_deadline
 

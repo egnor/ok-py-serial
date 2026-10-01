@@ -12,7 +12,7 @@ from ok_serial._connection import (
 
 from ok_serial._scan import scan_serial_ports
 from ok_serial._scan_uf2 import scan_uf2_devices
-from ok_serial._port import PortInfo
+from ok_serial._port_info import PortInfo
 from ok_serial._monitor import SerialConnectionMonitor, SerialMonitorOptions
 from ok_serial._lock import SerialSharingType
 

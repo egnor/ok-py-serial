@@ -11,7 +11,7 @@ from serial.tools import list_ports_common
 
 from ok_serial._exceptions import SerialScanException
 from ok_serial._matching import compile_match
-from ok_serial._port import PortInfo, PortPredicate
+from ok_serial._port_info import PortInfo, PortPredicate
 
 log = logging.getLogger("ok_serial.scan")
 
