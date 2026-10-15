@@ -117,6 +117,8 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
 
         call_deadline = to_deadline(timeout)
         while True:
+            last_error = self._conn_error  # assume already warned about
+
             with self._lock:
                 # Return an existing live connection if possible
                 if self._conn:
@@ -151,7 +153,6 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                         msg = f"Multiple ports match {self._match!r}:{detail}"
                         self._conn_error = SerialScanException(msg)
                         self._scan_matched = None
-                        log.warning("%s", self._conn_error)
                     else:
                         msg = f"No ports match {self._match!r}"
                         self._conn_error = SerialScanException(msg)
@@ -172,7 +173,6 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                     except SerialOpenException as ex:
                         self._conn_error = ex
                         self._scan_matched = None  # cool down until re-scan
-                        log.warning("%s", self._conn_error)
 
                 assert self._scan_deadline is not None  # still under the lock
                 if from_deadline(self._scan_deadline) < wait:
@@ -181,6 +181,10 @@ class SerialConnectionMonitor(contextlib.AbstractContextManager):
                     if scan_timeout and scan_timeout > 0:
                         msg += f" ({scan_timeout:.2f}s timeout)"
                     raise SerialMonitorExhausted(msg) from self._conn_error
+
+                # if not reported and not immediately thrown, warn
+                if self._conn_error != last_error:
+                    log.warning("%s", self._conn_error)
 
             if from_deadline(call_deadline) < wait:
                 return None
